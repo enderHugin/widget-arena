@@ -60,6 +60,11 @@
   summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
   details ul { margin: 0 0 12px; padding-left: 20px; color: var(--muted); font-size: 16px; }
   details li { margin: 4px 0; }
+  .kofi { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; text-align: center; margin: 8px 0 34px; padding: 18px 22px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+  .kofi p { margin: 0; color: var(--muted); font-size: 15.5px; max-width: 34em; }
+  .kofi a { display: inline-flex; align-items: center; gap: 9px; padding: 11px 20px; border-radius: 999px; background: #ff5e5b; color: #fff; font-weight: 700; text-decoration: none; box-shadow: 0 6px 16px rgba(255, 94, 91, .35); transition: transform .15s, box-shadow .15s; }
+  .kofi a:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(255, 94, 91, .45); }
+  .kofi svg { width: 22px; height: 22px; flex: none; }
   footer { padding: 28px 0 44px; color: var(--muted); font-size: 14.5px; border-top: 1px solid var(--line); }
   footer a { color: inherit; }
   [hidden] { display: none !important; }
@@ -132,6 +137,13 @@
         <ul data-list="d3l"></ul>
       </details>
     </section>
+    <section class="kofi">
+      <p data-i="kofi_t">¿Te resulta útil? Es gratis y sin anuncios; si quieres apoyar su desarrollo, puedes invitarme a un café.</p>
+      <a href="https://ko-fi.com/jaimeluisolguinmesina" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h13v6a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5V8z"/><path d="M16 9h2a3 3 0 0 1 0 6h-2"/><path d="M7 2v2M11 2v2"/></svg>
+        <span data-i="kofi_b">Invítame a un café</span>
+      </a>
+    </section>
   </main>
 
   <footer>
@@ -173,6 +185,8 @@
       d3l: ["El instalador no está firmado con un certificado de pago, así que Windows (SmartScreen) y macOS (Gatekeeper) lo avisan al abrir algo descargado que no conocen. Es normal.",
             "El código es abierto: puedes leer exactamente lo que hace el instalador en el repositorio de GitHub antes de ejecutarlo.",
             "Windows: «Más información» → «Ejecutar de todas formas». macOS: clic derecho sobre el archivo → «Abrir»."],
+      kofi_t: "¿Te resulta útil? Es gratis y sin anuncios; si quieres apoyar su desarrollo, puedes invitarme a un café.",
+      kofi_b: "Invítame a un café",
       foot: "Software libre con licencia MIT."
     },
     en: {
@@ -204,6 +218,8 @@
       d3l: ["The installer is not signed with a paid certificate, so Windows (SmartScreen) and macOS (Gatekeeper) warn about downloaded files they do not know. That is expected.",
             "The code is open source: you can read exactly what the installer does in the GitHub repository before running it.",
             "Windows: “More info” → “Run anyway”. macOS: right-click the file → “Open”."],
+      kofi_t: "Find it useful? It is free and ad-free; if you want to support its development, you can buy me a coffee.",
+      kofi_b: "Buy me a coffee",
       foot: "Free software under the MIT license."
     }
   };

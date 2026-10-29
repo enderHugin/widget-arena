@@ -83,6 +83,12 @@ compila un ejecutable o deja el programa en modo portable.
 ### Activar la página (una sola vez)
 En el repositorio: **Settings → Pages → Build and deployment → Source: GitHub Actions**. Después, cada `push` a `main` la publica.
 
+## Apoyar el proyecto
+
+Es gratis y sin anuncios. Si te resulta útil, puedes invitarme a un café:
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Inv%C3%ADtame%20a%20un%20caf%C3%A9-ff5e5b?logo=ko-fi&logoColor=white&style=for-the-badge)](https://ko-fi.com/jaimeluisolguinmesina)
+
 ## Licencia
 
 MIT. Ver [LICENSE](LICENSE).
