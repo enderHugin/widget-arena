@@ -89,6 +89,18 @@ Es gratis y sin anuncios. Si te resulta útil, puedes invitarme a un café:
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Inv%C3%ADtame%20a%20un%20caf%C3%A9-ff5e5b?logo=ko-fi&logoColor=white&style=for-the-badge)](https://ko-fi.com/jaimeluisolguinmesina)
 
+## Si algo no funciona: los registros
+
+Si el acceso del menú no abre nada o el instalador falla, hay archivos de registro que dicen por qué. Si el programa no llega a abrirse, además sale una ventana con el motivo.
+
+| Qué | Windows | Linux | macOS |
+|---|---|---|---|
+| Instalación | `%LOCALAPPDATA%\WidgetArena\logs\instalacion.log` | `~/.local/share/WidgetArena/logs/instalacion.log` | `~/Library/Application Support/WidgetArena/logs/instalacion.log` |
+| Arranque (lo que pasa al pulsar el icono) | `%LOCALAPPDATA%\Programs\WidgetArena\arranque.log` | `~/.local/share/WidgetArena/app/arranque.log` | `~/Applications/WidgetArena/arranque.log` |
+| El programa en marcha | `%APPDATA%\WidgetArena\data\logs\` | `~/.local/share/WidgetArena/data/logs/` | `~/Library/Application Support/WidgetArena/data/logs/` |
+
+Si abres una incidencia, adjunta `instalacion.log` y `arranque.log`.
+
 ## Licencia
 
 MIT. Ver [LICENSE](LICENSE).

@@ -536,6 +536,156 @@ def status(p, program_dir=None):
     return d
 
 
+LAUNCHER_SRC = r'''# Lanzador de __APP__ (lo crea herramientas.py; no hace falta tocarlo).
+# Arranca el programa SIN ventana de consola y deja todo lo que escriba en "arranque.log" (junto a este archivo).
+# Si el programa no llega a abrirse, avisa con una ventana que dice por que y donde esta el registro.
+import os
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPT = os.path.join(HERE, "__SCRIPT__")
+LOG = os.path.join(HERE, "arranque.log")
+TITLE = "__APP__"
+WAIT = 20.0          # segundos que se vigila el arranque
+
+
+def log(msg):
+    try:
+        with open(LOG, "ab") as f:
+            f.write(("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg)).encode("utf-8", "replace"))
+    except OSError:
+        pass
+
+
+def rotate():
+    try:
+        if os.path.getsize(LOG) > 400000:
+            with open(LOG, "rb") as f:
+                f.seek(-150000, 2)
+                tail = f.read()
+            with open(LOG, "wb") as f:
+                f.write(b"(...registro anterior recortado...)\n" + tail)
+    except OSError:
+        pass
+
+
+def tail(n=12):
+    try:
+        with open(LOG, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 6000))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+        return "\n".join(l[:160] for l in lines[-n:])
+    except OSError:
+        return ""
+
+
+def alert(text):
+    try:
+        if os.name == "nt":
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, text, TITLE, 0x10)
+        elif sys.platform == "darwin":
+            q = text.replace("\\", "\\\\").replace('"', '\\"')
+            subprocess.run(["osascript", "-e", 'display dialog "%s" with title "%s" buttons {"OK"} with icon stop' % (q, TITLE)], timeout=600)
+        else:
+            import shutil
+            for cmd in (["zenity", "--error", "--no-markup", "--title", TITLE, "--text", text],
+                        ["kdialog", "--error", text, "--title", TITLE]):
+                if shutil.which(cmd[0]) and subprocess.run(cmd, timeout=600).returncode in (0, 1):
+                    return
+            try:
+                import tkinter
+                from tkinter import messagebox
+                r = tkinter.Tk()
+                r.withdraw()
+                messagebox.showerror(TITLE, text, parent=r)
+                r.destroy()
+            except Exception:
+                if shutil.which("notify-send"):
+                    subprocess.run(["notify-send", TITLE, text[:300]])
+    except Exception:
+        pass
+
+
+def hint_for(txt):
+    low = txt.lower()
+    if "dll load failed" in low:
+        return ("\n\nPosible causa: falta el componente 'Microsoft Visual C++ Redistributable' de Windows. "
+                "Instalalo desde https://aka.ms/vs/17/release/vc_redist.x64.exe y vuelve a abrir el programa.")
+    if "no module named" in low:
+        return "\n\nPosible causa: faltan librerias. Vuelve a ejecutar el instalador: las repone."
+    if "libxcb" in low or "could not load the qt platform plugin" in low:
+        return "\n\nPosible causa: faltan librerias del sistema que usa Qt (en Linux, libxcb-cursor0 y similares). Vuelve a ejecutar el instalador."
+    return ""
+
+
+def fail(why):
+    t = tail()
+    alert("%s no ha podido abrirse.\n\n%s\n\nUltimas lineas del registro:\n%s\n\nRegistro completo:\n%s%s" % (TITLE, why, t, LOG, hint_for(t)))
+
+
+def main():
+    rotate()
+    log("=== arranque === python %s (%s) en %s" % (sys.version.split()[0], sys.executable, sys.platform))
+    if not os.path.isfile(SCRIPT):
+        log("ERROR: no existe %s" % SCRIPT)
+        fail("No se encuentra el programa (%s)." % SCRIPT)
+        return
+    py = sys.executable
+    if os.name == "nt" and os.path.basename(py).lower() == "pythonw.exe":
+        cand = os.path.join(os.path.dirname(py), "python.exe")      # el programa corre con python.exe (sin ventana) para tener salida de errores
+        if os.path.isfile(cand):
+            py = cand
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    kw = {}
+    if os.name == "nt":
+        kw["creationflags"] = 0x08000000 | 0x00000200              # sin ventana + grupo propio
+    else:
+        kw["start_new_session"] = True
+    t0 = time.time()
+    with open(LOG, "ab") as out:
+        p = subprocess.Popen([py, "-u", SCRIPT], cwd=HERE, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env, **kw)
+    log("lanzado con %s (pid %d)" % (py, p.pid))
+    rc = None
+    while time.time() - t0 < WAIT:
+        rc = p.poll()
+        if rc is not None:
+            break
+        time.sleep(0.25)
+    if rc is None:
+        log("sigue abierto a los %d s: arranque correcto" % WAIT)
+        return
+    dur = time.time() - t0
+    log("TERMINO a los %.1f s con codigo %s" % (dur, rc))
+    if rc != 0 or dur < 3:
+        fail("El programa se cerro a los %.0f segundos (codigo %s)." % (dur, rc))
+
+
+try:
+    main()
+except Exception:
+    import traceback
+    log("ERROR en el lanzador:\n" + traceback.format_exc())
+    fail("Fallo el lanzador.")
+'''
+
+
+def launcher_name(p):
+    return os.path.splitext(p["script"])[0] + "_lanzador.pyw"
+
+
+def write_launcher(p, program_dir):
+    """Crea junto al programa el lanzador que deja el registro de arranque (arranque.log) y avisa si no se abre."""
+    path = os.path.join(program_dir, launcher_name(p))
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(LAUNCHER_SRC.replace("__APP__", p["app_name"]).replace("__SCRIPT__", p["script"]))
+    return path
+
+
 def launch_command(p, program_dir, mode, py_exe=None):
     """Orden que arranca la aplicación instalada."""
     if mode == "exe":
@@ -549,7 +699,8 @@ def launch_command(p, program_dir, mode, py_exe=None):
         pw = os.path.join(os.path.dirname(py), "pythonw.exe")
         if os.path.isfile(pw):
             py = pw
-    return [py, os.path.join(program_dir, p["script"])]
+    lanz = os.path.join(program_dir, launcher_name(p))
+    return [py, lanz if os.path.isfile(lanz) else os.path.join(program_dir, p["script"])]
 
 
 def _q(args):
@@ -780,6 +931,9 @@ def install(p, plan, log=None):
         if plan.get("deps", True):
             ok, left = install_missing(p, py, log)
             say(log, "==> Librerías: " + ("todo instalado" if ok else "faltan: %s" % ", ".join(left)))
+    if mode == "script":
+        man["launcher"] = write_launcher(p, pd)
+        say(log, "==> Lanzador (deja el registro en %s)" % os.path.join(pd, "arranque.log"))
     cmd = launch_command(p, pd, mode, py)
     man["command"] = cmd
     # 5) accesos directos y arranque automático

@@ -14,7 +14,7 @@ BASE="${WA_BASE_URL:-__BASE_URL__}"
 
 say()  { printf '      %s\n' "$*"; }
 step() { printf '\n\033[36m[%s/5] %s\033[0m\n' "$1" "$2"; }
-die()  { printf '\n\033[31m  ERROR: %s\033[0m\n' "$*" >&2; exit 1; }
+die()  { printf '\n\033[31m  ERROR: %s\033[0m\n  Registro: %s\n' "$*" "${LOG:-}" >&2; exit 1; }
 trap 'die "El instalador se detuvo (linea $LINENO). Puedes volver a ejecutarlo: continua donde lo dejo."' ERR
 
 OS="$(uname -s)"; ARCH="$(uname -m)"
@@ -52,7 +52,11 @@ printf '\n\033[33m  ==============================\n        Widget Arena\n  ====
 echo "  Se instala solo para tu usuario. No hace falta tener Python ni ser administrador."
 echo "  La primera vez descarga unos cientos de MB (las librerias de Qt); puede tardar unos minutos."
 
-mkdir -p "$ROOT" "$BIN" "$RT" "$STAGE"
+mkdir -p "$ROOT" "$BIN" "$RT" "$STAGE" "$ROOT/logs"
+LOG="$ROOT/logs/instalacion.log"
+exec > >(tee -a "$LOG") 2>&1            # todo lo que sale por pantalla queda tambien en el registro
+echo "=== $(date '+%Y-%m-%d %H:%M:%S') ==="; echo "$(uname -srm) | $(command -v bash) $BASH_VERSION | usuario $(id -un)"
+say "registro de esta instalacion: $LOG"
 pkill -f "$PROG/widget_arena.py" 2>/dev/null || true
 
 # --- 1) uv ---------------------------------------------------------------------------------------------------------
@@ -159,7 +163,8 @@ PLEOF
   cat > "$APP/Contents/MacOS/WidgetArena" <<LAEOF
 #!/bin/bash
 cd "$PROG"
-exec "$VPY" "$PROG/widget_arena.py"
+echo "[\$(date '+%F %T')] arranque desde Widget Arena.app" >> "$PROG/arranque.log"
+exec "$VPY" -u "$PROG/widget_arena.py" >> "$PROG/arranque.log" 2>&1
 LAEOF
   chmod +x "$APP/Contents/MacOS/WidgetArena"
 fi
@@ -180,6 +185,20 @@ echo "Widget Arena se ha desinstalado."
 UNEOF
 chmod +x "$ROOT/uninstall.sh"
 
+# comprobacion: ¿cargan de verdad las librerias?
+SMOKE_OK=1
+if [ -z "${WA_NO_DEPS:-}" ]; then
+  say "comprobando que las librerias cargan..."
+  if SM="$(QT_QPA_PLATFORM=offscreen "$VPY" -c "import numpy; from PySide6 import QtWidgets, QtWebEngineWidgets; print('QT_OK')" 2>&1)" && [ "${SM##*$'\n'}" = "QT_OK" ]; then
+    say "librerias correctas"
+  else
+    SMOKE_OK=0
+    printf '\n\033[33m  AVISO: las librerias no cargan en este equipo, asi que el programa no se abrira todavia:\033[0m\n%s\n' "$(printf '%s\n' "$SM" | tail -n 8)"
+    if [ "$KIND" = linux ]; then echo "  Suele faltar alguna libreria del sistema (por ejemplo libxcb-cursor0, libegl1, libnss3). Vuelve a ejecutar el instalador y acepta instalarlas."; fi
+    echo "  Registro: $LOG"
+  fi
+fi
+
 rm -rf "$STAGE"
 printf '\n\033[32m  Listo. Widget Arena esta instalado.\033[0m\n'
 if [ "$KIND" = mac ]; then
@@ -187,8 +206,10 @@ if [ "$KIND" = mac ]; then
 else
   echo "  Lo encuentras en el menu de aplicaciones (Widget Arena) y en el escritorio. Busca su icono junto al reloj."
 fi
-if [ -z "${WA_NO_LAUNCH:-}" ]; then
+echo "  Si alguna vez no se abre, mira su registro: $PROG/arranque.log"
+if [ -z "${WA_NO_LAUNCH:-}" ] && [ "$SMOKE_OK" = 1 ]; then
   if [ "$KIND" = mac ]; then open "$HOME/Applications/Widget Arena.app" || true
-  else nohup setsid "$VPY" "$PROG/widget_arena.py" >/dev/null 2>&1 & fi
+  else nohup setsid "$VPY" "$PROG/widget_arena_lanzador.pyw" >/dev/null 2>&1 & fi
 fi
+sleep 0.5
 exit 0

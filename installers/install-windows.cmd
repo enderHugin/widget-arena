@@ -25,6 +25,9 @@ $Stage = Join-Path $Root 'stage'
 $Prog  = Join-Path $env:LOCALAPPDATA 'Programs\WidgetArena'
 $RegKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\WidgetArena'
 $Total = 5
+$LogDir  = Join-Path $Root 'logs'
+$LogFile = Join-Path $LogDir 'instalacion.log'
+try { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null; Start-Transcript -Path $LogFile -Append -Force | Out-Null } catch { }
 
 function Step([int]$n, [string]$text) {
     Write-Host ''
@@ -72,6 +75,9 @@ try {
     Write-Host '  Se instala solo para tu usuario. No hace falta nada mas: ni Python ni permisos de administrador.'
     Write-Host '  La primera vez descarga unos cientos de MB (las librerias de Qt); puede tardar unos minutos.'
 
+    Say ('registro de esta instalacion: ' + $LogFile)
+    Say ('Windows ' + [Environment]::OSVersion.Version + ' | PowerShell ' + $PSVersionTable.PSVersion + ' | procesador ' + $env:PROCESSOR_ARCHITECTURE + ' | usuario ' + $env:USERNAME)
+    Say ('programa en ' + $Prog)
     if (-not [Environment]::Is64BitOperatingSystem) { throw 'Widget Arena necesita un Windows de 64 bits.' }
     New-Item -ItemType Directory -Force -Path $Root, $Bin, $Rt, $Stage | Out-Null
     Stop-Running
@@ -134,6 +140,7 @@ try {
     $manFile = Join-Path $Prog 'install_manifest.json'
     if (-not (Test-Path $manFile)) { throw 'La instalacion no termino (no hay manifiesto).' }
     $man = Get-Content $manFile -Raw | ConvertFrom-Json
+    $vpy = Join-Path $Prog '.venv\Scripts\python.exe'
     $sh = New-Object -ComObject WScript.Shell
     foreach ($lnk in @($man.shortcuts)) {
         if ($lnk -and (Test-Path $lnk)) {
@@ -181,19 +188,43 @@ Start-Process -WindowStyle Hidden -FilePath cmd.exe -ArgumentList '/c ping -n 4 
 
     Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
 
+    # Comprobacion: ¿cargan de verdad las librerias? (si no, se dice aqui y no con un programa que "no hace nada")
+    Say 'comprobando que las librerias cargan...'
+    $smoke = ''; $smokeRc = 1
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $env:QT_QPA_PLATFORM = 'offscreen'
+        $smoke = (& $vpy -c "import numpy; from PySide6 import QtWidgets, QtWebEngineWidgets; print('QT_OK')" 2>&1 | Out-String)
+        $smokeRc = $LASTEXITCODE
+    } catch { $smoke = [string]$_ }
+    $ErrorActionPreference = $old
+    Remove-Item Env:\QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+    if ($smokeRc -ne 0 -or $smoke -notmatch 'QT_OK') {
+        Write-Host $smoke -ForegroundColor Yellow
+        $hint = ''
+        if ($smoke -match 'DLL load failed') { $hint = "`n`nFalta el componente 'Microsoft Visual C++ Redistributable'. Instalalo desde https://aka.ms/vs/17/release/vc_redist.x64.exe y abre Widget Arena desde el menu Inicio." }
+        $tl = ($smoke -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 6) -join "`n"
+        try { Stop-Transcript | Out-Null } catch { }
+        Show-Box ("Widget Arena se ha instalado, pero sus librerias no cargan en este equipo, asi que no se abrira todavia.`n`n" + $tl + $hint + "`n`nRegistro: " + $LogFile) 'Warning'
+        exit 2
+    }
+    Say 'librerias correctas'
+
     Write-Host ''
     Write-Host '  Listo. Widget Arena esta instalado.' -ForegroundColor Green
     Write-Host '  Lo encuentras en el menu Inicio y en el escritorio. Se abre ahora; busca su icono junto al reloj.'
     $cmd = @($man.command)
     Start-Process -FilePath $cmd[0] -ArgumentList ('"' + $cmd[1] + '"') -WorkingDirectory $Prog
     Start-Sleep -Seconds 2
-    Show-Box ("Widget Arena esta instalado y se esta abriendo.`n`nBusca su icono junto al reloj (si no lo ves, en las flechas de iconos ocultos). Tambien lo tienes en el menu Inicio y en el escritorio.") 'Information'
+    Show-Box ("Widget Arena esta instalado y se esta abriendo.`n`nBusca su icono junto al reloj (si no lo ves, en las flechas de iconos ocultos). Tambien lo tienes en el menu Inicio y en el escritorio.`n`nSi alguna vez no se abre, mira su registro: " + (Join-Path $Prog 'arranque.log')) 'Information'
+    try { Stop-Transcript | Out-Null } catch { }
     exit 0
 }
 catch {
     Write-Host ''
     Write-Host ('  ERROR: ' + $_.Exception.Message) -ForegroundColor Red
     Write-Host ('  ' + $_.ScriptStackTrace) -ForegroundColor DarkGray
-    Show-Box ("No se pudo completar la instalacion:`n`n" + $_.Exception.Message + "`n`nPuedes volver a ejecutar el instalador: continuara donde lo dejo.") 'Error'
+    Show-Box ("No se pudo completar la instalacion:`n`n" + $_.Exception.Message + "`n`nPuedes volver a ejecutar el instalador: continuara donde lo dejo.`n`nRegistro: " + $LogFile) 'Error'
+    try { Stop-Transcript | Out-Null } catch { }
     exit 1
 }
