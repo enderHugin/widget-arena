@@ -1,0 +1,45 @@
+name: Publicar página e instaladores
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', 'installers/**', 'assets/**', 'tools/**', 'defaults/**', 'widget_arena.py', 'herramientas.py', 'VERSION', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Comprobar que el programa compila y que los instaladores no tienen errores de sintaxis
+        run: |
+          python3 -m py_compile widget_arena.py herramientas.py
+          bash -n installers/install-unix.sh
+      - name: Montar el sitio (la URL base se calcula sola)
+        run: |
+          OWNER="${GITHUB_REPOSITORY%%/*}"; REPO="${GITHUB_REPOSITORY#*/}"
+          if [ "$REPO" = "$OWNER.github.io" ]; then BASE="https://$OWNER.github.io"; else BASE="https://$OWNER.github.io/$REPO"; fi
+          bash tools/build_site.sh "$BASE" _site "https://github.com/$GITHUB_REPOSITORY"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

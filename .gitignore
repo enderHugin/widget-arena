@@ -1,0 +1,7 @@
+_site/
+__pycache__/
+*.pyc
+herramientas.json
+widget_arena_data/
+widget_arena_location.json
+.venv/

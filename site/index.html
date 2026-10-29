@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Widget Arena</title>
+<meta name="description" content="Notas y widgets enlazados con cables en tu escritorio. Instalación con un clic para Windows, macOS y Linux.">
+<link rel="icon" href="favicon.png">
+<style>
+  :root {
+    --bg: #fbf8ef; --ink: #1f2430; --muted: #5d6475; --card: #ffffff; --line: #e6e0cd;
+    --accent: #facc15; --accent-ink: #3b2f00; --accent-strong: #e0b300; --cable: #6b7a99; --shadow: 0 10px 30px rgba(60, 45, 0, .14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16181f; --ink: #eef0f6; --muted: #a2a9bb; --card: #1f222c; --line: #2d3140; --cable: #8d9bb8; --shadow: 0 10px 30px rgba(0, 0, 0, .45); }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 20px; }
+  header.top { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .2px; }
+  .brand img { width: 34px; height: 34px; }
+  .lang { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 14px; cursor: pointer; }
+  .lang:hover { color: var(--ink); border-color: var(--muted); }
+  .hero { display: grid; grid-template-columns: 1.05fr .95fr; gap: 36px; align-items: center; padding: 28px 0 40px; }
+  h1 { font-size: clamp(34px, 5.4vw, 56px); line-height: 1.04; margin: 0 0 14px; letter-spacing: -.02em; }
+  .lead { font-size: 19px; color: var(--muted); margin: 0 0 26px; max-width: 34em; }
+  .cta { display: inline-flex; align-items: center; gap: 12px; background: var(--accent); color: var(--accent-ink); text-decoration: none; font-weight: 700;
+         font-size: 20px; padding: 16px 26px; border-radius: 14px; border: 2px solid var(--accent-strong); box-shadow: 0 4px 0 var(--accent-strong); transition: transform .08s, box-shadow .08s; }
+  .cta:hover { transform: translateY(1px); box-shadow: 0 3px 0 var(--accent-strong); }
+  .cta:active { transform: translateY(4px); box-shadow: 0 0 0 var(--accent-strong); }
+  .cta:focus-visible, a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid #3b82f6; outline-offset: 3px; }
+  .cta svg { width: 24px; height: 24px; flex: none; }
+  .fine { color: var(--muted); font-size: 15px; margin: 14px 0 0; }
+  .others { margin: 18px 0 0; font-size: 15px; color: var(--muted); }
+  .others a { color: inherit; }
+  .art { position: relative; height: 270px; }
+  .note { position: absolute; background: linear-gradient(#fff3a6, #facc15); border: 2px solid #b8860b; border-radius: 6px; box-shadow: var(--shadow); padding: 14px 14px 18px; color: #2b2a20; font: 600 15px/1.35 "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive, system-ui; }
+  .note::before, .note::after { content: ""; display: block; height: 3px; border-radius: 3px; background: rgba(31, 39, 55, .55); margin: 6px 0; }
+  .note::after { width: 60%; }
+  .n1 { left: 2%; top: 10%; width: 44%; transform: rotate(-4deg); }
+  .n2 { right: 2%; top: 4%; width: 40%; transform: rotate(3deg); }
+  .n3 { right: 14%; bottom: 2%; width: 42%; transform: rotate(-2deg); }
+  .cables { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+  .cables path { fill: none; stroke: var(--cable); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 1 9; }
+  section.block { padding: 26px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 24px; margin: 0 0 12px; letter-spacing: -.01em; }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; counter-reset: s; padding: 0; margin: 0; list-style: none; }
+  .steps li { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; position: relative; counter-increment: s; }
+  .steps li::before { content: counter(s); display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-weight: 700; margin-bottom: 8px; }
+  .steps b { display: block; margin-bottom: 4px; }
+  .steps p { margin: 0; color: var(--muted); font-size: 15.5px; }
+  .os-tabs { display: flex; gap: 8px; margin: 0 0 14px; flex-wrap: wrap; }
+  .os-tabs button { border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 7px 14px; border-radius: 999px; font: inherit; font-size: 15px; cursor: pointer; }
+  .os-tabs button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent-strong); color: var(--accent-ink); font-weight: 700; }
+  pre { background: #12141b; color: #e8ecf5; border-radius: 12px; padding: 14px 16px; overflow-x: auto; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 10px 0; position: relative; }
+  .copy { position: absolute; right: 8px; top: 8px; background: #2a2f3d; color: #e8ecf5; border: 1px solid #3b4254; border-radius: 8px; padding: 4px 10px; font: 13px system-ui; cursor: pointer; }
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 4px 16px; margin: 10px 0; }
+  summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
+  details ul { margin: 0 0 12px; padding-left: 20px; color: var(--muted); font-size: 16px; }
+  details li { margin: 4px 0; }
+  footer { padding: 28px 0 44px; color: var(--muted); font-size: 14.5px; border-top: 1px solid var(--line); }
+  footer a { color: inherit; }
+  [hidden] { display: none !important; }
+  @media (max-width: 760px) {
+    .hero { grid-template-columns: 1fr; gap: 18px; }
+    .art { order: -1; height: 240px; }
+    .steps { grid-template-columns: 1fr; }
+    .cta { width: 100%; justify-content: center; }
+    body { font-size: 16.5px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .cta { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><img src="favicon.png" alt="" width="34" height="34"><span>Widget Arena</span></div>
+    <button class="lang" id="lang" type="button" aria-label="Language / Idioma">English</button>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div>
+        <h1 data-i="h1">Notas y widgets en tu escritorio, enlazados con cables.</h1>
+        <p class="lead" data-i="lead">Crea notas, enlázalas como padres e hijos y mira cómo cuelgan sus cuerdas. Un solo clic para instalarlo: sin Python, sin administrador, sin configurar nada.</p>
+        <a class="cta" id="cta" href="dl/install-windows.cmd" download>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16"/></svg>
+          <span id="cta-text">Descargar para Windows</span>
+        </a>
+        <p class="fine" id="fine"></p>
+        <p class="others" id="others"></p>
+      </div>
+      <div class="art" aria-hidden="true">
+        <svg class="cables" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M24 24 C 40 44, 60 4, 78 18" vector-effect="non-scaling-stroke"/><path d="M78 18 C 92 50, 82 62, 65 84" vector-effect="non-scaling-stroke"/></svg>
+        <div class="note n1">Comprar café</div>
+        <div class="note n2">Llamar a Marta</div>
+        <div class="note n3">Idea del proyecto</div>
+      </div>
+    </div>
+
+    <section class="block" id="how">
+      <h2 data-i="h-how">Cómo se instala</h2>
+      <ol class="steps">
+        <li><b data-i="s1t">Descarga el instalador</b><p data-i="s1p">Pulsa el botón de arriba. Es un archivo pequeño.</p></li>
+        <li><b data-i="s2t">Ábrelo</b><p id="s2p"></p></li>
+        <li><b data-i="s3t">Espera unos minutos</b><p data-i="s3p">La primera vez prepara su propio Python y descarga las librerías (unos cientos de MB). Después se abre solo y queda en tu menú de aplicaciones.</p></li>
+      </ol>
+    </section>
+
+    <section class="block">
+      <div class="os-tabs" id="tabs" role="group" aria-label="Sistema operativo">
+        <button type="button" data-os="win">Windows</button>
+        <button type="button" data-os="mac">macOS</button>
+        <button type="button" data-os="linux">Linux</button>
+      </div>
+      <div id="os-help"></div>
+    </section>
+
+    <section class="block">
+      <details>
+        <summary data-i="d1">¿Qué hace exactamente el instalador?</summary>
+        <ul data-list="d1l"></ul>
+      </details>
+      <details>
+        <summary data-i="d2">¿Cómo se desinstala?</summary>
+        <ul data-list="d2l"></ul>
+      </details>
+      <details>
+        <summary data-i="d3">¿Por qué mi sistema avisa de que no lo conoce?</summary>
+        <ul data-list="d3l"></ul>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <span data-i="foot">Software libre con licencia MIT.</span>
+    · <a href="__REPO_URL__" id="repo">GitHub</a> · v__VERSION__
+  </footer>
+</div>
+
+<script>
+(function () {
+  var BASE = "__BASE_URL__";
+  var T = {
+    es: {
+      h1: "Notas y widgets en tu escritorio, enlazados con cables.",
+      lead: "Crea notas, enlázalas como padres e hijos y mira cómo cuelgan sus cuerdas. Un solo clic para instalarlo: sin Python, sin administrador, sin configurar nada.",
+      cta_win: "Descargar para Windows", cta_mac: "Descargar para macOS", cta_linux: "Descargar para Linux", cta_any: "Elegir mi sistema",
+      fine_win: "Se instala solo para tu usuario. Si Windows avisa, mira «¿Por qué mi sistema avisa?» más abajo.",
+      fine_mac: "Se instala solo para tu usuario, en la carpeta Aplicaciones de tu cuenta.",
+      fine_linux: "Se instala solo para tu usuario. Pide la contraseña solo si faltan librerías del sistema.",
+      fine_any: "Widget Arena es para ordenador (Windows, macOS o Linux). Abre esta página desde tu ordenador.",
+      others: "¿Otro sistema?", "h-how": "Cómo se instala", s1t: "Descarga el instalador", s1p: "Pulsa el botón de arriba. Es un archivo pequeño.",
+      s2t: "Ábrelo", s3t: "Espera unos minutos", s3p: "La primera vez prepara su propio Python y descarga las librerías (unos cientos de MB). Después se abre solo y queda en tu menú de aplicaciones.",
+      s2_win: "Haz doble clic en install-windows.cmd (en Descargas). Si Windows muestra «Windows protegió su PC»: Más información → Ejecutar de todas formas.",
+      s2_mac: "Abre el .zip y haz doble clic en «Widget Arena.command». Si macOS dice que no puede verificarlo: clic derecho → Abrir.",
+      s2_linux: "Abre una terminal y ejecuta la orden de más abajo (o: bash ~/Descargas/install-linux.sh).",
+      os_win: "Windows 10 u 11, 64 bits. El instalador es un archivo .cmd que prepara todo en tu carpeta de usuario.",
+      os_mac: "macOS 12 o posterior (Intel o Apple Silicon). Descarga el .zip, ábrelo y haz doble clic en «Widget Arena.command». También puedes pegar esta orden en la Terminal:",
+      os_linux: "Cualquier distribución con glibc (Ubuntu, Debian, Fedora, Arch, openSUSE…). Pega esta orden en una terminal:",
+      copy: "Copiar", copied: "¡Copiado!",
+      d1: "¿Qué hace exactamente el instalador?", d2: "¿Cómo se desinstala?", d3: "¿Por qué mi sistema avisa de que no lo conoce?",
+      d1l: ["Descarga «uv», una herramienta de un solo archivo, y con ella un Python 3.12 propio de Widget Arena. No toca el Python que tengas instalado.",
+            "Descarga el programa de esta página y sus librerías (numpy y PySide6/Qt) en un entorno aislado.",
+            "Crea los accesos directos (menú de aplicaciones y escritorio) con su icono. En Windows también lo añade a «Aplicaciones instaladas».",
+            "Todo va a carpetas de tu usuario; no necesita permisos de administrador. En Linux, solo si faltan librerías del sistema que Qt necesita, te pide permiso para instalarlas.",
+            "Volver a ejecutar el instalador actualiza el programa conservando tus notas y ajustes."],
+      d2l: ["Windows: Configuración → Aplicaciones → Aplicaciones instaladas → Widget Arena → Desinstalar.",
+            "Linux y macOS: ejecuta  bash ~/.local/share/WidgetArena/uninstall.sh  (en macOS: «~/Library/Application Support/WidgetArena/uninstall.sh»).",
+            "Te pregunta si quieres borrar también tus notas y ajustes; por defecto se conservan."],
+      d3l: ["El instalador no está firmado con un certificado de pago, así que Windows (SmartScreen) y macOS (Gatekeeper) lo avisan al abrir algo descargado que no conocen. Es normal.",
+            "El código es abierto: puedes leer exactamente lo que hace el instalador en el repositorio de GitHub antes de ejecutarlo.",
+            "Windows: «Más información» → «Ejecutar de todas formas». macOS: clic derecho sobre el archivo → «Abrir»."],
+      foot: "Software libre con licencia MIT."
+    },
+    en: {
+      h1: "Notes and widgets on your desktop, linked with cables.",
+      lead: "Create notes, link them as parents and children and watch their ropes hang. One click to install: no Python, no admin rights, nothing to configure.",
+      cta_win: "Download for Windows", cta_mac: "Download for macOS", cta_linux: "Download for Linux", cta_any: "Choose my system",
+      fine_win: "Installs for your user only. If Windows shows a warning, see “Why does my system warn me?” below.",
+      fine_mac: "Installs for your user only, in your account's Applications folder.",
+      fine_linux: "Installs for your user only. It asks for your password only if system libraries are missing.",
+      fine_any: "Widget Arena is for computers (Windows, macOS or Linux). Open this page from your computer.",
+      others: "Another system?", "h-how": "How to install", s1t: "Download the installer", s1p: "Press the button above. It is a small file.",
+      s2t: "Open it", s3t: "Wait a few minutes", s3p: "The first time it prepares its own Python and downloads the libraries (a few hundred MB). Then it opens by itself and stays in your applications menu.",
+      s2_win: "Double-click install-windows.cmd (in Downloads). If Windows shows “Windows protected your PC”: More info → Run anyway.",
+      s2_mac: "Open the .zip and double-click “Widget Arena.command”. If macOS says it cannot verify it: right-click → Open.",
+      s2_linux: "Open a terminal and run the command below (or: bash ~/Downloads/install-linux.sh).",
+      os_win: "Windows 10 or 11, 64-bit. The installer is a .cmd file that sets everything up in your user folder.",
+      os_mac: "macOS 12 or later (Intel or Apple Silicon). Download the .zip, open it and double-click “Widget Arena.command”. You can also paste this into Terminal:",
+      os_linux: "Any glibc-based distribution (Ubuntu, Debian, Fedora, Arch, openSUSE…). Paste this into a terminal:",
+      copy: "Copy", copied: "Copied!",
+      d1: "What exactly does the installer do?", d2: "How do I uninstall it?", d3: "Why does my system warn me about it?",
+      d1l: ["Downloads “uv”, a single-file tool, and with it a private Python 3.12 for Widget Arena. It does not touch any Python you already have.",
+            "Downloads the program from this page and its libraries (numpy and PySide6/Qt) into an isolated environment.",
+            "Creates shortcuts (applications menu and desktop) with its icon. On Windows it also adds it to “Installed apps”.",
+            "Everything goes into your user folders; no admin rights needed. On Linux, only if system libraries Qt needs are missing, it asks permission to install them.",
+            "Running the installer again updates the program and keeps your notes and settings."],
+      d2l: ["Windows: Settings → Apps → Installed apps → Widget Arena → Uninstall.",
+            "Linux and macOS: run  bash ~/.local/share/WidgetArena/uninstall.sh  (on macOS: “~/Library/Application Support/WidgetArena/uninstall.sh”).",
+            "It asks whether to also delete your notes and settings; by default they are kept."],
+      d3l: ["The installer is not signed with a paid certificate, so Windows (SmartScreen) and macOS (Gatekeeper) warn about downloaded files they do not know. That is expected.",
+            "The code is open source: you can read exactly what the installer does in the GitHub repository before running it.",
+            "Windows: “More info” → “Run anyway”. macOS: right-click the file → “Open”."],
+      foot: "Free software under the MIT license."
+    }
+  };
+  var FILES = { win: "dl/install-windows.cmd", mac: "dl/install-macos.zip", linux: "dl/install-linux.sh" };
+  var NAMES = { win: "Windows", mac: "macOS", linux: "Linux" };
+  var lang = (navigator.language || "es").toLowerCase().indexOf("es") === 0 ? "es" : "en";
+  try { var saved = localStorage.getItem("wa-lang"); if (saved === "es" || saved === "en") lang = saved; } catch (e) {}
+
+  function detect() {
+    var ua = (navigator.userAgent || "").toLowerCase();
+    var pf = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "").toLowerCase();
+    if (/android|iphone|ipad|ipod/.test(ua) || (pf === "macintel" && navigator.maxTouchPoints > 1)) return "any";
+    if (pf.indexOf("win") === 0 || ua.indexOf("windows") >= 0) return "win";
+    if (pf.indexOf("mac") === 0 || ua.indexOf("mac os") >= 0) return "mac";
+    if (ua.indexOf("linux") >= 0 || ua.indexOf("x11") >= 0 || pf.indexOf("linux") >= 0) return "linux";
+    return "any";
+  }
+  var os = detect();
+  var shown = os === "any" ? "win" : os;      // pestaña de ayuda mostrada
+
+  function $(s) { return document.querySelector(s); }
+  function absolute(path) { return (BASE.indexOf("http") === 0 ? BASE.replace(/\/$/, "") : location.href.replace(/[^\/]*$/, "").replace(/\/$/, "")) + "/" + path; }
+  function cmd(kind) {
+    return "curl -fsSL " + absolute("dl/install-linux.sh") + " | bash";
+  }
+  function render() {
+    var t = T[lang];
+    document.documentElement.lang = lang;
+    $("#lang").textContent = lang === "es" ? "English" : "Español";
+    document.querySelectorAll("[data-i]").forEach(function (el) { var k = el.getAttribute("data-i"); if (t[k]) el.textContent = t[k]; });
+    document.querySelectorAll("[data-list]").forEach(function (ul) {
+      ul.innerHTML = ""; t[ul.getAttribute("data-list")].forEach(function (s) { var li = document.createElement("li"); li.textContent = s; ul.appendChild(li); });
+    });
+    var cta = $("#cta");
+    if (os === "any") { cta.setAttribute("href", "#how"); cta.removeAttribute("download"); $("#cta-text").textContent = t.cta_any; }
+    else { cta.setAttribute("href", FILES[os]); cta.setAttribute("download", ""); $("#cta-text").textContent = t["cta_" + os]; }
+    $("#fine").textContent = t["fine_" + os];
+    var o = $("#others"); o.textContent = t.others + " ";
+    ["win", "mac", "linux"].forEach(function (k, i) {
+      if (k === os) return;
+      var a = document.createElement("a"); a.href = FILES[k]; a.setAttribute("download", ""); a.textContent = NAMES[k];
+      o.appendChild(a); o.appendChild(document.createTextNode(" · "));
+    });
+    if (o.lastChild && o.lastChild.nodeType === 3) o.removeChild(o.lastChild);
+    $("#s2p").textContent = t["s2_" + shown];
+    document.querySelectorAll("#tabs button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-os") === shown)); });
+    var box = $("#os-help"); box.innerHTML = "";
+    var p = document.createElement("p"); p.textContent = t["os_" + shown]; box.appendChild(p);
+    if (shown !== "win") {
+      var pre = document.createElement("pre"); pre.textContent = cmd(shown);
+      var b = document.createElement("button"); b.type = "button"; b.className = "copy"; b.textContent = t.copy;
+      b.onclick = function () {
+        var done = function () { b.textContent = t.copied; setTimeout(function () { b.textContent = t.copy; }, 1500); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd(shown)).then(done, function () {});
+      };
+      pre.appendChild(b); box.appendChild(pre);
+    }
+  }
+  $("#lang").addEventListener("click", function () { lang = lang === "es" ? "en" : "es"; try { localStorage.setItem("wa-lang", lang); } catch (e) {} render(); });
+  document.querySelectorAll("#tabs button").forEach(function (b) { b.addEventListener("click", function () { shown = b.getAttribute("data-os"); render(); }); });
+  render();
+})();
+</script>
+</body>
+</html>

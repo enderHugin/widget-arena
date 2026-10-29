@@ -1,0 +1,20149 @@
+import sys
+import json
+import os
+import datetime
+import copy 
+import hashlib
+import re
+import shutil
+import time
+import ctypes
+import random
+import urllib.parse
+# ======================================================================
+# [PACK93] Arranque seguro: detecta el sistema y ofrece instalar lo que falte (librerias de Python y, en Linux, las
+# del sistema que Qt necesita). Solo usa la libreria estandar y se ejecuta ANTES de importar numpy / PySide6.
+#   WIDGET_ARENA_NO_BOOTSTRAP=1   no comprobar nada      WIDGET_ARENA_BOOTSTRAP_YES=1 / 0   responder si / no sin preguntar
+# ======================================================================
+_WA_REQS = (('numpy', 'numpy'), ('PySide6', 'PySide6'), ('PySide6.QtWebEngineWidgets', 'PySide6'))
+# (nombre en libNOMBRE.so, paquete Debian/Ubuntu/Mint, Fedora, Arch, openSUSE)
+_WA_SYSLIBS = (
+    ('xcb-cursor', 'libxcb-cursor0', 'xcb-util-cursor', 'xcb-util-cursor', 'libxcb-cursor0'),
+    ('xkbcommon-x11', 'libxkbcommon-x11-0', 'libxkbcommon-x11', 'libxkbcommon-x11', 'libxkbcommon-x11-0'),
+    ('xcb-icccm', 'libxcb-icccm4', 'xcb-util-wm', 'xcb-util-wm', 'libxcb-icccm4'),
+    ('xcb-image', 'libxcb-image0', 'xcb-util-image', 'xcb-util-image', 'libxcb-image0'),
+    ('xcb-keysyms', 'libxcb-keysyms1', 'xcb-util-keysyms', 'xcb-util-keysyms', 'libxcb-keysyms1'),
+    ('xcb-render-util', 'libxcb-render-util0', 'xcb-util-renderutil', 'xcb-util-renderutil', 'libxcb-render-util0'),
+    ('xcb-shape', 'libxcb-shape0', 'libxcb', 'libxcb', 'libxcb-shape0'),
+    ('EGL', 'libegl1', 'mesa-libEGL', 'libglvnd', 'libEGL1'),
+    ('GL', 'libgl1', 'mesa-libGL', 'libglvnd', 'libGL1'),
+    ('nss3', 'libnss3', 'nss', 'nss', 'mozilla-nss'),
+    ('xcomposite', 'libxcomposite1', 'libXcomposite', 'libxcomposite', 'libXcomposite1'),
+    ('xdamage', 'libxdamage1', 'libXdamage', 'libxdamage', 'libXdamage1'),
+    ('xrandr', 'libxrandr2', 'libXrandr', 'libxrandr', 'libXrandr2'),
+    ('Xtst', 'libxtst6', 'libXtst', 'libxtst', 'libXtst6'),
+    ('asound', 'libasound2', 'alsa-lib', 'alsa-lib', 'libasound2'),
+)
+_WA_PKG_CMD = {'debian': ['apt-get', 'install', '-y'], 'fedora': ['dnf', 'install', '-y'],
+               'arch': ['pacman', '-S', '--noconfirm', '--needed'], 'suse': ['zypper', '--non-interactive', 'install']}
+
+
+def _wa_app_dir():
+    a0 = sys.argv[0] if (sys.argv and sys.argv[0] and os.path.exists(sys.argv[0])) else __file__
+    return os.path.dirname(os.path.abspath(a0))
+
+
+def _wa_venv_python(app):
+    d = os.path.join(app, '.venv')
+    return d, os.path.join(d, 'Scripts', 'python.exe') if os.name == 'nt' else os.path.join(d, 'bin', 'python')
+
+
+# Con Python < 3.12, PySide6 6.11 y 6.12 corrompen el contador de referencias de None (QAction.menu() y otros) y la aplicacion aborta:
+# se usa PySide6 < 6.11 (con 6.10.x funciona).
+_WA_PYSIDE_OLD_PY = 'PySide6<6.11'
+_WA_CHECK = """
+import sys
+import importlib.util as u
+r = []
+for m, p in %r:
+    if m in sys.modules:
+        continue
+    try:
+        ok = u.find_spec(m) is not None
+    except Exception:
+        ok = False
+    if not ok and p not in r:
+        r.append(p)
+if sys.version_info < (3, 12):
+    bad = False
+    if 'PySide6' not in r:
+        try:
+            from importlib.metadata import version
+            bad = tuple(int(x) for x in version('PySide6').split('.')[:2]) >= (6, 11)
+        except Exception:
+            bad = False
+    if bad or 'PySide6' in r:
+        r = [x for x in r if x != 'PySide6'] + [%r]
+""" % (_WA_REQS, _WA_PYSIDE_OLD_PY)
+
+
+def _wa_missing(py=None):
+    """Paquetes pip que faltan (o sobran por incompatibles), en este Python o (si se indica) en el Python 'py'."""
+    if py:
+        import subprocess
+        try:
+            return subprocess.run([py, '-c', _WA_CHECK + "print(' '.join(r))"], capture_output=True, text=True, timeout=60).stdout.split()
+        except Exception:
+            return ['numpy']
+    ns = {}
+    exec(_WA_CHECK, ns)
+    return ns['r']
+
+
+def _wa_externally_managed():
+    """Debian 12+, Ubuntu 23.04+, Homebrew...: pip no deja instalar en el Python del sistema (PEP 668)."""
+    try:
+        import sysconfig
+        return sys.prefix == getattr(sys, 'base_prefix', sys.prefix) and os.path.exists(os.path.join(sysconfig.get_path('stdlib'), 'EXTERNALLY-MANAGED'))
+    except Exception:
+        return False
+
+
+def _wa_os_info():
+    import platform
+    name, fam = platform.system() or '?', None
+    if name == 'Linux':
+        info = {}
+        try:
+            with open('/etc/os-release', 'r', encoding='utf-8', errors='replace') as f:
+                for ln in f:
+                    if '=' in ln:
+                        k, v = ln.rstrip('\n').split('=', 1)
+                        info[k] = v.strip('"')
+        except OSError:
+            pass
+        ids = ((info.get('ID', '') + ' ' + info.get('ID_LIKE', '')).lower()).split()
+        fam = ('debian' if any(i in ids for i in ('debian', 'ubuntu', 'linuxmint', 'mint', 'pop', 'raspbian')) else
+               'fedora' if any(i in ids for i in ('fedora', 'rhel', 'centos', 'rocky', 'almalinux')) else
+               'arch' if any(i in ids for i in ('arch', 'manjaro', 'endeavouros')) else
+               'suse' if any(i in ids for i in ('suse', 'opensuse', 'opensuse-leap', 'opensuse-tumbleweed', 'sles')) else None)
+        name = info.get('PRETTY_NAME') or 'Linux'
+    elif name == 'Darwin':
+        name = 'macOS ' + (platform.mac_ver()[0] or '')
+    elif name == 'Windows':
+        name = 'Windows ' + (platform.release() or '')
+    return name.strip(), fam
+
+
+def _wa_has_tty():
+    try:
+        return bool(sys.stdin and sys.stdin.isatty())
+    except Exception:
+        return False
+
+
+def _wa_ask(title, text):
+    """Pregunta si/no: ventana (tkinter), si no consola, si no (Windows) cuadro nativo. Sin forma de preguntar: no."""
+    env = os.environ.get('WIDGET_ARENA_BOOTSTRAP_YES')
+    if env in ('0', '1'):
+        print('\n' + title + '\n' + text + '\n-> ' + ('si' if env == '1' else 'no'), file=sys.stderr)
+        return env == '1'
+    if not _wa_has_tty() or os.name == 'nt':
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            r = tk.Tk()
+            r.withdraw()
+            try:
+                return bool(messagebox.askyesno(title, text, parent=r))
+            finally:
+                r.destroy()
+        except Exception:
+            pass
+    if _wa_has_tty():
+        try:
+            print('\n' + title + '\n' + text)
+            return input('[s/N]: ').strip().lower() in ('s', 'si', 'y', 'yes')
+        except Exception:
+            pass
+    if os.name == 'nt':
+        try:
+            return ctypes.windll.user32.MessageBoxW(0, text, title, 0x24) == 6
+        except Exception:
+            pass
+    print(title + '\n' + text, file=sys.stderr)
+    return False
+
+
+def _wa_say(title, text):
+    """Aviso sin pregunta (ventana si se puede; siempre tambien por consola)."""
+    print('\n' + title + '\n' + text, file=sys.stderr)
+    if os.environ.get('WIDGET_ARENA_BOOTSTRAP_YES') in ('0', '1') or _wa_has_tty():
+        return
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        r = tk.Tk()
+        r.withdraw()
+        try:
+            messagebox.showinfo(title, text, parent=r)
+        finally:
+            r.destroy()
+    except Exception:
+        if os.name == 'nt':
+            try:
+                ctypes.windll.user32.MessageBoxW(0, text, title, 0x40)
+            except Exception:
+                pass
+
+
+def _wa_run(cmds, title, gui=True):
+    """Ejecuta las ordenes en fila mostrando su salida (ventana con registro si hay tkinter y gui=True; si no, consola)."""
+    import subprocess
+    import threading
+    q, st = [], {'rc': None}
+
+    def work():
+        rc = 0
+        for c in cmds:
+            q.append('$ ' + ' '.join(c) + '\n')
+            try:
+                kw = {'creationflags': 0x08000000} if os.name == 'nt' else {}
+                p = subprocess.Popen(c, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace', **kw)
+                for line in p.stdout:
+                    q.append(line)
+                rc = p.wait()
+            except Exception as e:
+                q.append('ERROR: %s\n' % e)
+                rc = 1
+            if rc != 0:
+                break
+        st['rc'] = rc
+
+    th = threading.Thread(target=work, daemon=True)
+    win = None
+    if gui and os.environ.get('WIDGET_ARENA_BOOTSTRAP_YES') not in ('0', '1'):
+        try:
+            import tkinter as tk
+            win = tk.Tk()
+            win.title(title)
+            txt = tk.Text(win, width=100, height=22, bg='#111', fg='#ddd', font=('Courier', 9))
+            txt.pack(fill='both', expand=True)
+
+            def poll():
+                while q:
+                    s = q.pop(0)
+                    txt.insert('end', s)
+                    txt.see('end')
+                    print(s, end='')
+                if st['rc'] is None:
+                    win.after(120, poll)
+                else:
+                    win.after(700, win.destroy)
+            th.start()
+            win.after(120, poll)
+            win.mainloop()
+        except Exception:
+            win = None
+    if win is None:
+        if not th.is_alive() and st['rc'] is None:
+            th.start()
+        while th.is_alive() or q:
+            while q:
+                print(q.pop(0), end='')
+            th.join(0.1)
+    th.join()
+    while q:
+        print(q.pop(0), end='')
+    return st['rc'] == 0
+
+
+def _wa_reexec(py):
+    """Vuelve a lanzar este mismo programa con otro Python (el del entorno .venv)."""
+    os.environ['WIDGET_ARENA_REEXEC'] = '1'
+    args = [py] + list(sys.argv)
+    if os.name == 'nt':
+        import subprocess
+        sys.exit(subprocess.call(args))
+    os.execv(py, args)
+
+
+def _wa_elevate(cmd):
+    """Antepone sudo / pkexec a una orden de instalacion del sistema (o nada si ya es root). None = no hay forma."""
+    if hasattr(os, 'geteuid') and os.geteuid() == 0:
+        return list(cmd)
+    import shutil as _sh
+    if _wa_has_tty() and _sh.which('sudo'):
+        return ['sudo'] + list(cmd)
+    if _sh.which('pkexec'):
+        return ['pkexec'] + list(cmd)
+    if _sh.which('sudo'):
+        return ['sudo'] + list(cmd)
+    return None
+
+
+def _wa_install_system(fam, pkgs, title):
+    cmd = _WA_PKG_CMD.get(fam)
+    if not cmd or not pkgs:
+        return False
+    full = _wa_elevate(cmd + list(pkgs))
+    if full is None:
+        return False
+    if _wa_has_tty():                                     # en terminal: sudo pide la contrasena directamente
+        import subprocess
+        try:
+            return subprocess.call(full) == 0
+        except Exception:
+            return False
+    return _wa_run([full], title)
+
+
+def _wa_bootstrap_python():
+    miss = _wa_missing()
+    if not miss:
+        return
+    app = _wa_app_dir()
+    vdir, vpy = _wa_venv_python(app)
+    if os.path.exists(vpy) and os.path.realpath(sys.prefix) != os.path.realpath(vdir) and not _wa_missing(vpy):
+        _wa_reexec(vpy)                                   # ya hay un entorno .venv con todo: se usa
+        return
+    if os.environ.get('WIDGET_ARENA_REEXEC') == '1':
+        return                                            # ya se reintento: que salga el error normal
+    osname, fam = _wa_os_info()
+    import platform
+    in_venv = sys.prefix != getattr(sys, 'base_prefix', sys.prefix)
+    use_venv = (not in_venv) and _wa_externally_managed()
+    dest = ("un entorno propio en " + vdir + " (este Python del sistema no admite instalar librerias directamente)") if use_venv else (
+        "este Python (" + sys.prefix + ")")
+    msg = ("Widget Arena necesita estas librerias de Python y no las encuentra (o la version instalada no es compatible con Python "
+           + platform.python_version() + "): " + ", ".join(miss) + ".\n\n"
+           "Sistema detectado: " + osname + " \u00b7 Python " + platform.python_version() + "\n"
+           "Se descargaran de internet (unos 300 MB la primera vez) y se instalaran en " + dest + ".\n\n"
+           "\u00bfDescargarlas e instalarlas ahora?")
+    if not _wa_ask("Widget Arena: faltan librerias", msg):
+        print("Instalacion cancelada. Puedes hacerlo a mano:  " + sys.executable + " -m pip install " + " ".join(miss), file=sys.stderr)
+        return
+    if use_venv:
+        ok = _wa_run([[sys.executable, '-m', 'venv', vdir]], "Widget Arena: creando el entorno")
+        if not ok or not os.path.exists(vpy):
+            hint = {'debian': "sudo apt install python3-venv python3-pip", 'fedora': "sudo dnf install python3-pip",
+                    'arch': "sudo pacman -S python-pip", 'suse': "sudo zypper install python3-pip"}.get(fam, "instala el modulo venv de tu Python")
+            if fam == 'debian' and _wa_ask("Widget Arena: falta python3-venv", "No se pudo crear el entorno: falta el paquete python3-venv.\n\n\u00bfInstalarlo ahora con " + hint + "?"):
+                _wa_install_system(fam, ['python3-venv', 'python3-pip'], "Widget Arena: instalando python3-venv")
+                _wa_run([[sys.executable, '-m', 'venv', vdir]], "Widget Arena: creando el entorno")
+            if not os.path.exists(vpy):
+                _wa_say("Widget Arena", "No se pudo crear el entorno de Python. Prueba:\n  " + hint + "\ny vuelve a abrir Widget Arena.")
+                return
+        py = vpy
+    else:
+        py = sys.executable
+    pip = [py, '-m', 'pip', 'install', '--disable-pip-version-check'] + miss
+    ok = _wa_run([pip], "Widget Arena: instalando librerias")
+    if not ok and not use_venv and not in_venv:
+        ok = _wa_run([pip[:4] + ['--user'] + pip[4:]], "Widget Arena: instalando librerias (usuario)")
+    if not ok:
+        _wa_say("Widget Arena", "No se pudieron instalar las librerias. Prueba a mano:\n  " + " ".join(pip) + "\n(mira el mensaje de error de arriba)")
+        return
+    if use_venv:
+        _wa_reexec(vpy)
+    else:
+        import importlib
+        importlib.invalidate_caches()
+
+
+def _wa_syslibs_missing():
+    import subprocess
+    import glob
+    text = ''
+    try:
+        text = subprocess.run(['ldconfig', '-p'], capture_output=True, text=True, timeout=20).stdout
+    except Exception:
+        pass
+    if not text:
+        for d in ('/usr/lib', '/usr/lib64', '/lib', '/lib64', '/usr/lib/x86_64-linux-gnu', '/usr/lib/aarch64-linux-gnu', '/usr/lib/arm-linux-gnueabihf'):
+            text += ' '.join(glob.glob(d + '/lib*.so*')) + ' '
+    return [row for row in _WA_SYSLIBS if ('lib%s.so' % row[0]) not in text]
+
+
+def _wa_bootstrap_system():
+    """Linux: comprueba (una sola vez con exito) las librerias del sistema que necesita la ventana de Qt y el navegador web."""
+    import platform
+    if platform.system() != 'Linux' or os.environ.get('QT_QPA_PLATFORM', '') in ('offscreen', 'minimal'):
+        return
+    marker = os.path.join(_wa_app_dir(), '.syslibs_ok')
+    if os.path.exists(marker):
+        return
+    miss = _wa_syslibs_missing()
+    osname, fam = _wa_os_info()
+    if not miss:
+        try:
+            open(marker, 'w').write(osname)
+        except OSError:
+            pass
+        return
+    idx = {'debian': 1, 'fedora': 2, 'arch': 3, 'suse': 4}.get(fam)
+    names = ", ".join(r[0] for r in miss)
+    if idx is None:
+        _wa_say("Widget Arena", "Puede que falten librerias del sistema que usa Qt (" + names + "). Instalalas con el gestor de paquetes de tu distribucion si la aplicacion no abre.")
+        return
+    pkgs = sorted({r[idx] for r in miss})
+    full = _WA_PKG_CMD[fam] + pkgs
+    msg = ("Sistema detectado: " + osname + ".\nFaltan librerias del sistema que necesita la ventana de Widget Arena: " + names + ".\n\n"
+           "Se instalarian con (pide la contrase\u00f1a de administrador):\n  sudo " + " ".join(full) + "\n\n\u00bfInstalarlas ahora?")
+    if _wa_ask("Widget Arena: faltan librerias del sistema", msg):
+        if _wa_install_system(fam, pkgs, "Widget Arena: instalando librerias del sistema") and not _wa_syslibs_missing():
+            try:
+                open(marker, 'w').write(osname)
+            except OSError:
+                pass
+        else:
+            _wa_say("Widget Arena", "No se pudieron instalar. Prueba a mano en una terminal:\n  sudo " + " ".join(full))
+    else:
+        print("Si la aplicacion no abre, instala las librerias con:  sudo " + " ".join(full), file=sys.stderr)
+
+
+def _wa_bootstrap():
+    if getattr(sys, 'frozen', False) or os.environ.get('WIDGET_ARENA_NO_BOOTSTRAP') == '1':
+        return
+    try:
+        _wa_bootstrap_python()
+        _wa_bootstrap_system()
+    except SystemExit:
+        raise
+    except Exception as e:                                # un fallo del propio arranque nunca impide intentar abrir la aplicacion
+        print("AVISO [arranque]: no se pudo comprobar las librerias: %s" % e, file=sys.stderr)
+
+
+_wa_bootstrap()
+
+import numpy as np
+try:
+    # DPI: por defecto lo gestiona Qt 6 (Per-Monitor V2). Forzar "System DPI Aware" hace que Windows
+    # reescale las ventanas al pasar a un monitor con otra escala (tamanos que cambian, geometria
+    # incoherente). Para volver al modo anterior:   set WIDGET_ARENA_DPI_SYSTEM=1
+    if os.environ.get("WIDGET_ARENA_DPI_SYSTEM", "0") == "1":
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    # Se ignora si no es Windows o si falla la llamada
+    pass
+    
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QComboBox, QFileDialog, QStyleFactory, QStyle, 
+    QSystemTrayIcon, QMenu, QStackedLayout, QGridLayout,
+    QInputDialog, QMessageBox, QWidgetAction,
+    QFontDialog, QColorDialog,
+    QDialog, QSlider, QCheckBox, QFormLayout, QDialogButtonBox,
+    QTextEdit, QToolTip, QToolButton, QSizePolicy, QFrame, QFontComboBox, QSpinBox,
+    QRadioButton, QDateTimeEdit, QGroupBox
+)
+from PySide6.QtCore import (
+    Qt, QPoint, QSize, QUrl, QRect, QObject, QTimer, QMargins,
+    Signal, QThreadPool, QRunnable, Slot, QSizeF,
+    QPropertyAnimation, QEasingCurve, QVariantAnimation, QEvent, QDateTime
+)
+from PySide6.QtGui import (
+    QPixmap, QColor, QFont, QIcon, QAction, QActionGroup,
+    QKeyEvent, QPainter, QBitmap, QWheelEvent, QTransform,
+    QImage, QCursor, QPen, QPainterPath, QBrush, QLinearGradient,
+    QTextDocument, QTextCursor, QTextCharFormat, QTextOption
+)
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWebEngineCore import QWebEngineProfile # <--- PARCHE WEB PERSISTENCIA: Importar QWebEngineProfile
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+
+# ----------------------------------------------------------------------
+# 馃憞 INICIO DE FRAGMENTO A: FLAGS DE CHROMIUM (COPIAR Y PEGAR ESTO) 馃憞
+# [NUEVO] Flags para mejorar compatibilidad multimedia en WebEngine
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--autoplay-policy=no-user-gesture-required"
+# 馃憜 FIN DE FRAGMENTO A 馃憜
+# ----------------------------------------------------------------------
+
+# --- Configuracion y Constantes (portable) ---
+
+# [PACK88] Ubicacion: portable (todo junto al programa) o instalada (la fija herramientas.py en widget_arena_location.json).
+# Orden: variable de entorno > archivo de ubicacion > carpeta junto al programa. Una ruta relativa cuenta desde la carpeta del programa.
+_a0 = sys.argv[0] if (sys.argv and sys.argv[0] and os.path.exists(sys.argv[0])) else __file__
+APP_DIR = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else _a0))
+LOCATION_FILE = os.path.join(APP_DIR, "widget_arena_location.json")
+DATA_DIRNAME = "widget_arena_data"
+
+
+def _read_location():
+    try:
+        with open(LOCATION_FILE, 'r', encoding='utf-8') as _f:
+            _d = json.load(_f)
+        return _d if isinstance(_d, dict) else {}
+    except Exception:
+        return {}
+
+
+LOCATION = _read_location()
+
+
+def _loc_dir(env_name, key, default):
+    v = os.environ.get(env_name) or LOCATION.get(key)
+    if not v:
+        return default
+    v = os.path.expanduser(os.path.expandvars(str(v)))
+    return os.path.abspath(v if os.path.isabs(v) else os.path.join(APP_DIR, v))
+
+
+ROOT_DATA_DIR = _loc_dir("WIDGET_ARENA_DATA", "data_dir", os.path.join(APP_DIR, DATA_DIRNAME))
+
+
+def _store_path(path):
+    """Ruta con la que se guarda un archivo en notas y templates: lo que vive en la carpeta de datos se guarda como
+    'widget_arena_data/...' (vale igual en modo portable que instalado); lo demas, relativo al programa."""
+    ap = os.path.abspath(path)
+    try:
+        r = os.path.relpath(ap, ROOT_DATA_DIR)
+        if r != '..' and not r.startswith('..' + os.sep) and not os.path.isabs(r):
+            return os.path.join(DATA_DIRNAME, r)
+    except ValueError:
+        pass
+    return os.path.relpath(ap, APP_DIR)
+
+
+def _resolve_stored(p):
+    """Inversa de _store_path: ruta absoluta de lo que hay guardado en una nota o template."""
+    p = str(p)
+    if os.path.isabs(p):
+        return p
+    parts = os.path.normpath(p).split(os.sep)
+    if parts and parts[0] == DATA_DIRNAME:
+        return os.path.join(ROOT_DATA_DIR, *parts[1:])
+    return os.path.join(APP_DIR, p)
+
+# --- Definicion de Directorios ---
+DATA_DIR = os.path.join(ROOT_DATA_DIR, "data")
+BACKUP_DIR = os.path.join(ROOT_DATA_DIR, "backups")
+CACHE_DIR = _loc_dir("WIDGET_ARENA_CACHE_DIR", "cache_dir", os.path.join(ROOT_DATA_DIR, "cache"))
+os.environ["WIDGET_ARENA_DATA"] = ROOT_DATA_DIR            # [PACK88] los procesos que lanza (vistas previas) heredan la ubicacion
+os.environ["WIDGET_ARENA_CACHE_DIR"] = CACHE_DIR
+# [PACK51] cache/ = solo prerenders borrables: botones (cache/buttons) y efectos de capa (cache/layers).
+# El perfil del navegador (cookies, sesiones) vive aparte en web_data/ para que vaciar la cache no cierre sesiones.
+BUTTONS_DIR = os.path.join(CACHE_DIR, "buttons")
+LAYERS_CACHE_DIR = os.path.join(CACHE_DIR, "layers")
+WEB_DATA_DIR = os.path.join(ROOT_DATA_DIR, "web_data")
+LOG_DIR = os.path.join(ROOT_DATA_DIR, "logs")
+FRAMES_DIR = os.path.join(ROOT_DATA_DIR, "frames")
+IMAGES_DIR = os.path.join(ROOT_DATA_DIR, "images")
+STICKY_DIR = os.path.join(ROOT_DATA_DIR, "sticky")
+TEMPLATES_DIR = os.path.join(ROOT_DATA_DIR, "templates")
+PROFILES_DIR = os.path.join(ROOT_DATA_DIR, "profiles")
+
+# Crear carpetas
+for d in (
+    DATA_DIR, BACKUP_DIR, CACHE_DIR, LOG_DIR, BUTTONS_DIR, LAYERS_CACHE_DIR, WEB_DATA_DIR,
+    FRAMES_DIR, IMAGES_DIR, STICKY_DIR, TEMPLATES_DIR,
+    PROFILES_DIR
+):
+    os.makedirs(d, exist_ok=True)
+
+
+def _seed_first_run():
+    """[PACK88] Primer arranque: copia a la carpeta de datos lo que falte de la semilla y nunca sobrescribe. Fuentes: la carpeta
+    defaults/ junto al programa (repositorio) y, en un ejecutable, lo empaquetado dentro de el. Solo una vez (data/.seed_done)."""
+    marker = os.path.join(DATA_DIR, ".seed_done")
+    if os.path.exists(marker):
+        return
+    import shutil
+    srcs = [os.path.join(APP_DIR, "defaults")]
+    if getattr(sys, '_MEIPASS', None):
+        srcs.append(os.path.join(sys._MEIPASS, DATA_DIRNAME))
+    found = False
+    for s in srcs:
+        if not os.path.isdir(s):
+            continue
+        found = True
+        for r, _d, fs in os.walk(s):
+            rel = os.path.relpath(r, s)
+            dst_dir = ROOT_DATA_DIR if rel == '.' else os.path.join(ROOT_DATA_DIR, rel)
+            for f in fs:
+                dst = os.path.join(dst_dir, f)
+                if not os.path.exists(dst):
+                    try:
+                        os.makedirs(dst_dir, exist_ok=True)
+                        shutil.copy2(os.path.join(r, f), dst)
+                    except OSError:
+                        pass
+    if found:
+        try:
+            with open(marker, 'w', encoding='utf-8') as _f:
+                _f.write("semilla copiada\n")
+        except OSError:
+            pass
+
+
+_seed_first_run()
+
+
+def _migrate_data_layout():
+    """[PACK51] Reubica lo que versiones anteriores dejaban en carpetas equivocadas (idempotente):
+    images/btn_*.png -> cache/buttons ; cache/<md5>.png -> cache/layers ; resto de cache/ (perfil web:
+    cookies, sesiones...) -> web_data/."""
+    import shutil
+    import re as _re
+
+    def _mv(src, dst):
+        try:
+            if os.path.exists(dst):
+                if os.path.isfile(src):
+                    os.remove(src)
+                return
+            shutil.move(src, dst)
+        except Exception as e_mv:
+            print(f"WARN [Migracion]: no se pudo mover {src}: {e_mv}")
+
+    try:
+        for fn in os.listdir(IMAGES_DIR):
+            if _re.fullmatch(r"btn_[0-9a-f]{32}_(normal|hover|pressed)\.png", fn):
+                _mv(os.path.join(IMAGES_DIR, fn), os.path.join(BUTTONS_DIR, fn))
+        web_empty = not os.listdir(WEB_DATA_DIR)
+        for fn in os.listdir(CACHE_DIR):
+            src = os.path.join(CACHE_DIR, fn)
+            if fn in ("buttons", "layers"):
+                continue
+            if os.path.isfile(src) and _re.fullmatch(r"[0-9a-f]{32}\.png", fn):
+                _mv(src, os.path.join(LAYERS_CACHE_DIR, fn))
+            elif web_empty:
+                _mv(src, os.path.join(WEB_DATA_DIR, fn))
+    except Exception as e_mig:
+        print(f"WARN [Migracion]: {e_mig}")
+
+
+_migrate_data_layout()
+
+
+def _ensure_app_icon():
+    """[PACK51] data/ siempre contiene el icono de la app: si falta se dibuja (nota amarilla con esquina doblada)."""
+    try:
+        if os.path.exists(APP_ICON_PATH_PNG) and os.path.exists(APP_ICON_PATH_ICO):
+            return
+        os.makedirs(DATA_DIR, exist_ok=True)
+        S = 256
+        pm = QPixmap(S, S)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 0, 0, 55))
+        p.drawRoundedRect(22, 26, 214, 214, 18, 18)
+        g = QLinearGradient(0, 14, 0, 232)
+        g.setColorAt(0, QColor("#fff3a6"))
+        g.setColorAt(1, QColor("#facc15"))
+        p.setBrush(QBrush(g))
+        p.setPen(QPen(QColor("#b8860b"), 4))
+        path = QPainterPath()
+        path.moveTo(18, 14)
+        path.lineTo(238, 14)
+        path.lineTo(238, 170)
+        path.lineTo(176, 232)
+        path.lineTo(18, 232)
+        path.closeSubpath()
+        p.drawPath(path)
+        fold = QPainterPath()
+        fold.moveTo(238, 170)
+        fold.lineTo(176, 170)
+        fold.lineTo(176, 232)
+        fold.closeSubpath()
+        p.setBrush(QColor("#e0b300"))
+        p.drawPath(fold)
+        p.setPen(QPen(QColor(31, 39, 55, 170), 9, Qt.SolidLine, Qt.RoundCap))
+        for yy, ww in ((78, 150), (116, 150), (154, 90)):
+            p.drawLine(48, yy, 48 + ww, yy)
+        p.end()
+        if not os.path.exists(APP_ICON_PATH_PNG):
+            pm.save(APP_ICON_PATH_PNG, "PNG")
+        if not os.path.exists(APP_ICON_PATH_ICO):
+            pm.save(APP_ICON_PATH_ICO, "ICO")
+    except Exception as e_ic:
+        print(f"WARN [Icono]: no se pudo generar el icono: {e_ic}")
+
+
+# --- Definicion de Archivos ---
+GLOBAL_STATE_FILE = os.path.join(DATA_DIR, "widget_set.json")
+DEFAULT_TEMPLATE_FILE = os.path.join(TEMPLATES_DIR, "default.json")
+DEFAULT_SET_FILE = os.path.join(DATA_DIR, "default_set.json")
+LOG_FILE_PATH = os.path.join(LOG_DIR, "widget_arena_app_debug.log")
+APP_ICON_PATH_ICO = os.path.join(DATA_DIR, "app_icon.ico")
+APP_ICON_PATH_PNG = os.path.join(DATA_DIR, "app_icon.png")
+
+MAX_BACKUPS = 20
+MAX_FULL_BACKUPS = 10            # [PACK60] copias completas (zip) en backups/full
+FULL_BACKUP_DIR = os.path.join(BACKUP_DIR, "full")
+PREVIEW_DIR = os.path.join(ROOT_DATA_DIR, "previews")                        # [PACK87] vistas previas del mapa (desde el pack 92 se dibujan dentro de este archivo)
+
+# --- Logging Utility ---
+def _log(level, component, msg):
+    t = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
+    print(f"[{t}][{component}][{level}] {msg}")
+
+def log_info(comp, msg): _log('INFO', comp, msg)
+
+def _perf_log(msg):
+    """[PACK108] Linea de rendimiento: consola + LOG_DIR/rendimiento.log (se puede mandar tal cual para diagnosticar)."""
+    txt = "[%s] %s" % (datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), msg)
+    print("[rendimiento] " + txt)
+    try:
+        p = os.path.join(LOG_DIR, "rendimiento.log")
+        if os.path.isfile(p) and os.path.getsize(p) > 400000:
+            os.replace(p, p + '.1')
+        with open(p, 'a', encoding='utf-8') as f:
+            f.write(txt + "\n")
+    except Exception:
+        pass
+
+
+class _StallWatch:
+    """[PACK108] Si el hilo de la interfaz tarda mas de 0,3 s en atender su temporizador, un hilo auxiliar apunta la pila de Python en ese
+    momento; al recuperarse se escribe en LOG_DIR/rendimiento.log cuanto duro el bloqueo y que estaba ejecutando."""
+    LIMIT = 0.30
+
+    def __init__(self, log_path):
+        import threading
+        self.path = log_path
+        self.main_id = threading.get_ident()
+        self.beat_t = time.monotonic()
+        self.caps = []
+        self.stop = False
+        self.timer = QTimer()
+        self.timer.setInterval(25)
+        self.timer.timeout.connect(self._beat)
+        self.timer.start()
+        self.th = threading.Thread(target=self._watch, daemon=True)
+        self.th.start()
+
+    def _beat(self):
+        now = time.monotonic()
+        gap = now - self.beat_t
+        self.beat_t = now
+        caps, self.caps = self.caps, []
+        if gap > self.LIMIT and caps:
+            self._write(gap, caps)
+
+    def _watch(self):
+        import traceback
+        done = 0
+        while not self.stop:
+            time.sleep(0.05)
+            gap = time.monotonic() - self.beat_t
+            if gap < self.LIMIT:
+                done = 0
+                continue
+            want = 1 if gap < 1.0 else (2 if gap < 3.0 else 3)
+            if want > done and len(self.caps) < 3:
+                done = want
+                fr = sys._current_frames().get(self.main_id)
+                if fr is not None:
+                    self.caps.append((gap, ''.join(traceback.format_stack(fr, limit=9))))
+
+    def _write(self, gap, caps):
+        try:
+            txt = "[%s] bucle de eventos bloqueado %.0f ms\n" % (datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), gap * 1000.0)
+            for g, st in caps:
+                txt += "  --- a los %.0f ms estaba en:\n%s\n" % (g * 1000.0, st.rstrip())
+            print(txt)
+            if os.path.isfile(self.path) and os.path.getsize(self.path) > 400000:
+                os.replace(self.path, self.path + '.1')
+            with open(self.path, 'a', encoding='utf-8') as f:
+                f.write(txt + "\n")
+        except Exception:
+            pass
+
+
+def _start_stall_watch():
+    return _StallWatch(os.path.join(LOG_DIR, "rendimiento.log"))
+
+def _write_text_atomic(path, text):
+    """[PACK108] Escribe en un temporal y lo renombra: un cierre a mitad de escritura no deja el fichero cortado."""
+    tmp = path + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except OSError:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text)
+# Los mensajes DEBUG hacen print() (lento en consola de Windows). Se activan con:
+#   set WIDGET_ARENA_DEBUG=1
+DEBUG_LOG = os.environ.get("WIDGET_ARENA_DEBUG", "0") == "1"
+
+# Mascara de ventana por pixel. En mis pruebas (Qt offscreen) la original resultaba SIEMPRE el
+# rectangulo completo (QBitmap.fill(Qt.transparent) deja todos los bits a 1), asi que en teoria
+# no recorta nada. Pero es el unico cambio de rendimiento que no he podido verificar en Windows,
+# asi que por prudencia queda ACTIVADA como en el original (ahora agrupada y con cache, que es
+# barato). Pon False para saltarte todo ese trabajo si quieres ganar algo mas de rendimiento.
+USE_WINDOW_MASK = True
+
+# Estilo de los cables entre notas. Cada cable es un degradado entre el color de la nota padre
+# y el de la hija, con los colores saturados.
+# --- Controles numericos arrastrables: clic y arrastrar arriba/abajo sobre el valor lo cambia ---
+# Ctrl = salto grande, Mayus = paso fino. Un clic sin arrastrar sigue editando el texto. Solo se filtran los
+# eventos del propio cuadro de texto de cada control (coste nulo en el resto de la aplicacion).
+from PySide6.QtWidgets import QSpinBox as _QtSpinBox, QDoubleSpinBox as _QtDoubleSpinBox
+import PySide6.QtWidgets as _qtw
+
+
+class _ScrubFilter(QObject):
+    PX_PER_STEP = 4.0
+
+    def __init__(self, spin):
+        super().__init__(spin)
+        self.spin = spin
+        self.y0 = None
+        self.v0 = 0
+        self.active = False
+
+    def _step(self, mods):
+        sp = self.spin
+        st = sp.singleStep()
+        if mods & Qt.ShiftModifier:
+            return st
+        base = max(st, (sp.maximum() - sp.minimum()) / 300.0)
+        if isinstance(sp, _QtDoubleSpinBox):
+            base = max(st, round(base, 1))
+        else:
+            base = max(st, int(round(base)))
+        return base * (5 if mods & Qt.ControlModifier else 1)
+
+    def eventFilter(self, obj, ev):
+        t = ev.type()
+        sp = self.spin
+        if t == QEvent.MouseButtonPress and ev.button() == Qt.LeftButton and sp.isEnabled() and not sp.isReadOnly():
+            self.y0 = ev.globalPosition().y()
+            self.v0 = sp.value()
+            self.active = False
+        elif t == QEvent.MouseMove and self.y0 is not None and (ev.buttons() & Qt.LeftButton):
+            dy = self.y0 - ev.globalPosition().y()
+            if not self.active:
+                if abs(dy) < self.PX_PER_STEP:
+                    return False
+                self.active = True
+                QApplication.setOverrideCursor(Qt.SizeVerCursor)
+            val = self.v0 + int(dy / self.PX_PER_STEP) * self._step(ev.modifiers())
+            if isinstance(sp, _QtDoubleSpinBox):
+                val = round(val, sp.decimals())
+            sp.setValue(max(sp.minimum(), min(sp.maximum(), val)))
+            return True
+        elif t == QEvent.MouseButtonRelease and ev.button() == Qt.LeftButton:
+            was, self.y0, self.active = self.active, None, False
+            if was:
+                QApplication.restoreOverrideCursor()
+                sp.lineEdit().deselect()
+                return True
+        return False
+
+
+def _install_scrub(spin):
+    le = spin.lineEdit()
+    le.installEventFilter(_ScrubFilter(spin))
+    le.setCursor(Qt.SizeVerCursor)
+    if not spin.toolTip():
+        spin.setToolTip("Arrastra arriba/abajo para cambiar el valor (Ctrl: salto grande, May\u00fas: paso fino) o haz clic para escribirlo")
+
+
+class QSpinBox(_QtSpinBox):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        _install_scrub(self)
+
+
+class QDoubleSpinBox(_QtDoubleSpinBox):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        _install_scrub(self)
+
+
+_qtw.QSpinBox, _qtw.QDoubleSpinBox = QSpinBox, QDoubleSpinBox   # los 'import' locales de las funciones tambien las usan
+
+CABLE_STYLE = {
+    'width': 2.5,               # grosor del cable principal (px)
+    'dim_width': 1.5,           # grosor de los cables de ancestros (punteados)
+    'saturation_boost': 2.0,    # multiplica la saturacion del color de la nota
+    'min_saturation': 0.55,     # saturacion minima (0-1) para colores no grises
+    'min_value': 0.90,          # brillo minimo (0-1) para que se vea sobre fondos oscuros
+    'achromatic_below': 0.08,   # por debajo de esta saturacion el color se considera gris/blanco y no se tine
+    'gradient_width': 0.30,     # fraccion del cable que ocupa la transicion, centrada (0 = corte seco, 1 = degradado completo)
+    'blend_hsv': True,          # True: la transicion recorre los matices (centro vivo); False: mezcla en RGB (centro mas apagado)
+    'alpha': 255,               # opacidad del cable principal (0-255)
+    'dim_alpha': 255,           # opacidad de los cables punteados (hacia los hijos) con cables a opacidad plena
+}
+
+
+def _cable_path(a, b, k, fx=None):
+    """Trazado de un cable entre dos puntos. k = curvatura: 0 = recta, 1 = curva en S (la de siempre), >1 = mas marcada.
+    Es una interpolacion entre los puntos de control de la recta (1/3 y 2/3) y los de la S.
+    [PACK99] fx = (caida del peso en px, amplitud del resorte en px, ondas) o None: se suma a la curva anterior un
+    desplazamiento perpendicular a la recta que NO depende de como esten alineados los widgets."""
+    from PySide6.QtCore import QPointF
+    ax, ay, bx, by = float(a.x()), float(a.y()), float(b.x()), float(b.y())
+    dx, dy = bx - ax, by - ay
+    k = max(0.0, min(4.0, float(k)))      # [PACK91] hasta 400 %
+    c1 = QPointF(ax + dx * (1.0 / 3.0 + k / 6.0), ay + dy / 3.0 * (1.0 - k))
+    c2 = QPointF(ax + dx * (2.0 / 3.0 - k / 6.0), ay + dy * (2.0 + k) / 3.0)
+    path = QPainterPath()
+    path.moveTo(ax, ay)
+    if not fx or (fx[0] <= 0 and fx[1] <= 0) or (dx * dx + dy * dy) < 1e-6:
+        path.cubicTo(c1, c2, QPointF(bx, by))
+        return path
+    import math
+    sag, amp, waves = float(fx[0]), float(fx[1]), max(0.05, float(fx[2]))
+    L = math.hypot(dx, dy)
+    ux, uy = dx / L, dy / L
+    nx, ny = -uy, ux                                   # normal a la recta
+    s = ux / math.sqrt(ux * ux + 0.0225)               # el peso cuelga hacia abajo sea cual sea el sentido (se desvanece con la recta vertical exacta)
+    N = int(max(24, min(480, 24 + (16 * waves if amp > 0 else 0))))
+    pts = []
+    for i in range(N + 1):
+        t = i / float(N)
+        m = 1.0 - t
+        x = m * m * m * ax + 3 * m * m * t * c1.x() + 3 * m * t * t * c2.x() + t * t * t * bx
+        y = m * m * m * ay + 3 * m * m * t * c1.y() + 3 * m * t * t * c2.y() + t * t * t * by
+        e = min(1.0, min(t, m) / 0.12)              # [PACK100] entrada/salida cortas: las ondas se reparten por igual
+        off = sag * s * 4.0 * t * m + amp * (e * e * (3.0 - 2.0 * e)) * math.sin(2.0 * math.pi * waves * t)
+        pts.append((x + nx * off, y + ny * off))
+    for i in range(N):                                  # spline de Catmull-Rom -> tramos cubicos
+        p0, p1, p2, p3 = pts[max(i - 1, 0)], pts[i], pts[i + 1], pts[min(i + 2, N)]
+        path.cubicTo(QPointF(p1[0] + (p2[0] - p0[0]) / 6.0, p1[1] + (p2[1] - p0[1]) / 6.0),
+                     QPointF(p2[0] - (p3[0] - p1[0]) / 6.0, p2[1] - (p3[1] - p1[1]) / 6.0), QPointF(p2[0], p2[1]))
+    return path
+
+
+_NP_POLY_OK = [None]
+_CIRC16 = (np.cos(np.linspace(2.0 * np.pi, 0.0, 16, endpoint=False)), np.sin(np.linspace(2.0 * np.pi, 0.0, 16, endpoint=False)))
+
+
+def _np_poly(a):
+    """[PACK109] QPolygonF desde un array (n,2) de numpy copiando la memoria de golpe (~5 us; crear 240 QPointF uno a uno cuesta ~250 us).
+    Si esta version de PySide no deja escribir en la memoria del poligono, usa el camino lento de siempre."""
+    from PySide6.QtGui import QPolygonF
+    from PySide6.QtCore import QPointF
+    a = np.ascontiguousarray(a, dtype=np.float64).reshape(-1, 2)
+    n = len(a)
+    if n and _NP_POLY_OK[0] is not False:
+        try:
+            import shiboken6
+            pg = QPolygonF()
+            pg.resize(n)
+            ad = shiboken6.getCppPointer(pg.data())[0]
+            np.frombuffer((ctypes.c_double * (2 * n)).from_address(ad), dtype=np.float64)[:] = a.ravel()
+            if _NP_POLY_OK[0] is None:        # la primera vez se comprueba que lo escrito es lo que se lee
+                _NP_POLY_OK[0] = bool(pg.size() == n and abs(pg.at(n - 1).x() - a[n - 1, 0]) < 1e-9
+                                      and abs(pg.at(0).y() - a[0, 1]) < 1e-9 and abs(pg.at(n // 2).x() - a[n // 2, 0]) < 1e-9)
+            if _NP_POLY_OK[0]:
+                return pg
+        except Exception:
+            _NP_POLY_OK[0] = False
+    return QPolygonF([QPointF(x, y) for x, y in a.tolist()])
+
+
+def _poly_resample(P, cum, m):
+    """[PACK109] m+1 puntos a distancias iguales (longitud de arco) sobre una polilinea (P: Nx2, cum: longitudes acumuladas)."""
+    tl = float(cum[-1])
+    if tl < 1e-9:
+        return np.repeat(P[:1], m + 1, axis=0)
+    s = np.linspace(0.0, tl, m + 1)
+    return np.stack([np.interp(s, cum, P[:, 0]), np.interp(s, cum, P[:, 1])], 1)
+
+
+class _CableRope:
+    """[PACK100] Cuerda con fisica entre dos puntos fijos (los de los widgets). Modelo de desplazamientos: la cuerda tiene una
+    forma de reposo colgada (la caida pedida) y cada nudo se desplaza respecto a ella como una masa con muelle, amortiguador
+    y arrastre de sus vecinos. Asi pesa (vuelve a su sitio con gravedad), se mueve por inercia cuando mueves un widget,
+    rebota si es goma y esta siempre un poco viva (balanceo ambiental). Los nudos estan a distancias iguales: las ondas se
+    reparten por igual a lo largo de todo el cable.
+    [PACK109] El estado vive en un array numpy S (ux, uy, vx, vy) y todas las cuerdas de un fotograma se integran JUNTAS
+    (_ropes_integrate): el coste deja de crecer con el numero de nudos por cuerda. step() sigue funcionando por separado.
+    P = (caida px, elasticidad 0-1, amortiguacion 0-1, vida 0-3, peso 0.2-4, escala px)."""
+    H = 1.0 / 60.0
+    _BASIS = {}
+    _WT = {}
+
+    def __init__(self, seed=0):
+        import random
+        rnd = random.Random(seed)
+        self.S = np.zeros((4, 0))
+        self.t = None
+        self.tv = 0.0
+        self.acc = 0.0
+        self.ph = [rnd.random() * 6.2831853 for _ in range(4)]
+        self.busy = True
+        self.energy = 99.0
+        self.pa = self.pb = None
+        self.va = (0.0, 0.0)
+        self.vb = (0.0, 0.0)
+        self.d = self.dv = 0.0
+        self.ax = self.ay = self.bx = self.by = 0.0
+        self.sh = (0.0, 0.0)
+        self.stiff = 0.0
+
+    ux = property(lambda self: self.S[0].tolist())
+    uy = property(lambda self: self.S[1].tolist())
+    vx = property(lambda self: self.S[2].tolist())
+    vy = property(lambda self: self.S[3].tolist())
+
+    def _shape(self, ax, ay, bx, by):
+        """Direccion (ex, ey) en que cuelga la cuerda, con la longitud que hace que su flecha perpendicular sea 1."""
+        import math
+        dx, dy = bx - ax, by - ay
+        D = math.hypot(dx, dy)
+        if D < 1e-6:
+            return 0.0, 1.0
+        nx, ny = -dy / D, dx / D
+        w = math.tanh((nx * 0.29 + ny * 0.96) / 0.3)       # lado hacia el que cuelga (suave: no salta al cruzar la vertical)
+        nx, ny = nx * w, ny * w
+        ex, ey = nx * 0.6, ny * 0.6 + 0.4 * abs(w)
+        k = nx * ex + ny * ey
+        if k < 0.05:
+            return 0.0, 0.0
+        return ex / k, ey / k
+
+    def _anchor(self, ax, ay, bx, by):
+        self.ax, self.ay, self.bx, self.by = ax, ay, bx, by
+        self.sh = self._shape(ax, ay, bx, by)
+
+    def reset(self, ax, ay, bx, by, depth, n):
+        self.S = np.zeros((4, n))
+        self.pa, self.pb = (ax, ay), (bx, by)
+        self.va = self.vb = (0.0, 0.0)
+        self.d, self.dv = float(depth), 0.0
+        self._anchor(ax, ay, bx, by)
+        self.acc = 0.0
+        self.busy = True
+        self.energy = 99.0
+
+    def _resample(self, n):
+        m = self.S.shape[1]
+        g = np.linspace(0.0, m - 1.0, n)
+        xs = np.arange(m, dtype=float)
+        self.S = np.stack([np.interp(g, xs, row) for row in self.S])
+
+    def prep(self, now, ax, ay, bx, by, P):
+        """[PACK109] Primera mitad de step(): reinicio / remuestreo, tiempo y constantes de esta cuerda. Devuelve el trabajo que
+        _ropes_integrate() debe integrar, o None si en este fotograma no hay nada que integrar (las anclas siempre se actualizan:
+        la cuerda sigue pegada al widget aunque no avance la fisica)."""
+        import math
+        depth, elastic, damp, life, weight, sc = P[:6]
+        nmax = int(P[6]) if len(P) > 6 else 36                 # [PACK103] nudos maximos, rigidez e inercia
+        stiff = max(0.0, min(1.0, float(P[7]))) if len(P) > 7 else 0.0
+        inertia = float(P[8]) if len(P) > 8 else 1.0
+        self.stiff = stiff
+        D = math.hypot(bx - ax, by - ay)
+        n = max(8, min(nmax, int(round(D / 24.0)) + 1))
+        if self.t is None or self.S.shape[1] == 0 or now - self.t > 0.6:
+            self.reset(ax, ay, bx, by, depth, n)
+            self.t = self.tv = now
+            return None
+        self._anchor(ax, ay, bx, by)
+        dt = now - self.t
+        if dt < 0.004:
+            return None
+        self.t = now
+        H = self.H
+        self.acc = min(self.acc + dt, 0.1)
+        steps = min(4, int(self.acc / H))
+        self.acc -= steps * H
+        m = self.S.shape[1]
+        if abs(n - m) > max(2, m // 4):
+            self._resample(n)
+        n = self.S.shape[1]
+        if steps <= 0:
+            return None
+        w0 = 5.5 * math.sqrt(weight) * (1.0 + 1.0 * stiff) * (1.0 - 0.35 * elastic)             # frecuencia propia: mas peso = vuelve antes
+        zeta = (0.1 + 1.0 * damp) * (1.0 - 0.5 * elastic)
+        c = 2.0 * zeta * w0
+        w2 = w0 * w0
+        kap = min(700.0 + 1300.0 * stiff, ((n - 1) / 0.5) ** 2 * (1.0 + 3.0 * stiff))                            # arrastre entre vecinos (la onda cruza el cable en ~0,5 s)
+        # inercia: el cambio de velocidad de cada extremo tira de la cuerda en sentido contrario
+        dtv = max(now - self.tv, 1e-3)
+        self.tv = now
+        pa, pb = self.pa, self.pb
+        nva = ((ax - pa[0]) / dtv, (ay - pa[1]) / dtv)
+        nvb = ((bx - pb[0]) / dtv, (by - pb[1]) / dtv)
+        va = (self.va[0] * 0.7 + nva[0] * 0.3, self.va[1] * 0.7 + nva[1] * 0.3)
+        vb = (self.vb[0] * 0.7 + nvb[0] * 0.3, self.vb[1] * 0.7 + nvb[1] * 0.3)
+        gain = 0.3 * weight * inertia * (1.0 - 0.6 * stiff)
+        dva = (va[0] - self.va[0], va[1] - self.va[1])
+        dvb = (vb[0] - self.vb[0], vb[1] - self.vb[1])
+        self.va, self.vb = va, vb
+        self.pa, self.pb = (ax, ay), (bx, by)
+        lim = min(0.5 * max(D, 40.0), 70.0)
+        wd = w0 * 1.15                                                   # la caida sigue a la pedida con su propio muelle (la goma rebota)
+        cd = 2.0 * zeta * wd
+        amp = (4.0 * sc + 0.28 * max(depth, 0.0)) * min(life, 3.0) * (1.0 - 0.4 * stiff)
+        return (self, n, steps, w2, c, kap, wd, cd, lim, amp, float(depth), gain, dva[0], dva[1], dvb[0], dvb[1], now, life)
+
+    def step(self, now, ax, ay, bx, by, P):
+        j = self.prep(now, ax, ay, bx, by, P)
+        if j is not None:
+            _ropes_integrate([j])
+
+    def nodes(self):
+        """[PACK109] Posicion de los nudos como array (n,2)."""
+        n = self.S.shape[1]
+        wt = self._WT.get(n)
+        if wt is None:
+            s = np.linspace(0.0, 1.0, n)
+            wt = self._WT[n] = (s, 4.0 * s * (1.0 - s), 16.0 * s * s * (1.0 - s) * (1.0 - s))
+        s, b1, b2 = wt
+        d = max(0.0, self.d)
+        st = self.stiff
+        k = d * ((1.0 - st) * b1 + st * b2)                  # rigido: sale recto del widget
+        ex, ey = self.sh
+        return np.stack([self.ax + (self.bx - self.ax) * s + ex * k + self.S[0],
+                         self.ay + (self.by - self.ay) * s + ey * k + self.S[1]], 1)
+
+    def points(self):
+        return [tuple(p) for p in self.nodes().tolist()]
+
+    def poly(self, sub=6):
+        """[PACK109] Polilinea densa de la spline de Catmull-Rom (la misma curva que path(), sin pasar por QPainterPath):
+        (puntos Nx2, longitudes acumuladas)."""
+        P = self.nodes()
+        N = len(P) - 1
+        bs = self._BASIS.get(sub)
+        if bs is None:
+            t = np.arange(sub, dtype=float) / sub
+            u = 1.0 - t
+            bs = self._BASIS[sub] = tuple(b[None, :, None] for b in (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t))
+        p0 = np.concatenate([P[:1], P[:N - 1]])
+        p1, p2 = P[:N], P[1:N + 1]
+        p3 = np.concatenate([P[2:N + 1], P[N:N + 1]])
+        c1 = p1 + (p2 - p0) / 6.0
+        c2 = p2 - (p3 - p1) / 6.0
+        Q = (bs[0] * p1[:, None, :] + bs[1] * c1[:, None, :] + bs[2] * c2[:, None, :] + bs[3] * p2[:, None, :]).reshape(-1, 2)
+        Q = np.concatenate([Q, P[N:N + 1]])
+        dq = np.diff(Q, axis=0)
+        return Q, np.concatenate([[0.0], np.cumsum(np.hypot(dq[:, 0], dq[:, 1]))])
+
+    def path(self):
+        from PySide6.QtCore import QPointF
+        pts = self.points()
+        N = len(pts) - 1
+        path = QPainterPath()
+        if N < 1:
+            return path
+        path.moveTo(pts[0][0], pts[0][1])
+        for i in range(N):                                  # spline de Catmull-Rom -> tramos cubicos
+            p0, p1, p2, p3 = pts[max(i - 1, 0)], pts[i], pts[i + 1], pts[min(i + 2, N)]
+            path.cubicTo(QPointF(p1[0] + (p2[0] - p0[0]) / 6.0, p1[1] + (p2[1] - p0[1]) / 6.0),
+                         QPointF(p2[0] - (p3[0] - p1[0]) / 6.0, p2[1] - (p3[1] - p1[1]) / 6.0), QPointF(p2[0], p2[1]))
+        return path
+
+
+def _ropes_integrate(jobs):
+    """[PACK109] Avanza varias cuerdas a la vez (los trabajos de _CableRope.prep). Las cuerdas se apilan en un array
+    (4, cuerdas, nudos) rellenado con ceros; los nudos de relleno y los extremos no se mueven nunca (mascara M)."""
+    R = len(jobs)
+    ns = np.array([j[1] for j in jobs])
+    NM = int(ns.max())
+    Z = np.zeros((4, R, NM))
+    for r, j in enumerate(jobs):
+        Z[:, r, :j[1]] = j[0].S
+    steps, w2, c, kap, wd, cd, lim, amp, depth, gain, dva0, dva1, dvb0, dvb1, tn = np.array([j[2:17] for j in jobs], dtype=float).T
+    col = np.arange(NM, dtype=float)
+    M = ((col[None, :] >= 1.0) & (col[None, :] <= (ns - 2)[:, None])).astype(float)
+    s = col[None, :] / (ns - 1.0)[:, None]
+    g_ = gain[:, None] * M
+    Z[2] -= (dva0[:, None] * (1.0 - s) + dvb0[:, None] * s) * g_
+    Z[3] -= (dva1[:, None] * (1.0 - s) + dvb1[:, None] * s) * g_
+    U, V = Z[0:2], Z[2:4]
+    A = None
+
+    if (amp > 0).any():                                                  # balanceo ambiental (una vez por fotograma)
+        ph = np.array([j[0].ph for j in jobs])
+        tt = tn[:, None]
+        q = col[None, :] * 0.21
+        a0 = (amp * w2)[:, None] * (np.sin(1.13 * tt + ph[:, 0:1] + q) + 0.6 * np.sin(0.71 * tt + ph[:, 1:2] + 1.9 * q))
+        a1 = (amp * w2 * 0.6)[:, None] * (np.sin(0.93 * tt + ph[:, 2:3] + q) + 0.5 * np.sin(1.57 * tt + ph[:, 3:4] + 2.3 * q))
+        A = np.stack([a0, a1]) * M
+    d = np.array([j[0].d for j in jobs])
+    dv = np.array([j[0].dv for j in jobs])
+    w2c, cc, kc = w2[:, None], c[:, None], kap[:, None]
+    lim2, limc = (lim * lim)[:, None], lim[:, None]
+    H = _CableRope.H
+    for k in range(int(steps.max())):
+        h = np.where(steps > k, H, 0.0)                                  # cada cuerda hace sus propios subpasos
+        dv += (-wd * wd * (d - depth) - cd * dv) * h
+        d += dv * h
+        hh = h[:, None]
+        F = -w2c * U - cc * V                                            # primero todas las fuerzas (posiciones viejas), luego se mueve
+
+        F[:, :, 1:-1] += (U[:, :, :-2] + U[:, :, 2:] - 2.0 * U[:, :, 1:-1]) * kc
+        if A is not None:
+            F += A
+        V += F * (hh * M)
+        U += V * hh
+        m2 = U[0] * U[0] + U[1] * U[1]
+        over = m2 > lim2
+        if over.any():                                                   # tope: nunca se va lejos del cable
+            U *= np.where(over, limc / np.sqrt(np.where(over, m2, 1.0)), 1.0)
+    av, au = np.abs(V), np.abs(U)
+    mv = np.abs(dv) + np.abs(d - depth) + ((av[0] + av[1]) * 0.05 + (au[0] + au[1]) * 0.02).sum(axis=1)
+    dl, dvl, mvl = d.tolist(), dv.tolist(), mv.tolist()
+    for r, j in enumerate(jobs):
+        rp, n = j[0], j[1]
+        rp.S = Z[:, r, :n]
+        rp.d, rp.dv = dl[r], dvl[r]
+        rp.energy = mvl[r] / n
+        rp.busy = bool(j[17] > 0 or mvl[r] > 0.05 * n)
+
+
+def _rope_anchors(ra, rb):
+    """[PACK100] Puntos donde la recta centro-centro sale de cada widget (un poco hacia dentro, para que el cable
+    nazca por debajo de la nota). Si los widgets se solapan, los centros."""
+    import math
+    ax, ay = ra.x() + ra.width() / 2.0, ra.y() + ra.height() / 2.0
+    bx, by = rb.x() + rb.width() / 2.0, rb.y() + rb.height() / 2.0
+    dx, dy = bx - ax, by - ay
+    D = math.hypot(dx, dy)
+    if D < 1e-6:
+        return (ax, ay), (bx, by)
+
+    def exit_d(r):
+        tx = (r.width() / 2.0) / abs(dx) if abs(dx) > 1e-9 else 1e18
+        ty = (r.height() / 2.0) / abs(dy) if abs(dy) > 1e-9 else 1e18
+        return min(tx, ty) * D
+    da, db = exit_d(ra), exit_d(rb)
+    if da + db >= D - 10.0:
+        return (ax, ay), (bx, by)
+    ux, uy = dx / D, dy / D
+    ia, ib = max(0.0, da - max(12.0, 0.22 * da)), max(0.0, db - max(12.0, 0.22 * db))
+    return (ax + ux * ia, ay + uy * ia), (bx - ux * ib, by - uy * ib)
+
+
+def _crown_path(scale):
+    """Camino de la corona: base centrada en el origen y copa hacia arriba (y negativa)."""
+    pts = [(-12, -2), (-14, -15), (-6, -8), (0, -18), (6, -8), (14, -15), (12, -2)]
+    path = QPainterPath()
+    path.moveTo(pts[0][0] * scale, pts[0][1] * scale)
+    for x, y in pts[1:]:
+        path.lineTo(x * scale, y * scale)
+    path.closeSubpath()
+    return path
+
+
+def _crown_paint(painter, m, col, cx, cy, angle):
+    """Dibuja la corona como un cable (trazo redondeado, resplandor opcional) con base en (cx, cy) girada 'angle'
+    grados. Tamano, grosor y desplazamientos (en el sistema del propio papel) salen de los ajustes."""
+    s = m.get_cable_param('_crown_size') / 100.0
+    w = max(0.3, m.cable_length_style(0.0)[1] * m.get_cable_param('_crown_width_pct') / 100.0)
+    path = _crown_path(s)
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.translate(cx, cy)
+    painter.rotate(angle)
+    painter.translate(m.get_cable_param('_crown_dx'), -m.get_cable_param('_crown_dy'))
+    gl = m.get_cable_param('_cable_glow')
+    if gl > 0:
+        gsz = m.get_cable_param('_cable_glow_size')
+        base = painter.opacity()
+        painter.setOpacity(base * min(1.0, gl / 100.0 * 0.2))
+        for gi in (3.0, 1.5):
+            gp = QPen(col, w + gsz * 2.0 * gi / 3.0, Qt.SolidLine)
+            gp.setCapStyle(Qt.RoundCap)
+            gp.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(gp)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(path)
+        painter.setOpacity(base)
+    pen = QPen(col, w, Qt.SolidLine)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    painter.drawPath(path)
+    painter.restore()
+
+
+def _crown_state(m, target_id, note_color, fade, base_op):
+    """Corona sobre el widget MAS ANCESTRAL del arbol cuyos cables se muestran, con el aspecto de un cable (color de la
+    nota, grosor y opacidad de un cable corto). Devuelve (ventana raiz, ancla global QPointF, angulo, color, opacidad)
+    o None. Se apoya en el borde superior del papel segun su inclinacion. Color, brillo, opacidad y 'apagada' son
+    individuales por widget (clave 'crown' del JSON, ver StickerWindow._crown_style)."""
+    from PySide6.QtCore import QPointF
+    gs = m.global_state
+    root, seen = target_id, set()
+    while root not in seen:
+        seen.add(root)
+        st = gs.get(root)
+        par = st.get('parent_id') if isinstance(st, dict) else None
+        if not par or par not in m.widgets:
+            break
+        root = par
+    win = m.widgets.get(root)
+    if win is None or not win.isVisible() or win._crown_cfg().get('off'):
+        return None
+    try:
+        anchor, angle = win._crown_anchor()
+        col, op = win._crown_style(None, fade, base_op)
+    except Exception:
+        return None
+    g = win.geometry()
+    return win, QPointF(g.x() + anchor.x(), g.y() + anchor.y()), angle, col, op
+
+
+class CrownWindow(QWidget):
+    """Ventana propia (translucida, transparente al raton) que dibuja la corona. Se coloca en el orden Z justo ENCIMA
+    de la nota raiz, mientras los cables siguen por debajo de todas las notas."""
+
+    def __init__(self, manager):
+        super().__init__()
+        self.manager = manager
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self._st = None
+
+    def set_state(self, col, op, cx, cy, angle):
+        self._st = (col, op, cx, cy, angle)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.fillRect(self.rect(), Qt.transparent)
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        if self._st is not None:
+            col, op, cx, cy, angle = self._st
+            p.setOpacity(max(0.0, min(1.0, op)))
+            _crown_paint(p, self.manager, col, cx, cy, angle)
+        p.end()
+
+
+def _paper_valid_points(pixmap, target=20000):
+    """Puntos (x, y en pixeles del pixmap) de la zona visible del papel (opaca y con algo de brillo), submuestreados."""
+    img = pixmap.toImage().convertToFormat(QImage.Format_RGBA8888)
+    w, h = img.width(), img.height()
+    if w < 2 or h < 2:
+        return np.zeros((0, 2)), max(1, w), max(1, h)
+    try:
+        arr = np.frombuffer(img.bits(), dtype=np.uint8).reshape((h, w, 4))
+    except Exception:
+        arr = np.array(img.bits(), copy=True).reshape((h, w, 4))
+    luma = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
+    valid = (arr[:, :, 3] > 40) & (luma > 80)
+    step = max(1, int((w * h / float(target)) ** 0.5))
+    ys, xs = np.nonzero(valid[::step, ::step])
+    return np.stack([xs * step, ys * step], axis=1).astype(float), w, h
+
+
+def _min_area_tilt(pts):
+    """Inclinacion (grados, sentido horario, entre -45 y 45) de la forma: el giro que hace minimo el rectangulo que la
+    encierra. 0 si la forma no es apreciablemente rectangular/inclinada (p. ej. un adhesivo redondo)."""
+    if len(pts) < 30:
+        return 0.0
+    q = pts - pts.mean(axis=0)
+
+    def area(deg):
+        a = np.radians(deg)
+        x = q[:, 0] * np.cos(a) - q[:, 1] * np.sin(a)
+        y = q[:, 0] * np.sin(a) + q[:, 1] * np.cos(a)
+        return (x.max() - x.min()) * (y.max() - y.min())
+    cand = [(area(d), d) for d in np.arange(-45.0, 45.01, 1.0)]
+    a_best, d_best = min(cand)
+    if a_best > 0.985 * area(0.0):
+        return 0.0
+    fine = [(area(d), d) for d in np.arange(d_best - 1.0, d_best + 1.01, 0.1)]
+    return float(round(-min(fine)[1], 1))
+
+
+def _cable_color(color_like, alpha):
+    """Color de nota -> color de cable: mas saturado y luminoso (los grises se respetan)."""
+    c = QColor(color_like)
+    if not c.isValid():
+        c = QColor(160, 160, 164)
+    h, s, v, _a = c.getHsvF()
+    st = CABLE_STYLE
+    if s > st['achromatic_below']:
+        s = min(1.0, max(s * st['saturation_boost'], st['min_saturation']))
+    v = min(1.0, max(v, st['min_value']))
+    out = QColor.fromHsvF(max(h, 0.0), s, v)
+    out.setAlpha(int(alpha))
+    return out
+
+def _cable_blend(c1, c2, t):
+    """Mezcla en HSV (arco corto de matiz): el centro del degradado sigue siendo vivo,
+    en RGB el punto medio entre dos colores saturados sale apagado."""
+    h1, s1, v1, _ = c1.getHsvF()
+    h2, s2, v2, _ = c2.getHsvF()
+    if h1 < 0 or s1 < 0.05:
+        h1 = h2
+    if h2 < 0 or s2 < 0.05:
+        h2 = h1
+    h1, h2 = max(h1, 0.0), max(h2, 0.0)
+    dh = h2 - h1
+    if dh > 0.5:
+        dh -= 1.0
+    elif dh < -0.5:
+        dh += 1.0
+    h = (h1 + dh * t) % 1.0
+    out = QColor.fromHsvF(h, s1 + (s2 - s1) * t, v1 + (v2 - v1) * t)
+    out.setAlpha(int(round(c1.alpha() + (c2.alpha() - c1.alpha()) * t)))
+    return out
+
+
+def _cable_blend_rgb(c1, c2, t):
+    return QColor(int(round(c1.red() + (c2.red() - c1.red()) * t)),
+                  int(round(c1.green() + (c2.green() - c1.green()) * t)),
+                  int(round(c1.blue() + (c2.blue() - c1.blue()) * t)),
+                  int(round(c1.alpha() + (c2.alpha() - c1.alpha()) * t)))
+
+
+class _CablePen(QPen):
+    """Lapiz de cable: los punteados llevan extremos planos (con extremos redondos Qt tarda ~3 veces mas en trazarlos)."""
+    def setCapStyle(self, s):
+        super().setCapStyle(Qt.FlatCap if self.style() in (Qt.DotLine, Qt.CustomDashLine) else s)
+
+
+def _cable_dotted_pen(brush, width, dash, gap):
+    """Lapiz punteado de cable con trazo y hueco en PIXELES (no dependen del grosor del cable). Extremos planos."""
+    width = max(0.3, float(width))
+    pen = _CablePen(brush, width, Qt.SolidLine)
+    pen.setDashPattern([max(0.05, float(dash) / width), max(0.05, float(gap) / width)])
+    pen.setCapStyle(Qt.FlatCap)
+    return pen
+
+
+_QLINE_POOL = []        # [PACK111] QLineF reutilizables: crear uno nuevo cuesta ~1,8 us, reescribir uno existente ~0,4 us
+
+
+def _cable_draw_dashes(painter, pts, cum, dash, gap, brush, width, wfun=None, levels=6):
+    """[PACK108] Cable punteado: los trazos se dibujan sueltos y todos los del mismo grosor en UNA llamada. Equivale al lapiz punteado
+    nativo con tapa redonda (en Qt el largo del trazo INCLUYE las tapas: si es menor que el grosor sale un punto redondo), pero el
+    trazador de guiones de Qt, con degradado y antialiasing, cuesta ~4 veces mas en cables largos. Los puntos van con drawPoints,
+    los trazos largos con extremos planos. 'wfun(fraccion 0-1)' da el grosor a lo largo del cable (afinado), agrupado en 'levels'.
+    [PACK109] Una sola interpolacion para todos los puntos, grupos por orden (sin mascaras) y un unico lapiz reutilizado."""
+    from PySide6.QtCore import QLineF
+    tl = float(cum[-1])
+    per = max(0.3, float(dash) + float(gap))
+    k1 = int(np.ceil(tl / per - 1e-9))
+    if k1 <= 0 or len(pts) < 2 or tl < 1.0:
+        return
+    dash = max(0.05, float(dash))
+    st = np.arange(k1, dtype=float) * per
+    en = np.minimum(st + dash, tl)
+    mid = (st + en) * 0.5
+    w = None if wfun is None else np.maximum(0.3, np.asarray(wfun(mid / tl), dtype=float))
+    if w is None or float(w.max() - w.min()) < 0.08:
+        groups = [(None, float(width) if w is None else float(w.mean()))]
+    else:
+        lo, hi = float(w.min()), float(w.max())
+        q = np.minimum(levels - 1, ((w - lo) * (levels / (hi - lo))).astype(int))
+        order = np.argsort(q, kind='stable')
+        cnt = np.bincount(q, minlength=levels)
+        wsum = np.bincount(q, weights=w, minlength=levels)
+        bnd = np.concatenate([[0], np.cumsum(cnt)])
+        groups = [(order[bnd[i]:bnd[i + 1]], float(wsum[i] / cnt[i])) for i in range(levels) if cnt[i]]
+    allp = np.concatenate([st, mid, en])
+    X, Y = np.interp(allp, cum, pts[:, 0]), np.interp(allp, cum, pts[:, 1])
+    painter.setBrush(Qt.NoBrush)
+    pen = QPen(brush, 1.0, Qt.SolidLine)
+    for sel, wl in groups:
+        pen.setWidthF(wl)
+        if dash <= wl:                                   # punto redondo (trazo mas corto que el grosor)
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+            xy = np.stack([X[k1:2 * k1], Y[k1:2 * k1]], 1)
+            painter.drawPoints(_np_poly(xy if sel is None else xy[sel]))
+            continue
+        seg = np.stack([X[:k1], Y[:k1], X[2 * k1:], Y[2 * k1:]], 1)
+        if sel is not None:
+            seg = seg[sel]
+        if wl <= 4.5:                                    # trazo largo y fino: extremos planos (visualmente iguales y mas baratos)
+            pen.setCapStyle(Qt.FlatCap)
+        else:                                            # grueso: tapa redonda; el trazo sin tapas mide 'dash - grosor'
+            pen.setCapStyle(Qt.RoundCap)
+            f = (dash - wl) / 2.0 / dash
+            seg = np.stack([seg[:, 0] + (seg[:, 2] - seg[:, 0]) * f, seg[:, 1] + (seg[:, 3] - seg[:, 1]) * f,
+                            seg[:, 2] - (seg[:, 2] - seg[:, 0]) * f, seg[:, 3] - (seg[:, 3] - seg[:, 1]) * f], 1)
+        painter.setPen(pen)
+        _rows = seg.tolist()
+        if len(_QLINE_POOL) < len(_rows):
+            _QLINE_POOL.extend(QLineF() for _i in range(len(_rows) - len(_QLINE_POOL) + 128))
+        for _l, (a, b, c, d) in zip(_QLINE_POOL, _rows):
+            _l.setLine(a, b, c, d)
+        painter.drawLines(_QLINE_POOL[:len(_rows)])
+
+
+def _cable_draw_dashed_path(painter, path, brush, width, dash, gap, pl=None):
+    """[PACK108] Camino cualquiera punteado (ver _cable_draw_dashes). [PACK109] 'pl' = (polilinea, longitudes acumuladas) de una cuerda:
+    sin camino de Qt de por medio."""
+    total = float(pl[1][-1]) if pl is not None else path.length()
+    if total < 1.0:
+        return
+    _m = int(min(800, max(8, total / 4.0)))
+    pts = _poly_resample(pl[0], pl[1], _m) if pl is not None else _path_samples(path, _m)
+    cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(pts, axis=0).T))])
+    _cable_draw_dashes(painter, pts, cum, dash, gap, brush, max(0.3, float(width)))
+
+
+def _path_samples(path, n):
+    """[PACK101] n+1 puntos repartidos por igual (longitud de arco) a lo largo de un camino cualquiera. Aplana el camino en C++
+    y interpola con numpy: unas 50 veces mas rapido que n llamadas a pointAtPercent sobre un camino de decenas de tramos."""
+    from PySide6.QtGui import QTransform
+    polys = path.toSubpathPolygons(QTransform())
+    if not polys or polys[0].size() < 2:
+        return np.zeros((n + 1, 2))
+    a = np.array([[p.x(), p.y()] for p in polys[0]], dtype=float)
+    cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(a, axis=0).T))])
+    if cum[-1] < 1e-9:
+        return np.repeat(a[:1], n + 1, axis=0)
+    s = np.linspace(0.0, cum[-1], n + 1)
+    return np.stack([np.interp(s, cum, a[:, 0]), np.interp(s, cum, a[:, 1])], 1)
+
+
+def _cable_draw_tapered(painter, path, brush, w_end, w_ctr, start_frac, dotted, lod=0, pl=None):
+    """Cable de grosor variable: grosor pleno (w_end) en el tramo 'start_frac' junto al padre y junto al hijo,
+    y afinado suave hasta w_ctr en el centro (simetrico). Vectorizado con numpy. [PACK89] El punteado tambien se
+    afina (cada trazo con el grosor que le toca) y el cable se rellena como una sola forma (sin doble opacidad en los extremos)."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPolygonF
+    total = float(pl[1][-1]) if pl is not None else path.length()          # [PACK109] pl = polilinea de una cuerda (sin QPainterPath)
+    if total < 2:
+        return
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing)
+    n = int(max(10, min(64, total / (14 + 10 * lod))))
+    if pl is not None:
+        pts = None if dotted else _poly_resample(pl[0], pl[1], n)
+    elif path.elementCount() == 4:      # moveTo + cubicTo: puntos por la formula de Bezier
+        P = np.array([[e.x, e.y] for e in (path.elementAt(i) for i in range(4))], dtype=float)
+        t = np.linspace(0.0, 1.0, n + 1)[:, None]
+        q = 1.0 - t
+        pts = q ** 3 * P[0] + 3 * q ** 2 * t * P[1] + 3 * q * t ** 2 * P[2] + t ** 3 * P[3]
+    else:
+        pts = _path_samples(path, n)
+    s = max(0.0, min(0.499, start_frac))
+
+    def prof(dist):                   # grosor segun la distancia (0..0.5) al extremo mas cercano
+        if s >= 0.495:
+            return np.full(np.shape(dist), float(w_end))
+        k = np.clip((dist - s) / (0.5 - s), 0.0, 1.0)
+        return w_end + (w_ctr - w_end) * (k * k * (3.0 - 2.0 * k))
+    if dotted:
+        _dd, _dg = dotted if isinstance(dotted, tuple) else (1.5, 4.5)
+        nd = int(max(16, min(240, total / (5 + 4 * lod))))
+        if pl is not None:
+            pd = _poly_resample(pl[0], pl[1], nd)
+        elif path.elementCount() == 4:
+            t = np.linspace(0.0, 1.0, nd + 1)[:, None]
+            q = 1.0 - t
+            pd = q ** 3 * P[0] + 3 * q ** 2 * t * P[1] + 3 * q * t ** 2 * P[2] + t ** 3 * P[3]
+        else:
+            pd = _path_samples(path, nd)
+        cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(pd, axis=0).T))])
+        tl = float(cum[-1])
+        if tl < 1.0:
+            painter.restore()
+            return
+        # los trazos se dibujan sueltos y agrupados por grosor (afinado): ver _cable_draw_dashes
+        _cable_draw_dashes(painter, pd, cum, _dd, _dg, brush, w_end, lambda f: prof(np.minimum(f, 1.0 - f)), 6 if lod < 1 else 4)
+        painter.restore()
+        return
+    out = QPainterPath()
+    out.setFillRule(Qt.WindingFill)
+    d = np.gradient(pts, axis=0)
+    ln = np.hypot(d[:, 0], d[:, 1])
+    ln[ln == 0] = 1.0
+    nrm = np.stack([-d[:, 1] / ln, d[:, 0] / ln], 1)
+    u = np.linspace(0.0, 1.0, n + 1)
+    w = prof(np.minimum(u, 1.0 - u))
+    h = (w / 2.0)[:, None]
+    poly = np.vstack([pts + nrm * h, (pts - nrm * h)[::-1]])
+    out.addPolygon(_np_poly(poly))
+    out.closeSubpath()
+    for i in (0, n):                  # extremos redondeados: circulos con el MISMO sentido que el cuerpo (si no, el relleno se anula al solaparse)
+        out.addPolygon(_np_poly(np.stack([pts[i, 0] + w[i] / 2.0 * _CIRC16[0], pts[i, 1] + w[i] / 2.0 * _CIRC16[1]], 1)))
+        out.closeSubpath()
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(brush)
+    painter.drawPath(out)
+    painter.restore()
+
+# Ajustes por defecto del resaltado de jerarquia (hover / arrastre de enlace).
+#  - umbral: que pixeles de la nota disparan el resaltado (alfa 0-255, brillo r+g+b 0-765,
+#    saturacion 0-1), cada uno con minimo y maximo.
+#  - tint_*: color de la mascara (H 0-359, S/V/A 0-255) para hover pasivo y para el arrastre
+#    de enlace como padre / como hija.
+HIERARCHY_DEFAULTS = {
+    'opacity': 40, 'opacity_max': 255,
+    'brightness': 130, 'brightness_max': 765,
+    'saturation': 0.35, 'saturation_max': 1.0,
+    'tint_hover':  {'h': 40,  's': 55,  'v': 255, 'a': 70},
+    'tint_parent': {'h': 216, 's': 150, 'v': 255, 'a': 165},
+    'tint_child':  {'h': 355, 's': 150, 'v': 255, 'a': 165},
+}
+
+def log_debug(comp, msg):
+    if DEBUG_LOG:
+        _log('DEBUG', comp, msg)
+
+def _dprint(*args, **kwargs):
+    if DEBUG_LOG:
+        print(*args, **kwargs)
+def log_warn(comp, msg): _log('WARN', comp, msg)
+def log_error(comp, msg): _log('ERROR', comp, msg)
+
+# Un unico pool de hilos compartido por todos los widgets (antes: uno por widget).
+_SHARED_POOL = None
+def _shared_pool():
+    global _SHARED_POOL
+    if _SHARED_POOL is None:
+        _SHARED_POOL = QThreadPool()
+        _SHARED_POOL.setMaxThreadCount(max(2, min(4, (os.cpu_count() or 4) // 2)))
+    return _SHARED_POOL
+
+# Memo de imagenes leidas del disco: (ruta, mtime) -> QPixmap original (sin rotar).
+_PIXMAP_MEMO = {}
+_PIXMAP_MEMO_MAX = 16
+
+
+# --- Clase Worker (Multithreading) ---
+
+class _FxSignals(QObject):
+    """Un unico objeto de senales por ventana: se crea en el hilo GUI (hijo de la ventana) y muere
+    con ella. Los workers del pool solo hacen emit; nunca crean ni destruyen un QObject."""
+    done = Signal(QImage, int, int, int)   # imagen, capa, serie, tipo (0 = hue de rueda, 1 = efectos de imagen)
+
+
+class NumpyEffectJob(QRunnable):
+    """QRunnable PURO (sin heredar de QObject): el hilo del pool no destruye ningun QObject."""
+    def __init__(self, image_in, effects, layer_num, signals, serial):
+        super().__init__()
+        self.image_in = image_in
+        self.effects = effects
+        self.layer_num = layer_num
+        self.signals = signals
+        self.serial = serial
+
+    def run(self):
+        try:
+            result = _apply_numpy_effects(self.image_in, self.effects)
+        except Exception as e:
+            log_error("NumpyJob", f"Error: {e}")
+            result = QImage()
+        try:
+            self.signals.done.emit(result, self.layer_num, self.serial, 0)
+        except RuntimeError:
+            pass   # la ventana ya se cerro
+
+
+class ImageEffectJob(QRunnable):
+    def __init__(self, image_in, effects, layer_num, cache_path, signals):
+        super().__init__()
+        self.image_in = image_in
+        self.effects = effects
+        self.layer_num = layer_num
+        self.cache_path = cache_path
+        self.signals = signals
+
+    def run(self):
+        image = self.image_in
+        try:
+            if self.effects:
+                image = _apply_numpy_effects(image, self.effects)
+            if self.cache_path:
+                try:
+                    image.save(self.cache_path, "PNG")
+                except Exception as e:
+                    log_error("ImgFXJob", f"No se pudo guardar en cache: {e}")
+        except Exception as e:
+            log_error("ImgFXJob", f"Fallo durante el procesamiento: {e}")
+            image = self.image_in
+        try:
+            self.signals.done.emit(image, self.layer_num, 0, 1)
+        except RuntimeError:
+            pass   # la ventana ya se cerro
+
+
+class ImageEffectWorker(QRunnable, QObject):
+    finished = Signal(QImage, int)
+
+    def __init__(self, image_in, effects, layer_num, cache_path=None):
+        super().__init__()
+        QObject.__init__(self) 
+        
+        self.image_in = image_in
+        self.effects = effects
+        self.layer_num = layer_num
+        self.cache_path = cache_path
+
+    @Slot() 
+    def run(self):
+        try:
+            image = self.image_in
+            log_debug(f"ImgFX-Worker", f"Iniciando procesamiento L{self.layer_num} ({image.width()}x{image.height()}px)")
+
+            # Antes: doble bucle Python con pixelColor/setPixelColor (millones de iteraciones).
+            # Ahora: version vectorizada con numpy (la misma que usa el scroll de hue).
+            if self.effects:
+                image = _apply_numpy_effects(image, self.effects)
+            
+            if self.cache_path:
+                try:
+                    image.save(self.cache_path, "PNG")
+                    log_debug("ImgFX-Worker", f"Imagen guardada en cache: {self.cache_path}")
+                except Exception as e:
+                    log_error("ImgFX-Worker", f"No se pudo guardar en cache: {e}")
+            
+        except Exception as e:
+            log_error("ImgFX-Worker", f"Fallo durante la iteracion de pixeles: {e}")
+            image = self.image_in
+
+        self.finished.emit(image, self.layer_num)
+
+
+# --- Funcion standalone de efectos numpy (thread-safe) ---
+
+def _numpy_effect_band(band, h_angle, s_delta, b_delta, c_factor, is_colorize):
+    """Aplica los efectos IN SITU sobre una banda de filas (vista RGBA uint8 de arr).
+    Trabajar por bandas acota el pico de memoria (antes: varios float32 de imagen completa)."""
+    rgb = band[:, :, :3].astype(np.float32) / 255.0
+
+    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    mx = np.maximum(np.maximum(r, g), b)
+    mn = np.minimum(np.minimum(r, g), b)
+    delta = mx - mn
+
+    hue_h = np.zeros_like(r)
+    mask = (delta != 0)
+    mask_r = (mx == r) & mask
+    hue_h[mask_r] = ((g[mask_r] - b[mask_r]) / delta[mask_r]) % 6.0
+    mask_g = (mx == g) & mask
+    hue_h[mask_g] = ((b[mask_g] - r[mask_g]) / delta[mask_g]) + 2.0
+    mask_b = (mx == b) & mask
+    hue_h[mask_b] = ((r[mask_b] - g[mask_b]) / delta[mask_b]) + 4.0
+    hue_h = hue_h / 6.0 * 360.0
+
+    sat_h = np.zeros_like(r)
+    mask_mx = (mx != 0)
+    sat_h[mask_mx] = delta[mask_mx] / mx[mask_mx]
+    val_h = mx
+
+    if b_delta != 0:
+        val_h = np.clip(val_h + b_delta / 255.0, 0, 1)
+    if c_factor != 1.0:
+        val_h = np.clip((val_h - 0.5) * c_factor + 0.5, 0, 1)
+    if s_delta != 0:
+        sat_h = np.clip(sat_h + s_delta / 255.0, 0, 1)
+    if is_colorize:
+        hue_h = np.full_like(hue_h, float(h_angle))
+        sat_h = np.maximum(sat_h, 150.0 / 255.0)
+    elif h_angle != 0:
+        mask_s = (sat_h > 10.0 / 255.0)
+        hue_h[mask_s] = (hue_h[mask_s] + h_angle) % 360.0
+
+    hn = hue_h / 360.0
+    h6 = hn * 6.0
+    hi = np.floor(h6).astype(np.uint8) % 6
+    f = h6 - np.floor(h6)
+    p = val_h * (1.0 - sat_h)
+    q = val_h * (1.0 - f * sat_h)
+    t = val_h * (1.0 - (1.0 - f) * sat_h)
+
+    nr, ng, nb = [np.zeros_like(val_h) for _ in range(3)]
+    m0 = (hi == 0); nr[m0] = val_h[m0]; ng[m0] = t[m0]; nb[m0] = p[m0]
+    m1 = (hi == 1); nr[m1] = q[m1]; ng[m1] = val_h[m1]; nb[m1] = p[m1]
+    m2 = (hi == 2); nr[m2] = p[m2]; ng[m2] = val_h[m2]; nb[m2] = t[m2]
+    m3 = (hi == 3); nr[m3] = p[m3]; ng[m3] = q[m3]; nb[m3] = val_h[m3]
+    m4 = (hi == 4); nr[m4] = t[m4]; ng[m4] = p[m4]; nb[m4] = val_h[m4]
+    m5 = (hi == 5); nr[m5] = val_h[m5]; ng[m5] = p[m5]; nb[m5] = q[m5]
+
+    rgb_out = np.stack([nr, ng, nb], axis=-1)
+    band[:, :, :3] = (np.clip(rgb_out, 0, 1) * 255.0).astype(np.uint8)
+    # El canal alfa no se toca.
+
+
+def _apply_numpy_effects(image_in, effects):
+    """Aplica efectos de imagen usando numpy vectorizado, por bandas de filas.
+    Thread-safe si image_in es una copia independiente (no compartida con otro hilo)."""
+    img = image_in.convertToFormat(QImage.Format_RGBA8888)
+    h, w = img.height(), img.width()
+
+    ptr = img.bits()
+    try:
+        arr = np.frombuffer(ptr, dtype=np.uint8).reshape((h, w, 4)).copy()
+    except Exception:
+        arr = np.array(ptr, copy=True).reshape((h, w, 4))
+
+    h_angle = effects.get('hue', 0) % 360
+    s_delta = effects.get('saturation', 0)
+    b_delta = effects.get('brightness', 0)
+    c_val = effects.get('contrast', 0)
+    is_colorize = effects.get('colorize', False)
+
+    c_factor = 1.0
+    if c_val != 0:
+        c_factor = (100.0 + c_val) / 100.0
+
+    BAND_ROWS = 256
+    for y0 in range(0, h, BAND_ROWS):
+        _numpy_effect_band(arr[y0:y0 + BAND_ROWS], h_angle, s_delta, b_delta, c_factor, is_colorize)
+
+    out_img = QImage(arr.data, w, h, arr.strides[0], QImage.Format_RGBA8888).copy()
+    return out_img
+
+
+class NumpyEffectWorker(QRunnable, QObject):
+    finished = Signal(QImage, int)
+
+    def __init__(self, image_in, effects, layer_num):
+        super().__init__()
+        QObject.__init__(self)
+        self.image_in = image_in
+        self.effects = effects
+        self.layer_num = layer_num
+
+    @Slot()
+    def run(self):
+        try:
+            result = _apply_numpy_effects(self.image_in, self.effects)
+            log_debug(f"NumpyWorker", f"L{self.layer_num} procesado ({self.image_in.width()}x{self.image_in.height()}px)")
+            self.finished.emit(result, self.layer_num)
+        except Exception as e:
+            log_error("NumpyWorker", f"Error: {e}")
+            self.finished.emit(QImage(), self.layer_num)
+
+
+# --- Generacion de imagenes de boton (compartida) ---
+
+def expand_href_selection(doc, cursor):
+    """
+    [NUEVO] Dado un QTextDocument y un cursor posicionado sobre (o con
+    parte de la seleccion dentro de) un enlace, devuelve un cursor nuevo
+    cuya seleccion cubre el enlace COMPLETO (todos los caracteres que
+    comparten el mismo href). Funciona sobre CUALQUIER QTextDocument, no
+    solo el del editor visible en pantalla: se usa tanto para editar un
+    boton en vivo (InlineTextEditor) como para resincronizar botones en un
+    documento temporal, fuera de pantalla (ver
+    StickerWindow._resync_button_colors).
+    """
+    href = cursor.charFormat().anchorHref()
+    if not href:
+        return cursor
+
+    doc_len = doc.characterCount()
+    start = cursor.selectionStart() if cursor.hasSelection() else cursor.position()
+    end = cursor.selectionEnd() if cursor.hasSelection() else cursor.position()
+
+    while start > 0:
+        probe = QTextCursor(doc)
+        probe.setPosition(start - 1)
+        probe.setPosition(start, QTextCursor.KeepAnchor)
+        if probe.selectedText() in ("\u2028", "\u2029") or doc.findBlock(start - 1).blockNumber() != doc.findBlock(start).blockNumber():
+            break                                   # [PACK57] el enlace nunca cruza un salto de linea / parrafo
+        if probe.charFormat().anchorHref() == href:
+            start -= 1
+        else:
+            break
+
+    while end < doc_len - 1:
+        probe = QTextCursor(doc)
+        probe.setPosition(end)
+        probe.setPosition(end + 1, QTextCursor.KeepAnchor)
+        if probe.selectedText() in ("\u2028", "\u2029") or doc.findBlock(end).blockNumber() != doc.findBlock(end + 1).blockNumber():
+            break
+        if probe.charFormat().anchorHref() == href:
+            end += 1
+        else:
+            break
+
+    result = QTextCursor(doc)
+    result.setPosition(start)
+    result.setPosition(end, QTextCursor.KeepAnchor)
+    return result
+
+
+def _snap_blocks56(doc):
+    """[PACK57] Formato (alineacion, margenes) de cada bloque, para restaurarlo si una edicion lo altera."""
+    out = []
+    b = doc.begin()
+    while b.isValid():
+        out.append(b.blockFormat())
+        b = b.next()
+    return out
+
+
+def _restore_blocks56(doc, snap):
+    if doc.blockCount() != len(snap):
+        return
+    b = doc.begin()
+    i = 0
+    while b.isValid():
+        if b.blockFormat() != snap[i]:
+            QTextCursor(b).setBlockFormat(snap[i])
+        b = b.next()
+        i += 1
+
+
+def replace_span_with_html(cursor, html):
+    """[PACK56] Sustituye la seleccion por HTML conservando el formato del bloque (alineacion, margenes):
+    insertHtml sobre un boton al inicio de parrafo le imponia el formato por defecto (izquierda)."""
+    doc = cursor.document()
+    start = cursor.selectionStart()
+    c0 = QTextCursor(doc)
+    c0.setPosition(start)
+    bf = c0.blockFormat()
+    snap = _snap_blocks56(doc)
+    cursor.beginEditBlock()
+    cursor.removeSelectedText()
+    cursor.insertHtml(html)
+    fix = QTextCursor(doc)
+    fix.setPosition(start)
+    fix.setPosition(cursor.position(), QTextCursor.KeepAnchor)
+    fix.setBlockFormat(bf)
+    _restore_blocks56(doc, snap)
+    cursor.endEditBlock()
+
+
+def generate_button_images(clean_text, bg_color, font, images_dir):
+    """
+    [NUEVO] Genera los PNG normal/hover/pressed de un boton estilizado y
+    devuelve (url_normal, ancho, alto). Incluye sombra.
+    """
+    from PySide6.QtGui import QPainter, QLinearGradient, QBrush, QPen, QFontMetrics, QPixmap
+    from PySide6.QtCore import QUrl, QRect
+
+    # [FIX] El texto del bot贸n nunca debe salir subrayado/tachado aunque la
+    # fuente del cursor del editor lo llevara (lo que pintaba la etiqueta
+    # del bot贸n subrayada dentro de la imagen).
+    font.setUnderline(False)
+    font.setOverline(False)
+    font.setStrikeOut(False)
+
+    c = QColor(bg_color)
+    lighter_bg = c.lighter(120).name()
+    border_color = c.darker(150).name() 
+    hover_bg = c.lighter(113).name()
+    hover_bottom = c.lighter(105).name()
+    active_bg = c.darker(110).name()
+
+    fm = QFontMetrics(font)
+    base_w = max(10, fm.horizontalAdvance(clean_text) + 32)
+    base_h = max(10, fm.height() + 16)
+    
+    w = base_w + 4
+    h = base_h + 4
+    
+    hash_ff = font.family() if font.family() else 'default'
+    hash_bold = 'b' if font.bold() else 'n'
+    hash_str = hashlib.md5((clean_text + bg_color + hash_ff + hash_bold + str(font.pointSize())).encode('utf-8')).hexdigest()
+
+    def make_btn(state_name, top_col, bot_col, txt_y_offset):
+        pix = QPixmap(w, h)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        
+        y_shift = 2 if state_name == "pressed" else 0
+        x_shift = 1 if state_name == "pressed" else 0
+        
+        if state_name != "pressed":
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(0, 0, 0, 60))
+            p.drawRoundedRect(2, 3, base_w, base_h, 8, 8)
+            
+        btn_rect = QRect(x_shift, y_shift, base_w, base_h)
+        
+        grad = QLinearGradient(0, y_shift, 0, base_h + y_shift)
+        grad.setColorAt(0, QColor(top_col))
+        grad.setColorAt(1, QColor(bot_col))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(grad))
+        p.drawRoundedRect(btn_rect, 8, 8)
+        
+        p.setPen(QPen(QColor(border_color), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(btn_rect, 8, 8)
+        
+        p.setPen(QColor("#1f2737"))
+        p.setFont(font)
+        p.drawText(btn_rect, Qt.AlignCenter, clean_text)
+        p.end()
+        
+        os.makedirs(BUTTONS_DIR, exist_ok=True)      # [PACK51] los botones son cache, no imagenes del usuario
+        path = os.path.join(BUTTONS_DIR, f"btn_{hash_str}_{state_name}.png")
+        pix.save(path, "PNG")
+        return QUrl.fromLocalFile(path).toString()
+
+    btn_normal = make_btn("normal", lighter_bg, bg_color, 0)
+    make_btn("hover", hover_bg, hover_bottom, 0)
+    make_btn("pressed", active_bg, active_bg, 0)
+    return btn_normal, w, h
+
+
+# --- Clase de la Ventana del Widget Individual ---
+
+class StickerWindow(QMainWindow):
+
+    MULTI_CLICK_MSEC = 400   # ventana (ms) para encadenar doble / triple clic
+    
+    def __init__(self, manager, widget_id, initial_state):
+        super().__init__()
+        
+        self.manager = manager
+        self.widget_id = widget_id
+        
+        self.setWindowFlags(
+            Qt.Tool |
+            Qt.CustomizeWindowHint |
+            Qt.FramelessWindowHint
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        
+        self.always_on_top = initial_state.get('always_on_top', True)
+        if self.always_on_top:
+            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+
+        
+        self.offset = QPoint()
+        self._is_window_dragging = False 
+        self._is_layer_dragging = False  
+        self._is_closing = False
+        # [NUEVO] Tracking para mover las notas hijas junto con esta al
+        # arrastrar la ventana entera (ver mouseMoveEvent/mouseReleaseEvent).
+        self._dragging_children_windows = None
+        self._dragging_children_start = None
+        self._dragging_self_start = None
+        # [NUEVO] Estado del arrastre Ctrl/Alt para enlazar notas.
+        self._is_link_dragging = False
+        self._link_drag_role = None
+        self._link_drag_target_id = None
+        self._link_drag_origin_pos = None
+        # [NUEVO] La insignia de plegado solo se ve con hover.
+        self._is_hovered = False
+        # [NUEVO] Refresco periodico del tinte de jerarquia mientras esta
+        # activo, para que acompa帽e rotaciones/animaciones en curso en vez
+        # de quedar como una captura vieja ("fantasma" quieto).
+        self._hierarchy_tint_color = None
+        self._hierarchy_tint_timer = QTimer(self)
+        self._hierarchy_tint_timer.setInterval(16)   # ~1 fotograma: el tinte no queda desalineado tras girar/mover
+        # Ya no es un timer periodico: se usa como 'debounce' que refresca el tinte
+        # una vez cuando el contenido cambia (rotacion, efectos...), no 20 veces/s.
+        self._hierarchy_tint_timer.setSingleShot(True)
+        self._hierarchy_tint_timer.timeout.connect(self._refresh_hierarchy_tint)
+        # [NUEVO] Colores pastel (poca saturacion, mas cerca del blanco)
+        # para el tinte de jerarquia. H en grados (0-359), S y V en 0-255.
+        # (Los colores del tinte _TINT_HOVER/_TINT_PARENT/_TINT_CHILD ahora salen de los ajustes
+        #  'Ajustes Mascara Hover...' mediante las propiedades definidas mas abajo.)
+        # [MODIFICADO] Durante el arrastre para enlazar, el color necesita
+        # notarse bien claro (es una decision que se esta por confirmar),
+        # asi que llevan mas saturacion y opacidad que el hover pasivo.
+        self.current_template_data = {} 
+        self.is_enabled = initial_state.get('enabled', True)
+        
+        self.GRAB_PADDING = 5 
+        
+        self._selected_layer_num = 0 
+        
+        self._last_click_time = 0
+        self.DOUBLE_CLICK_MSEC = 100 
+
+        self.save_timer = QTimer(self)
+        self.save_timer.setInterval(1000) 
+        self.save_timer.setSingleShot(True)
+        self.save_timer.timeout.connect(self._save_changes_to_manager)
+
+        # Mascara de ventana agrupada (maximo 1 reconstruccion cada ~16 ms) y caches
+        self._mask_timer = QTimer(self)
+        self._mask_timer.setSingleShot(True)
+        self._mask_timer.setInterval(16)
+        self._mask_timer.timeout.connect(self._update_window_mask_now)
+        self._mask_cache = {}
+        self._scale_cache = {}
+        
+        self._hue_scroll_layer_num = 0
+        self._hue_scroll_serial = 0
+        self._hue_worker_busy = False
+        self._hue_dirty = False
+        self._history = []
+        self._history_idx = -1
+        self._undoing = False
+        
+        self._potential_drag_target = None 
+        self._drag_start_pos = QPoint()
+
+        self.thread_pool = _shared_pool()
+        log_info(self.widget_id, f"StickerWindow iniciado. QThreadPool max hilos: {self.thread_pool.maxThreadCount()}")
+
+        self.layer1_original_image = None
+        self.layer2_original_image = None
+
+        self._cached_paper_bounds = None
+        self.layer2_base_pixmap = QPixmap()
+        self.layer2_anim_original_rot = 0.0
+        
+        self.layer2_label = QLabel("Layer 2 Texto/PNG/JPG", self)
+        # [PARCHE WEB PERSISTENCIA] Usar el perfil persistente del manager
+        # Marcador ligero: el QWebEngineView real (un Chromium completo) solo se crea
+        # si la capa 2 es de tipo web. Ver _ensure_web_view/_release_web_view.
+        self.layer2_web = QWidget(self)
+        self._web_is_real = False
+        self._web_loaded_url = None
+        self._force_web_reload = False 
+        # [FIN PARCHE WEB PERSISTENCIA]
+        self.layer1_label = QLabel("Layer 1 Texto/PNG/JPG", self)
+        self.layer1_label.setMouseTracking(True)
+        self.layer2_label.setMouseTracking(True)
+        self.layer1_label.installEventFilter(self)
+        self.layer2_label.installEventFilter(self)
+        self.layer1_editor = InlineTextEditor(self)
+        self.layer1_editor.viewport().installEventFilter(self)   # detecta el 2o clic de un doble clic sobre el editor
+        self.selection_border = QLabel(self)
+        # [NUEVO] Borde de iluminacion para notas jerarquicas
+        self.hierarchy_border = QLabel(self)
+        # [NUEVO] Insignia de plegar/desplegar hijas
+        self.fold_badge = ClickableLabel(self)
+
+        # [NUEVO] Insignia del temporizador (campana con cuenta regresiva).
+        # Siempre visible mientras haya un temporizador activo (a
+        # diferencia de la insignia de plegado, que solo se ve con hover).
+        self.bell_badge = ClickableLabel(self)
+        self.crown_badge = QLabel(self)       # corona de la nota raiz (la mas ancestral)
+        self.timer_active = False
+        self.timer_target_dt = None
+        self.widget_timer = QTimer(self)
+        self.widget_timer.setInterval(1000)
+        self.widget_timer.timeout.connect(self._on_widget_timer_tick)
+
+        self.layer2_label.setProperty("rotation", 0.0) 
+        
+        self.layer2_anim = QPropertyAnimation(self.layer2_label, b"rotation")
+        self.layer2_anim.setDuration(50)
+        self.layer2_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self.layer2_anim.valueChanged.connect(self._on_layer2_rotation_changed)
+
+        self.setup_ui()
+        
+        template_data = initial_state.get('template_data')
+        if not template_data:
+             template_data = self.manager.get_default_template_data()
+             initial_state['template_data'] = template_data
+             
+        self.load_template_data(template_data)
+
+        # Restaurar un temporizador que haya quedado programado (si el
+        # objetivo ya paso mientras la app estaba cerrada, el primer tick
+        # dispara la notificacion de inmediato).
+        saved_target = initial_state.get('timer_target')
+        saved_msg = initial_state.get('timer_message', '')
+        if saved_target:
+            try:
+                self._start_timer_at(datetime.datetime.fromisoformat(saved_target), saved_msg, persist=False)
+            except Exception as e:
+                log_warn(self.widget_id, f"No se pudo restaurar el temporizador ('{saved_target}'): {e}")
+        
+        if not self.is_enabled:
+            self.hide()
+        
+    def _ensure_web_view(self):
+        """Sustituye el marcador por un QWebEngineView real (solo cuando hace falta)."""
+        if self._web_is_real:
+            return self.layer2_web
+        placeholder = self.layer2_web
+        view = QWebEngineView(self.manager.web_profile, self.central_widget)
+        view.setGeometry(placeholder.geometry())
+        view.hide()
+        view.stackUnder(self.layer1_label)   # mismo orden Z que antes: sobre L2 label, bajo L1
+        placeholder.hide()
+        placeholder.setParent(None)
+        placeholder.deleteLater()
+        self.layer2_web = view
+        self._web_is_real = True
+        self._web_loaded_url = None
+        return view
+
+    def _release_web_view(self):
+        """Destruye el Chromium de esta nota cuando la capa 2 deja de ser web."""
+        if not self._web_is_real:
+            return
+        view = self.layer2_web
+        view.hide()
+        view.setParent(None)
+        view.deleteLater()
+        placeholder = QWidget(self.central_widget)
+        placeholder.hide()
+        self.layer2_web = placeholder
+        self._web_is_real = False
+        self._web_loaded_url = None
+
+    def setup_ui(self):
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.central_widget.setStyleSheet("background-color: transparent;")
+        
+        self.layer2_label.setParent(self.central_widget)
+        self.layer2_label.setAlignment(Qt.AlignCenter)
+        self.layer2_label.setWordWrap(True)
+        self.layer2_label.hide()
+        
+        self.layer2_web.setParent(self.central_widget)
+        self.layer2_web.hide()
+        
+        self.layer1_label.setParent(self.central_widget)
+        self.layer1_label.setAlignment(Qt.AlignCenter)
+        self.layer1_label.setWordWrap(True)
+        self.layer1_label.hide()
+        
+        self.layer1_editor.setParent(self.central_widget)
+        self.layer1_editor.hide()
+        self.layer1_editor.editing_finished.connect(self._on_layer1_editing_finished)
+        
+        self.selection_border.setParent(self.central_widget)
+        self.selection_border.setStyleSheet("border: 2px dashed rgba(255, 0, 0, 0.7);")
+        self.selection_border.setAttribute(Qt.WA_TransparentForMouseEvents) 
+        self.selection_border.hide()
+
+        self.hierarchy_border.setParent(self.central_widget)
+        self.hierarchy_border.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.hierarchy_border.hide()
+
+        self.fold_badge.setParent(self.central_widget)
+        self.fold_badge.setCursor(Qt.PointingHandCursor)
+        self.fold_badge.setAttribute(Qt.WA_TranslucentBackground)
+        self.fold_badge.setContextMenuPolicy(Qt.NoContextMenu)
+        self.fold_badge.clicked.connect(lambda: self.manager.toggle_collapsed(self.widget_id))
+        self.fold_badge.right_clicked.connect(self._show_hierarchy_tree_menu)
+        self.fold_badge.hover_entered.connect(lambda: self.manager.show_cables_for_badge(self.widget_id))
+        self.fold_badge.hover_left.connect(self.manager.release_cables)
+        self.fold_badge.hide()
+
+        self.bell_badge.setParent(self.central_widget)
+        self.bell_badge.setCursor(Qt.PointingHandCursor)
+        self.bell_badge.setAttribute(Qt.WA_TranslucentBackground)
+        self.bell_badge.setContextMenuPolicy(Qt.NoContextMenu)
+        # Click sobre la campana: editar el temporizador
+        self.bell_badge.clicked.connect(lambda: self.manager._set_timer_for_widget(self.widget_id))
+        self.crown_badge.setParent(self.central_widget)
+        self.crown_badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.crown_badge.setAttribute(Qt.WA_TranslucentBackground)
+        self.crown_badge.hide()
+        self.bell_badge.hide()
+
+        self.setMouseTracking(True)
+        self.central_widget.setMouseTracking(True)
+        
+    def _get_cache_key(self, path, rotation, effects):
+        mtime = 0
+        try:
+            norm_path = os.path.normpath(path)
+            mtime = os.path.getmtime(norm_path)
+        except Exception as e:
+            log_warn("Cache", f"No se pudo obtener mtime para {path}: {e}")
+            norm_path = path
+
+        if not effects:
+            effects = {}
+        effects_str = json.dumps(effects, sort_keys=True)
+        
+        key_str = f"{norm_path}|mtime:{mtime}|rot:{rotation}|fx:{effects_str}"
+        
+        hash_name = hashlib.md5(key_str.encode('utf-8')).hexdigest()
+        
+        return f"{hash_name}.png"
+
+    def _load_image(self, path, rotation=0, layer_name="Unknown", layer_num=0):
+        log_debug(layer_name, f"_load_image: Path recibido del JSON: '{path}'")
+        
+        if not path:
+             return None
+
+        if path.startswith('file:///'):
+            local_path = QUrl(path).toLocalFile()
+        else:
+            local_path = path
+        
+        local_path = os.path.normpath(local_path)
+        
+        if os.path.isabs(local_path):
+            final_path = local_path
+        else:
+            final_path = _resolve_stored(local_path)
+            _dprint(f"DEBUG [{layer_name}]: Path era relativo. Resolviendo a: '{final_path}'")
+
+        log_debug(layer_name, f"Path final a comprobar: '{final_path}'")
+        
+        path_exists = os.path.exists(final_path)
+
+        if not path_exists:
+            fallback_filename = os.path.basename(local_path) 
+            if not fallback_filename:
+                 print(f"ERROR [{layer_name}]: Path original no existe y no se pudo extraer un nombre de archivo para el fallback.")
+            else:
+                print(f"WARN [{layer_name}]: Archivo no encontrado en '{final_path}'. Buscando '{fallback_filename}' en carpetas portables...")
+                
+                fallback_paths_to_check = []
+                if layer_num == 1:
+                    fallback_paths_to_check = [
+                        os.path.join(FRAMES_DIR, fallback_filename),
+                        os.path.join(IMAGES_DIR, fallback_filename),
+                        os.path.join(STICKY_DIR, fallback_filename)
+                    ]
+                elif layer_num == 2:
+                    fallback_paths_to_check = [
+                        os.path.join(STICKY_DIR, fallback_filename),
+                        os.path.join(IMAGES_DIR, fallback_filename),
+                        os.path.join(ROOT_DATA_DIR, "frames", fallback_filename)
+                    ]
+                
+                for fallback_path in fallback_paths_to_check:
+                    norm_fallback_path = os.path.normpath(fallback_path)
+                    if os.path.exists(norm_fallback_path):
+                        print(f"INFO [{layer_name}]: 脗隆Fallback encontrado! Usando: '{norm_fallback_path}'")
+                        final_path = norm_fallback_path
+                        path_exists = True
+                        break
+            
+            if not path_exists:
+                print(f"WARN [{layer_name}]: Fallback no encontrado para '{fallback_filename}'.")
+
+        is_file = os.path.isfile(final_path) 
+        _dprint(f"DEBUG [{layer_name}]: (Final) os.path.exists() = {path_exists}")
+        _dprint(f"DEBUG [{layer_name}]: (Final) os.path.isfile() = {is_file}")
+
+        if not path_exists or not is_file:
+            error_msg = f"ERROR [{layer_name}]: 脗隆Archivo no encontrado!\n{final_path}"
+            print(error_msg)
+            pixmap = QPixmap(200, 100)
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setPen(Qt.red)
+            painter.drawText(pixmap.rect(), Qt.AlignCenter | Qt.TextWordWrap, error_msg)
+            painter.end()
+            return pixmap
+            
+        _dprint(f"DEBUG [{layer_name}]: Archivo encontrado. Intentando cargar con QPixmap...")
+        _memo_key = None
+        try:
+            _memo_key = (final_path, os.path.getmtime(final_path))
+        except OSError:
+            pass
+        pixmap = _PIXMAP_MEMO.get(_memo_key) if _memo_key else None
+        if pixmap is None:
+            pixmap = QPixmap(final_path)
+            if _memo_key and not pixmap.isNull():
+                if len(_PIXMAP_MEMO) >= _PIXMAP_MEMO_MAX:
+                    _PIXMAP_MEMO.pop(next(iter(_PIXMAP_MEMO)))
+                _PIXMAP_MEMO[_memo_key] = pixmap
+        is_pixmap_null = pixmap.isNull()
+        _dprint(f"DEBUG [{layer_name}]: pixmap.isNull() (True=Fallo, False=脙鈥皒ito) = {is_pixmap_null}")
+             
+        if not is_pixmap_null:
+            
+            if rotation != 0:
+                _dprint(f"DEBUG [{layer_name}]: Aplicando rotaci脙鲁n de {rotation} grados.")
+                try:
+                    transform = QTransform().rotate(rotation)
+                    pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
+                except Exception as e:
+                    print(f"ERROR [{layer_name}]: Fallo al aplicar rotaci脙鲁n: {e}")
+
+            _dprint(f"DEBUG [{layer_name}]: 脗隆脙鈥癤ITO! Imagen cargada exitosamente.")
+            return pixmap
+        else:
+            print(f"ERROR [{layer_name}]: 脗隆FALLO DE LECTURA DE IMAGEN! El archivo existe, pero QPixmap no pudo leerlo.")
+            supported_formats_bytes = QPixmap.supportedImageFormats()
+            supported_formats = [str(f, 'utf-8').lower() for f in supported_formats_bytes]
+            _dprint(f"DEBUG [{layer_name}]: Formatos de imagen soportados por Qt: {supported_formats}")
+            
+            error_msg = f"ERROR [{layer_name}]: Fallo al cargar la imagen.\n" \
+                        f"El archivo existe, pero Qt no puede leer el formato o est脙隆 corrupto.\n" \
+                        f"Ruta: {final_path}"
+            
+            pixmap = QPixmap(200, 100)
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setPen(Qt.red)
+            painter.drawText(pixmap.rect(), Qt.AlignCenter | Qt.TextWordWrap, error_msg)
+            painter.end()
+            return pixmap
+            
+    def _apply_image_effects(self, image_in, effects, layer_num, cache_path=None):
+        if image_in is None or image_in.isNull() or not effects:
+            return
+
+        log_debug(f"ImgFX", f"Solicitando procesamiento de efectos para L{layer_num}: {effects}")
+        
+        worker = ImageEffectJob(image_in.copy(), effects, layer_num, cache_path, self._get_fx_signals())
+        self.thread_pool.start(worker)
+
+    def _layer_base_hue_override(self, layer_num):
+        """Color base fijado a mano para ESTA imagen; None = automatico.
+        Solo vale mientras la imagen de la capa sea la misma con la que se fijo."""
+        ld = self.current_template_data.get(f"layer{layer_num}", {})
+        bh = ld.get('base_hue')
+        if isinstance(bh, (int, float)) and not isinstance(bh, bool) and ld.get('base_hue_src') == ld.get('content'):
+            return int(bh) % 360
+        return None
+
+    def _effective_base_hue(self, layer_num):
+        ov = self._layer_base_hue_override(layer_num)
+        return ov if ov is not None else self._source_base_hue(layer_num)
+
+    @staticmethod
+    def _measure_dominant_hue(img):
+        """Tono dominante de una QImage (solo diagnostico)."""
+        try:
+            small = img.scaled(96, 96, Qt.KeepAspectRatio, Qt.FastTransformation).convertToFormat(QImage.Format_RGBA8888)
+            w, h = small.width(), small.height()
+            arr = np.frombuffer(small.bits(), dtype=np.uint8).reshape((h, w, 4)).astype(np.float32) / 255.0
+            r, g, b, a = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2], arr[:, :, 3]
+            mx = np.maximum(np.maximum(r, g), b)
+            delta = mx - np.minimum(np.minimum(r, g), b)
+            safe = np.where(delta == 0, 1.0, delta)
+            hue = np.where(mx == r, ((g - b) / safe) % 6.0,
+                           np.where(mx == g, (b - r) / safe + 2.0, (r - g) / safe + 4.0)) * 60.0
+            sat = np.where(mx > 0, delta / np.where(mx == 0, 1.0, mx), 0.0)
+            wgt = np.where((sat > 10.0 / 255.0) & (a > 0.05), sat * mx * a, 0.0)
+            if float(wgt.sum()) <= 0.0:
+                return None
+            hist = np.bincount(np.round(hue).astype(np.int64).ravel() % 360, weights=wgt.ravel(), minlength=360)
+            ext = np.concatenate([hist[-10:], hist, hist[:10]])
+            return int(np.argmax(np.convolve(ext, np.bartlett(23)[1:-1], mode='valid'))) % 360
+        except Exception as ex:
+            return f"error({ex})"
+
+    def _source_base_hue(self, layer_num):
+        """Tono dominante (0-359) de la imagen ORIGINAL de la capa; None si no tiene color."""
+        img = self.layer1_original_image if layer_num == 1 else self.layer2_original_image
+        if img is None or img.isNull():
+            return None
+        cache = getattr(self, '_base_hue_cache', None)
+        if cache is None:
+            cache = self._base_hue_cache = {}
+        key = (layer_num, img.cacheKey())
+        if key in cache:
+            return cache[key]
+        small = img.scaled(96, 96, Qt.KeepAspectRatio, Qt.FastTransformation).convertToFormat(QImage.Format_RGBA8888)
+        w, h = small.width(), small.height()
+        arr = np.frombuffer(small.bits(), dtype=np.uint8).reshape((h, w, 4)).astype(np.float32) / 255.0
+        r, g, b, a = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2], arr[:, :, 3]
+        mx = np.maximum(np.maximum(r, g), b)
+        delta = mx - np.minimum(np.minimum(r, g), b)
+        safe = np.where(delta == 0, 1.0, delta)
+        hue = np.where(mx == r, ((g - b) / safe) % 6.0,
+                       np.where(mx == g, (b - r) / safe + 2.0, (r - g) / safe + 4.0)) * 60.0
+        sat = np.where(mx > 0, delta / np.where(mx == 0, 1.0, mx), 0.0)
+        # mismos pixeles que mueve el efecto de hue (sat > 10/255), pesados por saturacion*valor*alfa
+        wgt = np.where((sat > 10.0 / 255.0) & (a > 0.05), sat * mx * a, 0.0)
+        result = None
+        if float(wgt.sum()) > 0.0:
+            hist = np.bincount(np.round(hue).astype(np.int64).ravel() % 360, weights=wgt.ravel(), minlength=360)
+            ext = np.concatenate([hist[-10:], hist, hist[:10]])
+            smooth = np.convolve(ext, np.bartlett(23)[1:-1], mode='valid')
+            result = int(np.argmax(smooth)) % 360
+        cache[key] = result
+        return result
+
+    def _get_fx_signals(self):
+        sg = getattr(self, '_fx_signals', None)
+        if sg is None:
+            sg = self._fx_signals = _FxSignals(self)   # hijo de la ventana: vive y muere en el hilo GUI
+            sg.done.connect(self._on_fx_job_done, Qt.QueuedConnection)
+        return sg
+
+    def _on_fx_job_done(self, image, layer_num, serial, kind):
+        if kind == 1:
+            self._on_image_effects_finished(image, layer_num)
+        else:
+            self._on_hue_scroll_finished(image, layer_num, serial)
+
+    def _request_hue_render(self, layer_num):
+        if not hasattr(self, '_h_state'):
+            self._h_state = {1: {'busy': False, 'dirty': False, 'serial': 0}, 2: {'busy': False, 'dirty': False, 'serial': 0}}
+        st = self._h_state[layer_num]
+        if st['busy']:
+            st['dirty'] = True
+            return
+        self._launch_hue_worker(layer_num)
+
+    def _launch_hue_worker(self, layer_num):
+        if layer_num == 0:
+            return
+        original_image = self.layer1_original_image if layer_num == 1 else self.layer2_original_image
+        if original_image is None or original_image.isNull():
+            return
+        layer_key = f"layer{layer_num}"
+        effects = self.current_template_data.get(layer_key, {}).get('image_effects')
+        if not effects:
+            return
+
+        st = self._h_state[layer_num]
+        st['serial'] += 1
+        serial = st['serial']
+        st['busy'] = True
+
+        worker = NumpyEffectJob(original_image.copy(), dict(effects), layer_num, self._get_fx_signals(), serial)
+        self.thread_pool.start(worker)
+
+    def _on_hue_scroll_finished(self, image, layer_num, serial):
+        st = getattr(self, '_h_state', None)
+        if not st: return
+        st_l = st[layer_num]
+        st_l['busy'] = False
+
+        if self._is_closing:
+            return
+        if serial != st_l['serial']:
+            return
+
+        if not image.isNull():
+            _exp = getattr(self, '_hue_expected', {}).get(layer_num)
+            if _exp is not None:
+                log_info(self.widget_id, f"[hue] L{layer_num} render {image.width()}x{image.height()}: objetivo={_exp[0]} medido={self._measure_dominant_hue(image)} (desplazamiento {_exp[3]}, base usada {_exp[1]}, base manual {_exp[2]})")
+            pixmap = QPixmap.fromImage(image)
+            if layer_num == 1:
+                self._apply_layer1_pixmap(pixmap)
+            elif layer_num == 2:
+                self.layer2_base_pixmap = pixmap
+                self._cached_paper_bounds = None
+                current_rot = self.layer2_label.property("rotation")
+                self._on_layer2_rotation_changed(current_rot)
+            self.update_window_mask()
+
+        if st_l['dirty']:
+            st_l['dirty'] = False
+            self._launch_hue_worker(layer_num)
+        elif layer_num == 2:
+            self._resync_button_colors()
+
+    _BTN_A_RE = re.compile(r'(<a\b[^>]*?\bhref="([^"]*)"[^>]*>)(.*?)(</a>)', re.S)
+    _BTN_IMG_RE = re.compile(r'<img\b[^>]*>', re.S)
+
+    def _resync_button_colors(self):
+        """[PACK56] Regenera las imagenes de los botones SIN reconstruir el documento: se sustituye solo la
+        etiqueta <img> dentro del HTML guardado, asi la alineacion, los parrafos y los saltos de linea
+        quedan exactamente como estaban (antes setHtml/insertHtml/toHtml reseteaba centrado y fusionaba lineas)."""
+        from html import unescape as _unesc
+        l1_data = self.current_template_data.get('layer1', {})
+        if l1_data.get('type') != 'text':
+            return
+        content = l1_data.get('content', '') or ''
+        if 'btn=1' not in content:
+            return
+
+        bg_color = self._get_layer2_button_color()
+        font_family = l1_data.get('font_family', 'Inter')
+        font_size = l1_data.get('font_size', 16)
+        made = {}
+
+        def _img(href, inner):
+            if href in made:
+                return made[href]
+            label = ff_val = ''
+            fs_val = 0
+            frag = href.split('#', 1)[1] if '#' in href else ''
+            for part in frag.split('&'):
+                if part.startswith('label='):
+                    label = urllib.parse.unquote(part[len('label='):])
+                elif part.startswith('ff='):
+                    ff_val = urllib.parse.unquote(part[len('ff='):])
+                elif part.startswith('fs='):
+                    try:
+                        fs_val = int(part[len('fs='):])
+                    except ValueError:
+                        fs_val = 0
+            if not label:
+                label = _unesc(re.sub(r'<[^>]+>', '', inner)).replace('\ufffc', '').strip() or "Boton"
+            try:
+                bf_ = QFont(ff_val or font_family or 'Arial', fs_val or font_size)
+                bf_.setBold(True)
+                r = generate_button_images(label, bg_color, bf_, IMAGES_DIR)
+            except Exception:
+                bf_ = QFont(font_family, font_size)
+                bf_.setBold(True)
+                r = generate_button_images(label, bg_color, bf_, IMAGES_DIR)
+            made[href] = r
+            return r
+
+        def _set(tag, name, val):
+            pat = re.compile(r'\b' + name + r'="[^"]*"')
+            rep = name + '="' + str(val) + '"'
+            if pat.search(tag):
+                return pat.sub(lambda m_: rep, tag, count=1)
+            return re.sub(r'\s*/?>$', lambda m_: ' ' + rep + m_.group(0).lstrip(), tag)
+
+        def _one(m):
+            href = _unesc(m.group(2))
+            if 'btn=1' not in href:
+                return m.group(0)
+            inner = m.group(3)
+            src, w, h = _img(href, inner)
+            im = self._BTN_IMG_RE.search(inner)
+            if im:
+                tag = _set(_set(_set(im.group(0), 'src', src), 'width', w), 'height', h)
+                inner2 = inner[:im.start()] + tag + inner[im.end():]
+            else:
+                inner2 = f'<img src="{src}" width="{w}" height="{h}" border="0" style="vertical-align: middle;" />'
+            return m.group(1) + inner2 + m.group(4)
+
+        nuevo = self._BTN_A_RE.sub(_one, content)
+        if nuevo != content:
+            l1_data['content'] = nuevo
+            self.load_template_data(self.current_template_data)
+            self.save_timer.start()
+            log_debug(self.widget_id, "Botones resincronizados con el color actual de la nota.")
+
+    _BTN_URL_RE = re.compile(r'file:///[^"\'<>\s)]*?/(btn_[0-9a-f]{32}_(?:normal|hover|pressed)\.png)')
+
+    def _canon_buttons(self, data):
+        """[PACK51] Las imagenes de los botones viven en cache/buttons. El HTML guardado puede traer URLs
+        absolutas antiguas (images/ o de otra instalacion): se reescriben a la carpeta actual y, si algun
+        PNG no existe (cache borrada), se regeneran al terminar de cargar."""
+        try:
+            l1 = data.get('layer1') or {}
+            html = l1.get('content')
+            if l1.get('type') != 'text' or not isinstance(html, str) or 'btn_' not in html:
+                return
+            base = QUrl.fromLocalFile(BUTTONS_DIR).toString().rstrip('/')
+            falta = []
+
+            def _fix(m):
+                fn = m.group(1)
+                dst = os.path.join(BUTTONS_DIR, fn)
+                if not os.path.exists(dst):
+                    old = os.path.join(IMAGES_DIR, fn)
+                    if os.path.exists(old):
+                        try:
+                            os.makedirs(BUTTONS_DIR, exist_ok=True)
+                            shutil.copy2(old, dst)
+                        except OSError:
+                            pass
+                    if not os.path.exists(dst):
+                        falta.append(fn)
+                return base + '/' + fn
+
+            nuevo = self._BTN_URL_RE.sub(_fix, html)
+            if nuevo != html:
+                l1['content'] = nuevo
+
+            if falta and getattr(self, '_btn_regen_tries', 0) < 2:
+                self._btn_regen_tries = getattr(self, '_btn_regen_tries', 0) + 1
+                log_info(self.widget_id, f"Regenerando {len(falta)} imagen(es) de boton ausentes en cache/buttons.")
+                QTimer.singleShot(0, self._resync_button_colors)
+            elif not falta:
+                self._btn_regen_tries = 0
+        except Exception as e_cb:
+            log_warn(self.widget_id, f"_canon_buttons: {e_cb}")
+
+    def load_template_data(self, data):
+        log_debug(self.widget_id, "Cargando template data...")
+        self.current_template_data = data
+        self.set_content(data) 
+        self._update_selection_borders() 
+        self._update_fold_badge()
+        self._update_bell_badge()
+
+    def set_content(self, data):
+        self._canon_buttons(data)
+        
+        window_geom = data.get('geometry', {'x': 100, 'y': 100, 'width': 400, 'height': 225})
+        self.move(window_geom['x'], window_geom['y'])
+        
+        self.layer1_label.hide()
+        self.layer1_label.setPixmap(QPixmap())
+        self.layer1_label.setText("")
+        self.layer2_label.hide()
+        self.layer2_label.setPixmap(QPixmap())
+        self.layer2_label.setText("")
+        self.layer2_web.hide()
+        self.selection_border.hide() 
+        self.layer1_editor.hide()
+        
+        self.layer2_anim.stop()
+        
+        self.layer1_original_image = None
+        self.layer2_original_image = None
+        self._cached_paper_bounds = None
+
+        # --- Layer 2 (Inferior) ---
+        l2_data = data.get('layer2', {})
+        l2_content_type = l2_data.get('type', 'png')
+        l2_background_color = l2_data.get('background', 'transparent')
+        l2_geom_dict = l2_data.get('geometry', {'x': 0, 'y': 0, 'w': 400, 'h': 225})
+        l2_geom = QRect(l2_geom_dict['x'], l2_geom_dict['y'], l2_geom_dict['w'], l2_geom_dict['h'])
+        l2_scaled = l2_data.get('scaled_contents', True)
+        
+        l2_rotation = l2_data.get('rotation', 0)
+        self.layer2_anim_original_rot = l2_rotation
+        self.layer2_label.setProperty("rotation", l2_rotation)
+        
+        active_l2_widget = None
+
+        if l2_content_type != 'web':
+            self._release_web_view()
+        
+        if l2_content_type == 'png':
+            log_debug(f"{self.widget_id}", "set_content: L2 es PNG.")
+            self.layer2_label.setScaledContents(l2_scaled) 
+            l2_path = l2_data.get('content', '')
+
+            l2_effects = l2_data.get('image_effects')
+            if not l2_effects:
+                l2_hue = l2_data.get('hue_target')
+                if l2_hue is not None:
+                    l2_effects = {"hue": l2_hue, "saturation": 0, "brightness": 0, "contrast": 0, "colorize": False}
+            
+            l2_cache_filename = self._get_cache_key(l2_path, 0, l2_effects)
+            os.makedirs(LAYERS_CACHE_DIR, exist_ok=True)
+            l2_cache_path = f"{LAYERS_CACHE_DIR}/{l2_cache_filename}"
+            
+            l2_pixmap_effected_0_rot = None
+            
+            if os.path.exists(l2_cache_path):
+                _dprint(f"DEBUG [Cache]: Cargando L2 (efectos, 0-rot) desde cache: {l2_cache_filename}")
+                l2_pixmap_effected_0_rot = QPixmap(l2_cache_path)
+                if l2_pixmap_effected_0_rot.isNull():
+                    log_warn("Cache", "Archivo de cache L2 corrupto. Borrando...")
+                    try: os.remove(l2_cache_path) 
+                    except: pass
+                    l2_pixmap_effected_0_rot = None
+            
+            base_pixmap_for_preview = self._load_image(l2_path, 0, "Layer 2 (Base)", layer_num=2)
+            if base_pixmap_for_preview and not base_pixmap_for_preview.isNull():
+                self.layer2_original_image = base_pixmap_for_preview.toImage()
+
+            if l2_pixmap_effected_0_rot:
+                self.layer2_base_pixmap = l2_pixmap_effected_0_rot
+            else:
+                log_debug("Cache", "No se encontro cache L2. Procesando...")
+                
+                if self.layer2_original_image:
+                    if l2_effects:
+                        self._apply_image_effects(self.layer2_original_image, l2_effects, 2, l2_cache_path)
+                    else:
+                        self.layer2_base_pixmap = base_pixmap_for_preview
+                else:
+                    self.layer2_base_pixmap = base_pixmap_for_preview
+
+            self._on_layer2_rotation_changed(l2_rotation)
+
+            self.layer2_label.setStyleSheet(f"background-color: {l2_background_color};")
+            self.layer2_label.show()
+            active_l2_widget = self.layer2_label
+            
+        elif l2_content_type == 'text':
+            log_debug(f"{self.widget_id}", "set_content: L2 es Texto.")
+            text = l2_data.get('content', 'LAYER 2 (INFERIOR)')
+            font_family = l2_data.get('font_family', 'Inter')
+            font_size = l2_data.get('font_size', 12)
+            color = l2_data.get('color', 'black')
+
+            pixmap = QPixmap(l2_geom.size())
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            
+            doc = QTextDocument()
+            doc.setDocumentMargin(0)
+            doc.setTextWidth(l2_geom.width())
+            doc.setPageSize(QSizeF(l2_geom.size()))
+            doc.setDefaultFont(QFont(font_family, font_size))
+            
+            if not text.strip().startswith('<'):
+                text_html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                text_html = text_html.replace('\n', '<br>')
+                text = f'<p style="color:{color};">{text_html}</p>'
+            
+            doc.setHtml(text)
+            doc.drawContents(painter)
+            
+            painter.end()
+
+            self.layer2_base_pixmap = pixmap
+
+            self._on_layer2_rotation_changed(l2_rotation)
+
+            self.layer2_label.setStyleSheet(f"background-color: {l2_background_color};")
+            self.layer2_label.setScaledContents(False) 
+            self.layer2_label.show()
+            active_l2_widget = self.layer2_label
+
+        elif l2_content_type == 'web':
+            log_debug(f"{self.widget_id}", "set_content: L2 es Web. Cargando URL...")
+            url_str = l2_data.get('content', 'about:blank')
+            if not url_str.startswith(('http://', 'https://', 'file:///', 'about:')):
+                url_str = 'http://' + url_str
+            self._ensure_web_view()
+            if self._force_web_reload or self._web_loaded_url != url_str:
+                self.layer2_web.setUrl(QUrl(url_str))
+                self._web_loaded_url = url_str
+                self._force_web_reload = False
+            self.layer2_web.setGeometry(l2_geom)
+            self.layer2_web.setStyleSheet(f"background-color: {l2_background_color};")
+            self.layer2_web.show()
+            active_l2_widget = self.layer2_web
+
+        # --- Layer 1 (Superior) ---
+        l1_data = data.get('layer1', {})
+        l1_content_type = l1_data.get('type', 'text')
+        l1_background_color = l1_data.get('background', 'transparent')
+        l1_geom_dict = l1_data.get('geometry', {'x': 0, 'y': 0, 'w': 400, 'h': 225})
+        l1_geom = QRect(l1_geom_dict['x'], l1_geom_dict['y'], l1_geom_dict['w'], l1_geom_dict['h'])
+        l1_scaled = l1_data.get('scaled_contents', False)
+
+        active_l1_widget = None
+
+        if l1_content_type == 'text':
+            log_debug(f"{self.widget_id}", "set_content: L1 es Texto.")
+            text = l1_data.get('content', 'LAYER 1 (SUPERIOR)')
+            font_family = l1_data.get('font_family', 'Inter')
+            font_size = l1_data.get('font_size', 16)
+            color = l1_data.get('color', 'white')
+            l1_rotation = l1_data.get('rotation', 0)
+
+            pixmap = QPixmap(l1_geom.size())
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            
+            doc = QTextDocument()
+            doc.setDocumentMargin(0)
+            doc.setTextWidth(l1_geom.width())
+            doc.setPageSize(QSizeF(l1_geom.size()))
+            doc.setDefaultFont(QFont(font_family, font_size))
+            
+            if not text.strip().startswith('<'):
+                text_html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                text_html = text_html.replace('\n', '<br>')
+                text = f'<p style="color:{color};">{text_html}</p>'
+            
+            doc.setHtml(text)
+            doc.drawContents(painter)
+            painter.end()
+            
+            self.layer1_base_pixmap = pixmap.copy()
+            self.layer1_label.setScaledContents(False)
+            self._on_layer1_rotation_changed(l1_rotation)
+            
+            self.layer1_label.setStyleSheet(f"background-color: {l1_background_color};")
+            self.layer1_label.show()
+            active_l1_widget = self.layer1_label
+
+        elif l1_content_type == 'png':
+            log_debug(f"{self.widget_id}", "set_content: L1 es PNG.")
+            self.layer1_label.setScaledContents(l1_scaled)
+            l1_rotation = l1_data.get('rotation', 0)
+            l1_path = l1_data.get('content', '')
+
+            l1_effects = l1_data.get('image_effects')
+            if not l1_effects:
+                l1_hue = l1_data.get('hue_target')
+                if l1_hue is not None:
+                    l1_effects = {"hue": l1_hue, "saturation": 0, "brightness": 0, "contrast": 0, "colorize": False}
+
+            l1_cache_filename = self._get_cache_key(l1_path, 0, l1_effects)
+            os.makedirs(LAYERS_CACHE_DIR, exist_ok=True)
+            l1_cache_path = f"{LAYERS_CACHE_DIR}/{l1_cache_filename}"
+
+            l1_base_pixmap = None
+            if os.path.exists(l1_cache_path):
+                _dprint(f"DEBUG [Cache]: Cargando L1 desde cache: {l1_cache_filename}")
+                l1_base_pixmap = QPixmap(l1_cache_path)
+                if l1_base_pixmap.isNull():
+                    print(f"WARN [Cache]: Archivo de cache L1 corrupto. Borrando y recargando.")
+                    try: os.remove(l1_cache_path)
+                    except: pass
+                    l1_base_pixmap = None
+            
+            if l1_base_pixmap:
+                base_pixmap_for_preview = self._load_image(l1_path, 0, "Layer 1 (Base)", layer_num=1)
+                if base_pixmap_for_preview and not base_pixmap_for_preview.isNull():
+                    self.layer1_original_image = base_pixmap_for_preview.toImage()
+            else:
+                _dprint(f"DEBUG [Cache]: No se encontro cache L1. Procesando...")
+                l1_base_pixmap = self._load_image(l1_path, 0, "Layer 1", layer_num=1)
+                if l1_base_pixmap and not l1_base_pixmap.isNull():
+                    self.layer1_original_image = l1_base_pixmap.toImage()
+                    if l1_effects:
+                        self._apply_image_effects(self.layer1_original_image, l1_effects, 1, l1_cache_path)
+
+            if l1_base_pixmap and not l1_base_pixmap.isNull():
+                original_geom_size = QSize(l1_geom.width(), l1_geom.height())
+                aspect_mode = Qt.IgnoreAspectRatio if l1_scaled else Qt.KeepAspectRatio
+                self.layer1_base_pixmap = l1_base_pixmap.scaled(
+                    original_geom_size, 
+                    aspect_mode, 
+                    Qt.SmoothTransformation
+                )
+            else:
+                self.layer1_base_pixmap = QPixmap(l1_geom.size())
+                self.layer1_base_pixmap.fill(Qt.transparent)
+
+            self.layer1_label.setScaledContents(False)
+            self._on_layer1_rotation_changed(l1_rotation)
+
+            self.layer1_label.setStyleSheet(f"background-color: {l1_background_color};")
+            self.layer1_label.show()
+            active_l1_widget = self.layer1_label
+        
+        self.layer1_label.raise_()
+        self.layer1_editor.raise_()
+
+        if l2_content_type == 'web' and l1_content_type == 'png':
+            log_debug(self.widget_id, "L1 (PNG) sobre L2 (Web). Haciendo L1 click-through.")
+            self.layer1_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        else:
+            log_debug(self.widget_id, "Comportamiento de clic estandar. L1 no es click-through.")
+            self.layer1_label.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+
+        self._recalculate_and_normalize()
+
+    def update_window_mask(self):
+        # THROTTLE (no debounce): la primera peticion arranca el timer y las siguientes
+        # se funden con ella, asi la mascara sigue al arrastre sin recalcular en cada evento.
+        if not USE_WINDOW_MASK:
+            return
+        timer = getattr(self, '_mask_timer', None)
+        if timer is not None and not timer.isActive():
+            timer.start()
+
+    def _layer_pixmap_mask(self, slot, pixmap):
+        """pixmap.mask() convierte alfa->bitmap en CPU; se cachea por cacheKey del pixmap."""
+        key = pixmap.cacheKey()
+        cached = self._mask_cache.get(slot)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        m = pixmap.mask()
+        self._mask_cache[slot] = (key, m)
+        return m
+
+    def _scaled_cached(self, slot, pixmap, size, aspect_mode):
+        """Escalado suave cacheado: solo se recalcula si cambia el pixmap, el tamano o el modo."""
+        key = (pixmap.cacheKey(), size.width(), size.height(), aspect_mode)
+        hit = self._scale_cache.get(slot)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        scaled = pixmap.scaled(size, aspect_mode, Qt.SmoothTransformation)
+        self._scale_cache[slot] = (key, scaled)
+        return scaled
+
+    def _update_window_mask_now(self):
+        if not self.isVisible():
+            return
+            
+        try:
+            window_mask = QBitmap(self.size())
+            window_mask.fill(Qt.transparent)
+            painter = QPainter(window_mask)
+
+            l1_data = self.current_template_data.get('layer1', {})
+            l1_is_image = l1_data.get('type') == 'png'
+            l1_is_text = l1_data.get('type') == 'text'
+            l1_geom = self.layer1_label.geometry()
+
+            l2_data = self.current_template_data.get('layer2', {})
+            l2_is_image = l2_data.get('type') == 'png'
+            l2_is_text = l2_data.get('type') == 'text'
+            l2_geom = self.layer2_label.geometry() if self.layer2_label.isVisible() else self.layer2_web.geometry()
+            
+            if self.layer2_label.isVisible():
+                if (l2_is_image or l2_is_text) and not self.layer2_label.pixmap().isNull():
+                    l2_mask = self._layer_pixmap_mask('l2', self.layer2_label.pixmap())
+                    if not l2_mask.isNull():
+                        painter.drawPixmap(l2_geom.topLeft(), l2_mask)
+                    else:
+                        painter.fillRect(l2_geom, Qt.black) 
+                else:
+                    painter.fillRect(l2_geom, Qt.black) 
+            elif self.layer2_web.isVisible():
+                painter.fillRect(l2_geom, Qt.black) 
+
+            if self.layer1_label.isVisible():
+                if (l1_is_image or l1_is_text) and not self.layer1_label.pixmap().isNull():
+                    l1_mask = self._layer_pixmap_mask('l1', self.layer1_label.pixmap())
+                    if not l1_mask.isNull():
+                        painter.drawPixmap(l1_geom.topLeft(), l1_mask)
+                    else:
+                        painter.fillRect(l1_geom, Qt.black) 
+                else:
+                    painter.fillRect(l1_geom, Qt.black) 
+            
+            painter.end()
+            self.setMask(window_mask)
+        
+        except Exception as e:
+            log_error(f"{self.widget_id} Mask", f"Fallo al crear la mascara: {e}")
+            self.clearMask()
+
+    def set_always_on_top(self, checked):
+        self.always_on_top = checked
+        flags = self.windowFlags()
+        if checked:
+            flags |= Qt.WindowStaysOnTopHint
+        else:
+            flags &= ~Qt.WindowStaysOnTopHint
+        
+        self.setWindowFlags(flags)
+        self.show() 
+        
+    def showEvent(self, event):
+        super().showEvent(event)
+        wh = self.windowHandle()
+        if wh is not None and getattr(self, '_screen_hook_obj', None) is not wh:
+            self._screen_hook_obj = wh
+            wh.screenChanged.connect(self._on_screen_changed)
+
+    def _on_screen_changed(self, screen):
+        try:
+            exp = getattr(self, '_expected_size', None)
+            log_info(self.widget_id, f"[pantalla] cambio a '{screen.name()}' (escala {screen.devicePixelRatio():.2f}); "
+                     f"ventana {self.width()}x{self.height()}, esperada {exp.width() if exp else '?'}x{exp.height() if exp else '?'}")
+        except Exception:
+            pass
+        self._size_fix_tries = 0
+        QTimer.singleShot(0, self._restore_expected_size)
+        QTimer.singleShot(250, self._restore_expected_size)
+        QTimer.singleShot(800, self._restore_expected_size)
+
+    def _restore_expected_size(self):
+        """Tras cambiar de pantalla (otra escala) se devuelve la ventana al tamano logico previsto y se
+        rehace lo que dependia de la escala (mascara, caches, tinte). Tambien se hace DURANTE el arrastre."""
+        exp = getattr(self, '_expected_size', None)
+        if exp is None or self._is_closing:
+            return
+        if self.size() != exp or self.minimumSize() != exp or self.maximumSize() != exp:
+            log_info(self.widget_id, f"[pantalla] tamano corregido {self.width()}x{self.height()} -> {exp.width()}x{exp.height()}")
+            self.setFixedSize(exp)
+        self._mask_cache.clear()
+        self._scale_cache.clear()
+        self.update_window_mask()
+        if self._hierarchy_tint_color is not None:
+            self._schedule_tint_refresh()
+        self.update()
+
+    def resizeEvent(self, event):
+        exp = getattr(self, '_expected_size', None)
+        if exp is not None and event.size() != exp and not self._is_closing:
+            QTimer.singleShot(0, self._restore_expected_size)   # cambio de tamano ajeno (p. ej. por la escala): se deshace
+        super().resizeEvent(event)
+        self.update_window_mask()
+
+    def enterEvent(self, event):
+        if self.layer1_editor.isVisible() and self.layer1_editor.hasFocus():
+            super().enterEvent(event)
+            return
+
+        self.setFocus(Qt.MouseFocusReason)
+        _t0 = time.perf_counter()
+        self.manager.set_hierarchy_highlight(self.widget_id, True)
+        _ms = (time.perf_counter() - _t0) * 1000
+        if _ms > 25:
+            log_info(self.widget_id, f"[rendimiento] resaltado de jerarquia al entrar tardo {_ms:.0f} ms")
+        self._is_hovered = True
+        self._update_fold_badge()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        QToolTip.hideText()
+        if not getattr(self, '_is_link_dragging', False):
+            self.manager.set_hierarchy_highlight(self.widget_id, False)
+        self._is_hovered = False
+        self._update_fold_badge()
+        super().leaveEvent(event)
+        
+    def focusOutEvent(self, event):
+        self._is_window_dragging = False
+        self._is_layer_dragging = False
+        self._is_link_dragging = False
+        self._potential_drag_target = None
+        self._dragging_children_windows = None
+        self._dragging_children_start = None
+        if self.layer1_editor.isVisible() and self.layer1_editor.hasFocus():
+             super().focusOutEvent(event)
+             return
+             
+        if self._selected_layer_num > 0:
+            log_debug(self.widget_id, f"Foco perdido. Saliendo del modo de seleccion de capa (era L{self._selected_layer_num}).")
+            self._selected_layer_num = 0
+            self._update_selection_borders()
+            self.save_timer.start()
+        self.manager.flush_pending_save()
+        self.manager.set_hierarchy_highlight(self.widget_id, False)
+        self._is_hovered = False
+        self._update_fold_badge()
+        super().focusOutEvent(event)
+        
+    def _render_layer_interactive(self, layer_num, state, active_url=None):
+        l_data = self.current_template_data.get(f'layer{layer_num}', {})
+        if l_data.get('type') != 'text': return
+        text = l_data.get('content', '')
+        if '_normal.png' not in text: return
+        
+        if active_url and state != 'normal':
+            t1 = f'href="{active_url}"'
+            escaped_url = active_url.replace("&", "&amp;").replace('"', "&quot;")
+            t2 = f'href="{escaped_url}"'
+            target = t1 if t1 in text else (t2 if t2 in text else None)
+            if target:
+                parts = text.split(target)
+                for i in range(1, len(parts)):
+                    parts[i] = parts[i].replace('_normal.png', f'_{state}.png', 1)
+                text = target.join(parts)
+        
+        geom_dict = l_data.get('geometry', {'x':0, 'y':0, 'w':400, 'h':225})
+        geom = QRect(geom_dict['x'], geom_dict['y'], geom_dict['w'], geom_dict['h'])
+        
+        pixmap = QPixmap(geom.size())
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        doc = QTextDocument()
+        doc.setDocumentMargin(0)
+        doc.setTextWidth(geom.width())
+        doc.setPageSize(QSizeF(geom.size()))
+        doc.setDefaultFont(QFont(l_data.get('font_family', 'Inter'), l_data.get('font_size', 16)))
+        
+        if not text.strip().startswith('<'):
+            text = f'<p style="color:{l_data.get("color","white")};">{text}</p>'
+            
+        doc.setHtml(text)
+        doc.drawContents(painter)
+        painter.end()
+        
+        label = self.layer1_label if layer_num == 1 else self.layer2_label
+        rotation = l_data.get('rotation', 0)
+        
+        if rotation != 0:
+            transform = QTransform().rotate(rotation)
+            pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
+            
+        label.setPixmap(pixmap)
+        
+    def eventFilter(self, obj, event):
+        ed = getattr(self, 'layer1_editor', None)
+        if (ed is not None and event.type() == QEvent.MouseButtonPress and obj is ed.viewport()
+                and getattr(self, '_edit_from_click', False) and self._editor_second_click(event)):
+            return True
+        if obj in (self.layer1_label, self.layer2_label):
+            if event.type() == QEvent.MouseMove:
+                global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+                pos_in_window = self.mapFromGlobal(global_pos)
+                link = self._get_link_at(pos_in_window)
+                if link:
+                    self.setCursor(Qt.PointingHandCursor)
+                    if getattr(self, '_active_hover_link', None) != link:
+                        self._active_hover_link = link
+                        self._render_layer_interactive(1, 'hover', link)
+                        self._render_layer_interactive(2, 'hover', link)
+                else:
+                    self.unsetCursor()
+                    if getattr(self, '_active_hover_link', None) is not None:
+                        self._active_hover_link = None
+                        self._render_layer_interactive(1, 'normal')
+                        self._render_layer_interactive(2, 'normal')
+            elif event.type() == QEvent.Leave:
+                self.unsetCursor()
+                if getattr(self, '_active_hover_link', None) is not None:
+                    self._active_hover_link = None
+                    self._render_layer_interactive(1, 'normal')
+                    self._render_layer_interactive(2, 'normal')
+        return super().eventFilter(obj, event)
+
+    def mousePressEvent(self, event):
+        self.manager._last_wid = self.widget_id             # [PACK105] "ultimo widget usado" (teclas globales)
+        self.setFocus()
+        QToolTip.hideText()
+        
+        modifiers = event.modifiers()
+        
+        if event.button() == Qt.RightButton:
+            if (modifiers & Qt.ControlModifier) and \
+               (modifiers & Qt.AltModifier) and \
+               (modifiers & Qt.ShiftModifier):
+                
+                if modifiers & Qt.MetaModifier:
+                    log_info(self.widget_id, "Ctrl+Alt+Mayus+Win+click der.: eliminar la nota y sus descendientes (con confirmacion).")
+                    QTimer.singleShot(0, lambda: self.manager.confirm_remove_tree(self.widget_id))
+                else:
+                    log_warn(self.widget_id, "Kill switch activado. Borrando sin confirmacion.")
+                    self.manager.remove_widget(self.widget_id)
+                event.accept()
+                return
+                
+        elif event.button() == Qt.MiddleButton:
+            target_l2_angle = None
+            
+            if (modifiers & Qt.ControlModifier) and \
+               (modifiers & Qt.AltModifier) and \
+               (modifiers & Qt.ShiftModifier) and \
+               (modifiers & Qt.MetaModifier):
+                
+                log_info(self.widget_id, "Reset de rotaci贸n a 0潞")
+                target_l2_angle = 0
+
+            elif (modifiers & Qt.ControlModifier) and \
+                 (modifiers & Qt.AltModifier) and \
+                 (modifiers & Qt.ShiftModifier):
+                
+                target_l2_angle = random.randint(-20, 20)
+                log_info(self.widget_id, f"Rotaci贸n random aplicada: {target_l2_angle}潞")
+            
+            if target_l2_angle is not None:
+                l1_data = self.current_template_data.setdefault('layer1', {})
+                l2_data = self.current_template_data.setdefault('layer2', {})
+                
+                # L2 va al angulo objetivo (0 en el reset) y L1 recibe el MISMO delta:
+                # el desfase L1-L2 preexistente se conserva.
+                current_l2 = l2_data.get('rotation', 0)
+                delta = target_l2_angle - current_l2
+                current_l1 = l1_data.get('rotation', 0)
+                l1_data['rotation'] = (current_l1 + delta) % 360
+                l2_data['rotation'] = target_l2_angle % 360
+                
+                log_debug(self.widget_id, f"Rotacion: L1={l1_data.get('rotation')} L2={l2_data.get('rotation')} "
+                          f"(desfase L1-L2={(l1_data.get('rotation', 0) - l2_data.get('rotation', 0)) % 360})")
+                self.load_template_data(self.current_template_data)
+                self.save_timer.start()
+                event.accept()
+                return
+
+        elif event.button() == Qt.LeftButton:
+            
+            click_pos = event.position().toPoint()
+
+            if (modifiers & Qt.ControlModifier) and \
+               (modifiers & Qt.AltModifier) and \
+               (modifiers & Qt.ShiftModifier):
+                
+                if modifiers & Qt.MetaModifier:
+                    self._cas_pending = {'start': event.globalPosition().toPoint(), 'win': True}     # [PACK63] click = clon; arrastrar = hija
+                else:
+                    self._cas_pending = {'start': event.globalPosition().toPoint(), 'win': False}
+                self._fwd_win = None
+                event.accept()
+                return
+
+            current_time = datetime.datetime.now().timestamp() * 1000
+            gpos = event.globalPosition().toPoint()
+            elapsed = current_time - self._last_click_time
+            near = (gpos - getattr(self, '_last_click_pos', gpos)).manhattanLength() <= 8
+            if elapsed < self.MULTI_CLICK_MSEC and near:
+                self._click_count = getattr(self, '_click_count', 1) + 1
+            else:
+                self._click_count = 1
+            self._last_click_pos = gpos
+            # Cualquier clic nuevo cancela una edicion que estuviera esperando (por si es un triple clic).
+            self._pending_edit_token = getattr(self, '_pending_edit_token', 0) + 1
+
+            if self._click_count >= 2 and not (modifiers & (Qt.AltModifier | Qt.ShiftModifier | Qt.MetaModifier)):
+                # DOBLE clic: oculta la nota (con confirmacion). Con Ctrl, todas. Cancela la edicion que abrio el 1er clic.
+                self._click_count = 0
+                self._last_click_time = 0
+                self._cancel_inline_edit_for_hide()
+                QTimer.singleShot(0, lambda c=bool(modifiers & Qt.ControlModifier): self._confirm_hide(c))
+                event.accept()
+                return
+
+            self._last_click_time = current_time
+            
+            has_ctrl = bool(modifiers & Qt.ControlModifier)
+            has_alt = bool(modifiers & Qt.AltModifier)
+            has_shift = bool(modifiers & Qt.ShiftModifier)
+            self._drag_all_desc = False
+            if has_ctrl and has_alt and not has_shift and (modifiers & Qt.MetaModifier):
+                # Ctrl+Alt+Win + arrastrar: mueve el widget y TODOS sus descendientes (tambien los de posicion independiente)
+                self._drag_all_desc = True
+                self._potential_drag_target = 'window'
+                self._drag_start_pos = event.globalPosition().toPoint()
+                self.offset = event.globalPosition().toPoint() - self.pos()
+                event.accept()
+                return
+            if (has_ctrl != has_alt) and not has_shift:
+                self._potential_drag_target = 'link'
+                self._link_drag_role = 'parent' if has_alt else 'child'
+                self._link_drag_target_id = None
+                self._link_drag_origin_pos = self.pos()
+                self._drag_start_pos = event.globalPosition().toPoint()
+                self.offset = event.globalPosition().toPoint() - self.pos()
+                event.accept()
+                return
+
+            if self.layer1_label.testAttribute(Qt.WA_TransparentForMouseEvents) and self.layer2_web.isVisible():
+                 web_rect = self.layer2_web.geometry()
+                 if web_rect.contains(click_pos):
+                     event.ignore() 
+                     return
+
+            link_url = self._get_link_at(click_pos)
+            if link_url:
+                 self._link_pressed_url = link_url
+                 self._render_layer_interactive(1, 'pressed', link_url)
+                 self._render_layer_interactive(2, 'pressed', link_url)
+
+            if (modifiers & Qt.ControlModifier) and (modifiers & Qt.AltModifier):
+                if self._selected_layer_num == 0:
+                    self._selected_layer_num = 1
+                elif self._selected_layer_num == 1:
+                    self._selected_layer_num = 2
+                elif self._selected_layer_num == 2:
+                    self._selected_layer_num = 0
+                
+                self._update_selection_borders()
+                event.accept()
+                return
+                
+            if (modifiers & Qt.ShiftModifier):
+                self._potential_drag_target = 'window'
+                self._drag_start_pos = event.globalPosition().toPoint()
+                self.offset = event.globalPosition().toPoint() - self.pos()
+                event.accept()
+                return
+
+            if self._selected_layer_num > 0:
+                self._potential_drag_target = f'layer{self._selected_layer_num}'
+                self._drag_start_pos = event.globalPosition().toPoint()
+                
+                if self._selected_layer_num == 1:
+                    self.offset = click_pos - self.layer1_label.geometry().topLeft()
+                elif self._selected_layer_num == 2:
+                    widget = self.layer2_label if self.layer2_label.isVisible() else self.layer2_web
+                    self.offset = click_pos - widget.geometry().topLeft()
+                
+                event.accept()
+                return
+            
+            self._potential_drag_target = 'window'
+            self._drag_start_pos = event.globalPosition().toPoint()
+            self.offset = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+            return
+
+        super().mousePressEvent(event)
+
+    def _begin_new_note_drag(self, event):
+        """[PACK61] Ctrl+Alt+Mayus(+Win): la nota nueva aparece al PULSAR, centrada bajo el cursor. Si se arrastra,
+        sigue al cursor y queda donde se suelte (hija si se creo con Win); si se suelta sin mover, se queda ahi.
+        El arrastre es el normal de las notas (cables, hijas, guardado): los eventos del raton, que siguen
+        llegando a esta ventana, se reenvian a la nota nueva (ver _sticker_move_fwd / _sticker_release_fwd)."""
+        self._fwd_win = None
+        self._fwd_hist = True
+        try:
+            nw = self.manager.widgets.get(getattr(self.manager, '_last_added_id', None))
+            if nw is None or nw is self:
+                return
+            gp = event.globalPosition().toPoint()
+            try:
+                c = self._note_center_local(nw)
+            except Exception:
+                c = nw.rect().center()
+            nw.move(gp - c)
+            g = nw.current_template_data.setdefault('geometry', {})
+            g['x'], g['y'] = nw.pos().x(), nw.pos().y()
+            nw.raise_()
+            nw._drag_all_desc = False
+            nw._dragging_children_windows = None
+            nw._dragging_children_start = None
+            nw._potential_drag_target = None
+            nw._is_window_dragging = True            # ya se esta arrastrando: sigue al cursor desde el primer movimiento
+            nw._drag_start_pos = gp
+            nw.offset = gp - nw.pos()
+            self._fwd_win = nw
+        except Exception as e_nd:
+            log_warn(self.widget_id, f"No se pudo preparar el arrastre de la nota nueva: {e_nd}")
+        if self._fwd_win is None:
+            self._end_new_note_drag()
+
+    @staticmethod
+    def _note_center_local(nw):
+        """[PACK62] Centro de la nota en coordenadas de su ventana, calculado desde los datos (no desde las imagenes,
+        que pueden llegar despues): no cambia cuando la ventana se reajusta al terminar de cargar."""
+        try:
+            g = (nw.current_template_data.get('layer2') or {}).get('geometry') or {}
+            if all(k in g for k in ('x', 'y', 'w', 'h')):
+                return QPoint(int(g['x'] + g['w'] / 2.0), int(g['y'] + g['h'] / 2.0))
+        except Exception:
+            pass
+        return nw.calculate_bounding_box().center()
+
+    def _end_new_note_drag(self):
+        self._fwd_win = None
+        if getattr(self, '_fwd_hist', False):
+            self._fwd_hist = False
+            self.manager._hist_end()
+
+    def _clear_link_visuals(self):
+        QToolTip.hideText()
+        self._set_hierarchy_highlighted(False)
+        tid = getattr(self, '_link_drag_target_id', None)
+        if tid:
+            tw = self.manager.widgets.get(tid)
+            if tw:
+                tw._set_hierarchy_highlighted(False)
+        self._link_drag_target_id = None
+
+    def _sync_drag_mode(self, modifiers, from_key=False):
+        """Alt/Ctrl a mitad de un arrastre: de mover (con hijas) a enlazar; al soltarlo, de vuelta a mover."""
+        has_ctrl = bool(modifiers & Qt.ControlModifier)
+        has_alt = bool(modifiers & Qt.AltModifier)
+        has_shift = bool(modifiers & Qt.ShiftModifier)
+        link_wanted = (has_ctrl != has_alt) and not has_shift
+        if self._is_window_dragging and link_wanted:
+            kids = getattr(self, '_dragging_children_windows', None)
+            starts = getattr(self, '_dragging_children_start', None)
+            start = getattr(self, '_dragging_self_start', None)
+            if kids is None or starts is None or start is None:
+                return   # arrastre aun sin inicializar: se reintenta en el siguiente movimiento
+            for w, p in zip(kids, starts):   # las hijas vuelven a su sitio mientras se enlaza
+                w.move(p)
+                g = w.current_template_data.setdefault('geometry', {})
+                g['x'] = p.x()
+                g['y'] = p.y()
+            self._link_from_window = True
+            self._link_drag_role = 'parent' if has_alt else 'child'
+            self._link_drag_target_id = None
+            self._link_drag_origin_pos = start
+            self._is_window_dragging = False
+            self._is_link_dragging = True
+            self.manager.hide_cables()
+        elif self._is_link_dragging and getattr(self, '_link_from_window', False):
+            if link_wanted:
+                self._link_drag_role = 'parent' if has_alt else 'child'
+            elif not (has_ctrl or has_alt):
+                self._clear_link_visuals()
+                self._link_from_window = False
+                self._link_drag_role = None
+                self._link_drag_origin_pos = None
+                self._is_link_dragging = False
+                self._is_window_dragging = True
+                kids = getattr(self, '_dragging_children_windows', None)
+                if from_key and kids is not None:
+                    delta = self.pos() - self._dragging_self_start
+                    for w, p in zip(kids, self._dragging_children_start):
+                        np_ = p + delta
+                        w.move(np_)
+                        g = w.current_template_data.setdefault('geometry', {})
+                        g['x'] = np_.x()
+                        g['y'] = np_.y()
+
+    @staticmethod
+    def _mods_after_key(event, pressed):
+        """Estado de modificadores tras este evento de tecla (event.modifiers() no siempre incluye la propia tecla)."""
+        m = event.modifiers()
+        flag = {Qt.Key_Alt: Qt.AltModifier, Qt.Key_Control: Qt.ControlModifier,
+                Qt.Key_Shift: Qt.ShiftModifier, Qt.Key_Meta: Qt.MetaModifier}.get(event.key())
+        if flag is not None:
+            m = (m | flag) if pressed else (m & ~flag)
+        return m
+
+    def _abort_drag_cleanly(self):
+        """Si el foco se pierde en pleno arrastre: cerrarlo de forma ordenada."""
+        if self._is_link_dragging:
+            self._clear_link_visuals()
+            self._link_from_window = False
+            self._dragging_children_windows = None
+            self._dragging_children_start = None
+            self.manager.hide_cables()
+            if self._link_drag_origin_pos is not None:
+                self.move(self._link_drag_origin_pos)
+            self._link_drag_origin_pos = None
+            self._link_drag_role = None
+            self._link_from_window = False
+        elif self._is_window_dragging and getattr(self, '_dragging_children_windows', None) is not None:
+            geom = self.current_template_data.setdefault('geometry', {})
+            geom['x'] = self.pos().x()
+            geom['y'] = self.pos().y()
+            self._save_changes_to_manager()
+            for cw in self._dragging_children_windows:
+                cw._save_changes_to_manager()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            self._sync_drag_mode(event.modifiers())
+        
+        if not (event.buttons() & Qt.LeftButton):
+            self._is_window_dragging = False
+            self._is_layer_dragging = False
+            self._is_link_dragging = False
+            self._potential_drag_target = None
+            self._dragging_children_windows = None
+            self._dragging_children_start = None
+
+        if self._is_window_dragging:
+            new_pos = event.globalPosition().toPoint() - self.offset
+            if getattr(self, '_dragging_children_windows', None) is None:
+                self._dragging_children_windows = [
+                    self.manager.widgets[cid] for cid in (
+                        self.manager.get_descendants(self.widget_id) if getattr(self, '_drag_all_desc', False)
+                        else self.manager.get_position_followers(self.widget_id))
+                    if cid in self.manager.widgets   # tambien las ocultas: conservan su distancia al padre
+                ]
+                self._dragging_children_start = [w.pos() for w in self._dragging_children_windows]
+                self._dragging_self_start = self.pos()
+            delta = new_pos - self._dragging_self_start
+            for child_window, start_pos in zip(self._dragging_children_windows, self._dragging_children_start):
+                new_child_pos = start_pos + delta
+                child_window.move(new_child_pos)
+                child_geom = child_window.current_template_data.setdefault('geometry', {})
+                child_geom['x'] = new_child_pos.x()
+                child_geom['y'] = new_child_pos.y()
+            self.move(new_pos)
+            _t0 = time.perf_counter()
+            self.manager.show_cables_for(self.widget_id, is_drag=True)
+            _ms = (time.perf_counter() - _t0) * 1000
+            if _ms > 25:
+                log_info(self.widget_id, f"[rendimiento] show_cables_for (arrastre) tardo {_ms:.0f} ms")
+            event.accept()
+            return
+            
+        elif self._is_link_dragging:
+            new_pos = event.globalPosition().toPoint() - self.offset
+            self.move(new_pos)
+
+            global_cursor = event.globalPosition().toPoint()
+            target_id = None
+            for wid, window in self.manager.widgets.items():
+                if wid == self.widget_id or not window.isVisible():
+                    continue
+                if window.geometry().contains(global_cursor):
+                    target_id = wid
+                    break
+
+            if target_id != self._link_drag_target_id:
+                if self._link_drag_target_id:
+                    prev_window = self.manager.widgets.get(self._link_drag_target_id)
+                    if prev_window:
+                        prev_window._set_hierarchy_highlighted(False)
+                self._link_drag_target_id = target_id
+
+            PARENT_COLOR = self._TINT_PARENT
+            CHILD_COLOR = self._TINT_CHILD
+
+            self_color = PARENT_COLOR if self._link_drag_role == 'parent' else CHILD_COLOR
+            self._set_hierarchy_highlighted(True, self_color)
+
+            if target_id:
+                target_window = self.manager.widgets[target_id]
+                target_color = CHILD_COLOR if self._link_drag_role == 'parent' else PARENT_COLOR
+                target_window._set_hierarchy_highlighted(True, target_color)
+
+                self_name = self.manager._get_widget_display_name(self.widget_id)
+                target_name = self.manager._get_widget_display_name(target_id)
+                if self._link_drag_role == 'parent':
+                    tip = f"Soltar aca: '{self_name}' sera PADRE de '{target_name}'"
+                else:
+                    tip = f"Soltar aca: '{self_name}' sera HIJO de '{target_name}'"
+                QToolTip.showText(QCursor.pos(), tip, self)
+            else:
+                QToolTip.hideText()
+
+            event.accept()
+            return
+            
+        elif self._is_layer_dragging and self._selected_layer_num > 0:
+            target_layer_widget = None
+            layer_key = f"layer{self._selected_layer_num}"
+            if self._selected_layer_num == 1:
+                target_layer_widget = self.layer1_label
+            else:
+                target_layer_widget = self.layer2_label if self.layer2_label.isVisible() else self.layer2_web
+            
+            if not target_layer_widget:
+                return
+
+            new_top_left = event.position().toPoint() - self.offset
+            
+            old_top_left = target_layer_widget.geometry().topLeft()
+            dx = new_top_left.x() - old_top_left.x()
+            dy = new_top_left.y() - old_top_left.y()
+            
+            new_geom = QRect(new_top_left, target_layer_widget.size())
+            target_layer_widget.setGeometry(new_geom)
+            
+            layer_data = self.current_template_data.setdefault(layer_key, {})
+            layer_geom_data = layer_data.setdefault('geometry', {})
+            
+            if 'x' in layer_geom_data and 'y' in layer_geom_data:
+                layer_geom_data['x'] += dx
+                layer_geom_data['y'] += dy
+            else:
+                layer_geom_data['x'] = new_top_left.x()
+                layer_geom_data['y'] = new_top_left.y()
+            
+            self.update_window_mask()
+            self._update_selection_borders()
+            
+            event.accept()
+            return
+
+        if self._potential_drag_target is not None:
+            distance = (event.globalPosition().toPoint() - self._drag_start_pos).manhattanLength()
+            
+            if distance > min(QApplication.startDragDistance(), 5):
+                if self._potential_drag_target == 'window':
+                    self._is_window_dragging = True
+                elif self._potential_drag_target == 'link':
+                    self._is_link_dragging = True
+                elif self._potential_drag_target.startswith('layer'):
+                    self._is_layer_dragging = True
+
+                self._potential_drag_target = None
+                return self.mouseMoveEvent(event)   # el propio evento que cruza el umbral ya mueve: sin zona muerta
+
+        link = self._get_link_at(event.position().toPoint())
+        if link:
+            self.setCursor(Qt.PointingHandCursor)
+        else:
+            self.unsetCursor()
+
+        super().mouseMoveEvent(event)
+
+    def _drag_save_deferred(self, kids):
+        self._save_changes_to_manager()
+        for child_window in kids:
+            child_window._save_changes_to_manager()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            
+            if self._is_window_dragging:
+                self._is_window_dragging = False
+                current_main_geom = self.current_template_data.setdefault('geometry', {})
+                current_main_geom['x'] = self.pos().x()
+                current_main_geom['y'] = self.pos().y()
+                _kids = list(self._dragging_children_windows or [])       # [PACK108] historial + guardado cuando el raton este quieto
+                self.manager._pending_disk_write = True
+                self.manager.defer_idle(('drag', self.widget_id), lambda s=self, k=_kids: s._drag_save_deferred(k))
+                self._dragging_children_windows = None
+                self._dragging_children_start = None
+                self.manager.release_cables(force=True)
+                event.accept()
+
+            elif self._is_layer_dragging:
+                self._is_layer_dragging = False
+                self._recalculate_and_normalize()
+                self._save_changes_to_manager()
+                self.manager.flush_pending_save()
+                event.accept()
+
+            elif self._is_link_dragging:
+                self._is_link_dragging = False
+                QToolTip.hideText()
+                self._set_hierarchy_highlighted(False)
+
+                self._link_from_window = False
+                self._dragging_children_windows = None
+                self._dragging_children_start = None
+                self.manager.hide_cables()
+                target_id = self._link_drag_target_id
+                if target_id:
+                    target_window = self.manager.widgets.get(target_id)
+                    if target_window:
+                        target_window._set_hierarchy_highlighted(False)
+                    if self._link_drag_role == 'parent':
+                        self.manager.set_parent_link(child_id=target_id, parent_id=self.widget_id)
+                    else:
+                        self.manager.set_parent_link(child_id=self.widget_id, parent_id=target_id)
+
+                if self._link_drag_origin_pos is not None:
+                    self.move(self._link_drag_origin_pos)
+
+                self._link_drag_target_id = None
+                self._link_drag_role = None
+                self._link_drag_origin_pos = None
+                event.accept()
+            
+            elif self._potential_drag_target is not None:
+                click_pos = event.position().toPoint()
+                
+                link_url = self._get_link_at(click_pos)
+                if link_url:
+                    if getattr(self, '_link_pressed_url', None) == link_url:
+                        self._link_pressed_url = None
+                        self._active_hover_link = link_url
+                        self._render_layer_interactive(1, 'hover', link_url)
+                        self._render_layer_interactive(2, 'hover', link_url)
+                    self._execute_link(link_url)
+                    event.accept()
+                    self._potential_drag_target = None
+                    return
+
+                # Un CLIC entra en modo edicion. Capa 1: inmediato (se cancela solo si llega un 2o clic = doble clic).
+                # Capa 2 (abre un dialogo modal): se espera la ventana de doble clic antes de abrirlo.
+                if getattr(self, '_click_count', 1) == 1 and event.modifiers() == Qt.NoModifier \
+                        and not self.layer1_editor.isVisible():
+                    target_layer_to_edit = self._get_inline_edit_target(click_pos)
+                    if target_layer_to_edit == 1:
+                        self._edit_from_click = True
+                        self._start_inline_edit_l1()
+                    elif target_layer_to_edit == 2:
+                        now_ms = datetime.datetime.now().timestamp() * 1000
+                        wait = max(0, int(self.MULTI_CLICK_MSEC - (now_ms - self._last_click_time)))
+                        token = self._pending_edit_token
+                        QTimer.singleShot(wait, lambda t=token, l=target_layer_to_edit: self._fire_pending_edit(t, l))
+                
+                event.accept()
+
+            self._potential_drag_target = None
+            if getattr(self, '_link_pressed_url', None) is not None:
+                self._link_pressed_url = None
+                self._render_layer_interactive(1, 'normal')
+                self._render_layer_interactive(2, 'normal')
+            
+        else:
+            super().mouseReleaseEvent(event)
+
+    def _get_link_at(self, click_pos):
+        import math
+        from PySide6.QtCore import QPointF
+        
+        try:
+            for layer_num in (1, 2):
+                layer_key = f'layer{layer_num}'
+                l_data = self.current_template_data.get(layer_key, {})
+                if l_data.get('type') != 'text':
+                    continue
+                    
+                label = self.layer1_label if layer_num == 1 else self.layer2_label
+                if not label.isVisible() or not label.geometry().contains(click_pos):
+                    continue
+                    
+                if layer_num == 1 and label.testAttribute(Qt.WA_TransparentForMouseEvents):
+                    continue
+                    
+                local_pos = click_pos - label.geometry().topLeft()
+                rotation = l_data.get('rotation', 0)
+                orig_geom = l_data.get('geometry', {'w': 400, 'h': 225})
+                orig_w = orig_geom.get('w', 400)
+                orig_h = orig_geom.get('h', 225)
+                
+                cx = label.width() / 2.0
+                cy = label.height() / 2.0
+                dx = local_pos.x() - cx
+                dy = local_pos.y() - cy
+                
+                angle_rad = math.radians(-rotation)
+                orig_dx = dx * math.cos(angle_rad) - dy * math.sin(angle_rad)
+                orig_dy = dx * math.sin(angle_rad) + dy * math.cos(angle_rad)
+                
+                orig_x = orig_w / 2.0 + orig_dx
+                orig_y = orig_h / 2.0 + orig_dy
+                
+                content = l_data.get('content', '')
+                if 'href' not in content.lower():
+                    continue   # sin enlaces no hay nada que detectar: ni se parsea el HTML
+
+                font_size = l_data.get('font_size', 16 if layer_num == 1 else 12)
+                font_family = l_data.get('font_family', 'Inter')
+                color = l_data.get('color', 'white' if layer_num == 1 else 'black')
+                doc_key = (content, font_family, font_size, color, orig_w, orig_h)
+                doc_cache = self.__dict__.setdefault('_link_doc_cache', {})
+                cached = doc_cache.get(layer_num)
+                if cached is not None and cached[0] == doc_key:
+                    doc = cached[1]
+                else:
+                    doc = QTextDocument()
+                    doc.setDocumentMargin(0)
+                    doc.setTextWidth(orig_w)
+                    doc.setPageSize(QSizeF(orig_w, orig_h))
+                    doc.setDefaultFont(QFont(font_family, font_size))
+
+                    html = content
+                    if not html.strip().startswith('<'):
+                        text_html = html.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                        text_html = text_html.replace('\n', '<br>')
+                        html = f'<p style="color:{color};">{text_html}</p>'
+                    doc.setHtml(html)
+                    doc_cache[layer_num] = (doc_key, doc)
+                link = doc.documentLayout().anchorAt(QPointF(orig_x, orig_y))
+                if link:
+                    return link
+        except Exception as e:
+            log_error(self.widget_id, f"Error detectando enlace: {e}")
+            
+        return ""
+
+    def _confirm_hide(self, all_widgets=False):
+        if self._is_closing:
+            return
+        text = "\u00bfOcultar todos los widgets?" if all_widgets else "\u00bfOcultar widget?"
+        box = QMessageBox(self.manager.dialog_parent)
+        box.setWindowTitle("WidgetArena")
+        box.setIcon(QMessageBox.Question)
+        box.setText(text)
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        box.setWindowFlag(Qt.WindowStaysOnTopHint, True)   # no queda enterrado bajo notas siempre-visibles
+        # Aparece justo donde esta el raton (sobre la nota), en SU monitor y sin salirse de la pantalla.
+        pos = QCursor.pos()
+        scr = QApplication.screenAt(pos) or QApplication.primaryScreen()
+        geo = scr.availableGeometry()
+        box.ensurePolished()
+        sz = box.sizeHint()
+        x = max(geo.left(), min(pos.x() - sz.width() // 2, geo.right() - sz.width()))
+        y = max(geo.top(), min(pos.y() - sz.height() // 2, geo.bottom() - sz.height()))
+        box.move(x, y)
+        answer = box.exec()
+        if answer != QMessageBox.Yes:
+            return
+        if all_widgets:
+            self.manager.toggle_all_visibility()
+        else:
+            self.manager.toggle_widget_enabled(self.widget_id)
+
+    def _cancel_inline_edit_for_hide(self):
+        """El 1er clic del doble clic abrio la edicion de la capa 1: se deshace sin guardar nada."""
+        from PySide6.QtCore import QAbstractAnimation
+        self._edit_from_click = False
+        anim = getattr(self, 'l1_edit_anim', None)
+        was_anim = anim is not None and anim.state() == QAbstractAnimation.Running
+        if was_anim:
+            try:
+                anim.finished.disconnect()   # que al parar no abra el editor
+            except Exception:
+                pass
+            anim.stop()
+        if was_anim or self.layer1_editor.isVisible():
+            self._on_layer1_editing_finished(None)
+
+    def _editor_second_click(self, event):
+        """2a pulsacion sobre el editor recien abierto por un clic: es un doble clic -> ocultar con confirmacion."""
+        if event.button() != Qt.LeftButton or event.modifiers() != Qt.NoModifier:
+            return False
+        self._edit_from_click = False
+        now_ms = datetime.datetime.now().timestamp() * 1000
+        gpos = event.globalPosition().toPoint()
+        near = (gpos - getattr(self, '_last_click_pos', gpos)).manhattanLength() <= 8
+        if now_ms - self._last_click_time >= self.MULTI_CLICK_MSEC or not near:
+            return False
+        self._click_count = 0
+        self._last_click_time = 0
+        self._cancel_inline_edit_for_hide()
+        QTimer.singleShot(0, lambda: self._confirm_hide(False))
+        return True
+
+    def _fire_pending_edit(self, token, layer):
+        if self._is_closing or token != getattr(self, '_pending_edit_token', None):
+            return   # llego otro clic (triple clic) o la nota se cerro: no se edita
+        if layer == 1:
+            self._start_inline_edit_l1()
+        elif layer == 2:
+            self.manager._edit_widget_layer(self.widget_id, 2, 'text')
+
+    def _get_inline_edit_target(self, click_pos):
+        l1_data = self.current_template_data.get('layer1', {})
+        if l1_data.get('type') == 'text' and self.layer1_label.geometry().contains(click_pos):
+            return 1 
+            
+        l2_data = self.current_template_data.get('layer2', {})
+        l2_widget = self.layer2_label if self.layer2_label.isVisible() else self.layer2_web
+        if l2_data.get('type') == 'text' and l2_widget.geometry().contains(click_pos):
+            return 2 
+            
+        return None 
+        
+    def mouseDoubleClickEvent(self, event):
+        modifiers = event.modifiers()
+        sel = self._selected_layer_num
+        if (event.button() == Qt.MiddleButton
+                and (modifiers & Qt.ControlModifier)
+                and (modifiers & Qt.AltModifier)
+                and (modifiers & Qt.ShiftModifier)):
+            # El 2o click central rapido llega como DOBLE-click: se trata como un click normal
+            # (random / reset con Win), rotando siempre AMBAS capas con el mismo delta.
+            self.mousePressEvent(event)
+            return
+        super().mouseDoubleClickEvent(event)
+            
+    def _build_mode_hint_text(self, modifiers):
+        ctrl = bool(modifiers & Qt.ControlModifier)
+        alt = bool(modifiers & Qt.AltModifier)
+        shift = bool(modifiers & Qt.ShiftModifier)
+        meta = bool(modifiers & Qt.MetaModifier)
+
+        if not (ctrl or alt or shift or meta):
+            return None
+
+        sel = self._selected_layer_num
+        sel_txt = f"Capa L{sel} seleccionada" if sel else "Ninguna capa seleccionada"
+        lines = []
+
+        if ctrl and alt and shift and meta:
+            lines.append("Click izquierdo: CLONAR (hereda la jerarquia; posicion independiente)")
+            lines.append(f"Arrastrar: CREA un HIJO ({self.manager.child_gesture_label(True)}) y la colocas donde sueltes")
+            lines.append("Click derecho: ELIMINAR el widget y sus descendientes (pide confirmacion si tiene hijos)")
+            lines.append("Click central: resetear rotacion a 0\u00b0")
+        elif ctrl and alt and shift:
+            lines.append("Click izquierdo: CLONAR (hereda la jerarquia del original)")
+            lines.append(f"Arrastrar: CREA un HIJO ({self.manager.child_gesture_label(False)}) y la colocas donde sueltes")
+            lines.append("Click central: rotacion aleatoria")
+            lines.append("Click derecho: ELIMINAR sin confirmar")
+            lines.append("+ Win: izq. clona como hijo independiente / arrastrar crea hijo, der. elimina con descendientes, central resetea la rotacion")
+        elif ctrl and alt:
+            lines.append("Click izquierdo: seleccionar capa (L1 -> L2 -> ninguna)")
+            if sel:
+                paso = "fino (0.01)" if shift else "normal (0.1)"
+                lines.append(f"Flechas Arriba/Abajo: inclinar (shear) capa, paso {paso}")
+        elif ctrl and shift:
+            lines.append("Flechas Arriba/Abajo: cambiar de perfil")
+            lines.append("P: menu rapido de perfiles")
+            if sel:
+                lines.append("Flechas Izq/Der: rotar capa, paso fino (1掳)")
+                lines.append("Rueda del mouse: tono FINO (1 grado) si es imagen, o ancho + alto")
+        elif ctrl:
+            lines.append("Numeros 1-0: cargar perfil por posicion")
+            lines.append("F12: mostrar/ocultar consola")
+            if sel:
+                lines.append("Flechas Izq/Der: rotar capa, paso normal (5掳)")
+                lines.append("Rueda del mouse: tono GRUESO (predefinidos) si es imagen, o ancho")
+            else:
+                lines.append("Rueda del mouse sobre una imagen: tono grueso (+Shift: fino)")
+            lines.append("(+Alt = ajustes con paso mas fino)")
+        elif shift:
+            lines.append("Arrastrar: mover TODA la ventana del widget")
+            if sel:
+                lines.append("(Ctrl+Rueda con capa seleccionada: alto de la capa)")
+        elif alt:
+            lines.append("Alt modifica el paso fino de otras combinaciones")
+            lines.append("(combinalo con Ctrl, Ctrl+Alt o Ctrl+Alt+Shift)")
+        elif meta:
+            lines.append("Win se usa junto a Ctrl+Alt+Shift+Click central")
+            lines.append("para resetear la rotacion a 0掳")
+
+        if not lines:
+            return None
+
+        return f"MODO: {sel_txt}\n" + "\n".join(f"- {l}" for l in lines)
+
+    def _update_mode_tooltip(self, modifiers):
+        text = None      # lo muestra ahora la ayuda de gestos (GestureHud), tambien sin foco ni click
+        if text:
+            QToolTip.showText(QCursor.pos(), text, self)
+        else:
+            QToolTip.hideText()
+
+    def keyPressEvent(self, event: QKeyEvent):
+        modifiers = event.modifiers()
+        self._update_mode_tooltip(modifiers)
+        self._sync_drag_mode(self._mods_after_key(event, True), from_key=True)
+        if self.manager.hotkeys.handle_local_key(event, self):    # atajos personalizados (hotkeys.json)
+            event.accept()
+            return
+        
+        if False and (modifiers & Qt.ControlModifier) and event.key() == Qt.Key_Z:
+            if modifiers & Qt.AltModifier:
+                self.manager.undo_global()
+            else:
+                self._undo_widget_changes()
+            event.accept()
+            return
+
+        if False and (modifiers & Qt.ControlModifier) and event.key() == Qt.Key_Y:
+            if modifiers & Qt.AltModifier:
+                self.manager.redo_global()
+            else:
+                self._redo_widget_changes()
+            event.accept()
+            return
+
+        if False and (modifiers & Qt.ControlModifier) and event.key() == Qt.Key_F12:
+            self.manager.toggle_console_visibility()
+            event.accept()
+            return
+        
+        if event.key() == Qt.Key_Escape or \
+           event.key() == Qt.Key_Return or \
+           event.key() == Qt.Key_Enter:
+            
+            if self._selected_layer_num > 0:
+                self._selected_layer_num = 0
+                self._update_selection_borders()
+                self.save_timer.start()
+                event.accept()
+                return
+        
+        if False and event.key() == Qt.Key_F5:
+            self.load_template_data(self.current_template_data)
+            event.accept()
+            return
+
+        if (modifiers & Qt.ControlModifier) and not (modifiers & Qt.ShiftModifier) and not (modifiers & Qt.AltModifier):
+            key_map = {
+                Qt.Key_1: 0, Qt.Key_2: 1, Qt.Key_3: 2, Qt.Key_4: 3, Qt.Key_5: 4,
+                Qt.Key_6: 5, Qt.Key_7: 6, Qt.Key_8: 7, Qt.Key_9: 8, Qt.Key_0: 9,
+            }
+            if event.key() in key_map:
+                profiles = self.manager._list_profiles()
+                idx = key_map[event.key()]
+                if idx < len(profiles):
+                    name = os.path.splitext(os.path.basename(profiles[idx]))[0]
+                    self.manager._load_profile_dialog(name)
+                    event.accept()
+                    return
+
+        if (modifiers & Qt.ControlModifier) and (modifiers & Qt.ShiftModifier):
+            profiles = self.manager._list_profiles()
+            if profiles:
+                if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
+                    current = self.manager.current_profile_name
+                    idx = -1
+                    names = [os.path.splitext(os.path.basename(p))[0] for p in profiles]
+                    for i, n in enumerate(names):
+                        if n == current:
+                            idx = i
+                            break
+                    if idx == -1:
+                        idx = 0 if event.key() == Qt.Key_Down else len(names) - 1
+                    else:
+                        idx = (idx - 1) % len(names) if event.key() == Qt.Key_Up else (idx + 1) % len(names)
+                    self.manager._load_profile(names[idx])
+                    event.accept()
+                    return
+                elif event.key() == Qt.Key_P:
+                    menu = QMenu(self)
+                    current = self.manager.current_profile_name
+                    names = [os.path.splitext(os.path.basename(p))[0] for p in profiles]
+                    for name in names:
+                        act = QAction(name, self)
+                        act.setCheckable(True)
+                        act.setChecked(name == current)
+                        act.triggered.connect(lambda checked, n=name: self.manager._load_profile_dialog(n))
+                        menu.addAction(act)
+                    menu.addSeparator()
+                    save_act = QAction("Guardar perfil activo...", self)
+                    save_act.triggered.connect(self.manager._save_profile_dialog)
+                    menu.addAction(save_act)
+                    menu.exec(QCursor.pos())
+                    event.accept()
+                    return
+
+        if (modifiers & Qt.ControlModifier) and self._selected_layer_num > 0:
+            
+            layer_key = f"layer{self._selected_layer_num}"
+            layer_data = self.current_template_data.setdefault(layer_key, {})
+            current_rotation = layer_data.get('rotation', 0)
+            step = 1 if (modifiers & Qt.ShiftModifier) else 5
+            
+            if event.key() == Qt.Key_Left:
+                new_rotation = (current_rotation - step) % 360
+                layer_data['rotation'] = new_rotation
+                log_debug(self.widget_id, f"Teclado rotaci贸n L{self._selected_layer_num}: {new_rotation}潞 (step={step})")
+                self.load_template_data(self.current_template_data) 
+                self.save_timer.start()
+                event.accept()
+                return
+            elif event.key() == Qt.Key_Right:
+                new_rotation = (current_rotation + step) % 360
+                layer_data['rotation'] = new_rotation
+                log_debug(self.widget_id, f"Teclado rotaci贸n L{self._selected_layer_num}: {new_rotation}潞 (step={step})")
+                self.load_template_data(self.current_template_data)
+                self.save_timer.start()
+                event.accept()
+                return
+        if (modifiers & Qt.ControlModifier) and (modifiers & Qt.AltModifier) and self._selected_layer_num > 0:
+            layer_key = f"layer{self._selected_layer_num}"
+            layer_data = self.current_template_data.setdefault(layer_key, {})
+            step = 0.01 if (modifiers & Qt.ShiftModifier) else 0.1 
+
+            if event.key() == Qt.Key_Left:
+                current_shear_x = layer_data.get('shear_x', 0.0)
+                layer_data['shear_x'] = round(current_shear_x - step, 2)
+                log_debug(self.widget_id, f"Shear X L{self._selected_layer_num}: {layer_data['shear_x']}")
+                self.load_template_data(self.current_template_data)
+                self.save_timer.start()
+                event.accept()
+                return
+            elif event.key() == Qt.Key_Right:
+                current_shear_x = layer_data.get('shear_x', 0.0)
+                layer_data['shear_x'] = round(current_shear_x + step, 2)
+                log_debug(self.widget_id, f"Shear X L{self._selected_layer_num}: {layer_data['shear_x']}")
+                self.load_template_data(self.current_template_data)
+                self.save_timer.start()
+                event.accept()
+                return
+            elif event.key() == Qt.Key_Up:
+                current_shear_y = layer_data.get('shear_y', 0.0)
+                layer_data['shear_y'] = round(current_shear_y - step, 2)
+                log_debug(self.widget_id, f"Shear Y L{self._selected_layer_num}: {layer_data['shear_y']}")
+                self.load_template_data(self.current_template_data)
+                self.save_timer.start()
+                event.accept()
+                return
+            elif event.key() == Qt.Key_Down:
+                current_shear_y = layer_data.get('shear_y', 0.0)
+                layer_data['shear_y'] = round(current_shear_y + step, 2)
+                log_debug(self.widget_id, f"Shear Y L{self._selected_layer_num}: {layer_data['shear_y']}")
+                self.load_template_data(self.current_template_data)
+                self.save_timer.start()
+                event.accept()
+                return
+                
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event: QKeyEvent):
+        self._update_mode_tooltip(event.modifiers())
+        self._sync_drag_mode(self._mods_after_key(event, False), from_key=True)
+        super().keyReleaseEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent):
+        
+        modifiers = event.modifiers()
+        delta_y = event.angleDelta().y()
+        
+        has_ctrl = (modifiers & Qt.ControlModifier)
+        has_shift = (modifiers & Qt.ShiftModifier)
+        has_alt = (modifiers & Qt.AltModifier)
+        
+        if delta_y == 0:
+            event.ignore()
+            return
+
+        if has_ctrl and not has_shift:
+            btn_href = self._get_link_at(event.position().toPoint()) or ''
+            if 'btn=1' in btn_href:
+                self._adjust_button_on_wheel(event, delta_y)
+                event.accept()
+                return
+
+        if has_alt and has_shift:
+            btn_href = self._get_link_at(event.position().toPoint()) or ''
+            if 'btn=1' in btn_href:
+                self._adjust_button_font_on_wheel(event, delta_y)
+                event.accept()
+                return
+
+        step = 1 if has_alt else 10
+        delta = step if delta_y > 0 else -step
+
+        target_layer_num = self._selected_layer_num
+        
+        if target_layer_num == 0 and has_ctrl:
+            l2_data = self.current_template_data.get('layer2', {})
+            if l2_data.get('type') == 'png' and (self.layer2_label.isVisible() or self.layer2_web.isVisible()):
+                target_layer_num = 2
+            else:
+                l1_data = self.current_template_data.get('layer1', {})
+                if l1_data.get('type') == 'png' and self.layer1_label.isVisible():
+                    target_layer_num = 1
+        
+        if target_layer_num == 0:
+            event.ignore()
+            return
+            
+        layer_key = f"layer{target_layer_num}"
+        
+        target_layer_widget = None
+        if target_layer_num == 1:
+            target_layer_widget = self.layer1_label
+        elif target_layer_num == 2:
+            target_layer_widget = self.layer2_label if self.layer2_label.isVisible() else self.layer2_web
+        
+        if not target_layer_widget:
+            event.ignore()
+            return
+
+        layer_data = self.current_template_data.setdefault(layer_key, {})
+        layer_type = layer_data.get('type', 'text')
+
+        edit_mode = self._selected_layer_num > 0 and not getattr(self, '_wheel_from_menu', False)   # [PACK85] con una capa seleccionada, Ctrl/May\u00fas+rueda cambian su TAMA\u00d1O (tambi\u00e9n en im\u00e1genes)
+        if has_ctrl and layer_type == 'png' and not edit_mode:
+            effects = layer_data.setdefault('image_effects', {
+                "hue": 0, "saturation": 0, "brightness": 0, "contrast": 0, "colorize": False
+            })
+            direction = 1 if delta_y > 0 else -1
+            # 'hue' guardado = DESPLAZAMIENTO sobre el color original de la imagen (0 = color original),
+            # salvo en modo Colorear, donde es absoluto. Los predefinidos son tonos ABSOLUTOS (0 = rojo):
+            # se convierten con el tono dominante de la imagen original (ref).
+            colorize = bool(effects.get('colorize', False))
+            base_hue = None if colorize else self._effective_base_hue(target_layer_num)
+            src_img = self.layer1_original_image if target_layer_num == 1 else self.layer2_original_image
+            has_src = src_img is not None and not src_img.isNull()
+            gray_img = (not colorize) and has_src and base_hue is None   # sin color propio: el desplazamiento no se veria
+            ref = 0 if (colorize or base_hue is None) else base_hue
+            shown = (int(effects.get('hue', 0)) + ref) % 360   # tono absoluto que se ve ahora
+            snaps = [] if has_shift else self.manager.get_predefined_hues()
+            if has_shift:
+                new_shown = (shown + direction) % 360   # Ctrl+Shift+rueda: FINO (1 grado)
+            elif snaps:
+                # Ctrl+rueda: GRUESO, salta entre los hues de "Colores predefinidos"
+                if direction > 0:
+                    nxt = [s for s in snaps if s > shown]
+                    new_shown = nxt[0] if nxt else snaps[0]
+                else:
+                    prv = [s for s in snaps if s < shown]
+                    new_shown = prv[-1] if prv else snaps[-1]
+            else:
+                new_shown = (shown + 10 * direction) % 360
+            new_hue = (new_shown - ref) % 360
+            if gray_img:
+                effects['colorize'] = True   # imagen en blanco y negro: solo "Colorear" puede darle tono
+            if new_hue is not None:
+                effects['hue'] = int(new_hue)
+                self._hue_expected = getattr(self, '_hue_expected', {})
+                self._hue_expected[target_layer_num] = (new_shown, base_hue, self._layer_base_hue_override(target_layer_num), int(new_hue))
+                log_info(self.widget_id, f"[hue] rueda L{target_layer_num}: objetivo {new_shown}, desplazamiento {new_hue}, base usada {base_hue}, colorize {colorize}")
+                self._request_hue_render(target_layer_num)
+            self.save_timer.start()
+            event.accept()
+            return
+
+        if has_ctrl and has_shift and layer_type == 'png':
+            pass
+
+        if not has_ctrl and not has_shift:
+            event.ignore()
+            return
+
+        layer_geom_data = layer_data.setdefault('geometry', {
+            'x': target_layer_widget.geometry().x(),
+            'y': target_layer_widget.geometry().y(),
+            'w': target_layer_widget.geometry().width(),
+            'h': target_layer_widget.geometry().height()
+        })
+
+        geom = target_layer_widget.geometry()
+        if has_ctrl: 
+            layer_geom_data['w'] = max(50, layer_geom_data.get('w', geom.width()) + delta)
+
+        if has_shift: 
+            layer_geom_data['h'] = max(50, layer_geom_data.get('h', geom.height()) + delta)
+        
+        self.load_template_data(self.current_template_data)
+        
+        self.save_timer.start()
+        
+        event.accept()
+        
+    def _adjust_button_on_wheel(self, event, delta_y):
+        if event is None:
+            return
+        pos = event.position().toPoint() if hasattr(event, 'position') else (
+            event.pos() if hasattr(event, 'pos') else QPoint())
+
+        href = self._get_link_at(pos)
+        if not href or 'btn=1' not in href:
+            return
+
+        frag = href.split('#', 1)[1] if '#' in href else ''
+        ff_val = ''
+        fs_val = 0
+        label = ''
+        for part in frag.split('&'):
+            if part.startswith('label='):
+                label = urllib.parse.unquote(part[len('label='):])
+            elif part.startswith('ff='):
+                ff_val = urllib.parse.unquote(part[len('ff='):])
+            elif part.startswith('fs='):
+                try:
+                    fs_val = int(part[len('fs='):])
+                except ValueError:
+                    fs_val = 0
+
+        if not ff_val:
+            ff_val = self.current_template_data.get('layer1', {}).get('font_family', 'Inter') or 'Inter'
+        if not fs_val:
+            fs_val = self.current_template_data.get('layer1', {}).get('font_size', 16) or 16
+
+        new_fs = max(6, fs_val + (1 if delta_y > 0 else -1))
+        if new_fs == fs_val:
+            return
+
+        frag_parts = []
+        for part in frag.split('&'):
+            if part.startswith('fs='):
+                part = f'fs={new_fs}'
+            frag_parts.append(part)
+        if not any(part.startswith('fs=') for part in frag_parts):
+            frag_parts.append(f'fs={new_fs}')
+        if not any(part.startswith('ff=') for part in frag_parts):
+            frag_parts.insert(0, f'ff={urllib.parse.quote(ff_val)}')
+        new_href = href.split('#', 1)[0] + '#' + '&'.join(frag_parts)
+
+        l1_data = self.current_template_data.get('layer1', {})
+        if not l1_data:
+            return
+        old_content = l1_data.get('content', '') or ''
+        raw_old = f'href="{href}"'
+        raw_new = f'href="{new_href}"'
+        _h_old = href.replace("&", "&amp;").replace('"', "&quot;")                 # [PACK94] sin barra invertida dentro del f-string (Python < 3.12)
+        _h_new = new_href.replace("&", "&amp;").replace('"', "&quot;")
+        esc_old = f'href="{_h_old}"'
+        esc_new = f'href="{_h_new}"'
+
+        if raw_old in old_content:
+            updated = old_content.replace(raw_old, raw_new)
+        elif esc_old in old_content:
+            updated = old_content.replace(esc_old, esc_new)
+        else:
+            return
+
+        l1_data['content'] = updated
+        self._resync_button_colors()
+        log_debug(self.widget_id, f"Rueda bot\u8d38n: {ff_val} {fs_val} -> {new_fs} (label='{label}')")
+
+    def _adjust_button_font_on_wheel(self, event, delta_y):
+        if event is None:
+            return
+        pos = event.position().toPoint() if hasattr(event, 'position') else (
+            event.pos() if hasattr(event, 'pos') else QPoint())
+
+        href = self._get_link_at(pos)
+        if not href or 'btn=1' not in href:
+            return
+
+        from PySide6.QtGui import QFontDatabase
+        fonts = QFontDatabase.families()
+
+        frag = href.split('#', 1)[1] if '#' in href else ''
+        ff_val = ''
+        fs_val = 0
+        label = ''
+        for part in frag.split('&'):
+            if part.startswith('label='):
+                label = urllib.parse.unquote(part[len('label='):])
+            elif part.startswith('ff='):
+                ff_val = urllib.parse.unquote(part[len('ff='):])
+            elif part.startswith('fs='):
+                try:
+                    fs_val = int(part[len('fs='):])
+                except ValueError:
+                    fs_val = 0
+
+        if not ff_val:
+            ff_val = self.current_template_data.get('layer1', {}).get('font_family', 'Inter') or 'Inter'
+        if not fs_val:
+            fs_val = self.current_template_data.get('layer1', {}).get('font_size', 16) or 16
+
+        try:
+            cur_idx = fonts.index(ff_val)
+        except ValueError:
+            cur_idx = getattr(self, '_btn_font_cycle_idx', 0)
+        step = 1 if delta_y > 0 else -1
+        self._btn_font_cycle_idx = (cur_idx + step) % len(fonts)
+        new_ff = fonts[self._btn_font_cycle_idx]
+        if new_ff == ff_val:
+            return
+
+        frag_parts = []
+        for part in frag.split('&'):
+            if part.startswith('ff='):
+                part = f'ff={urllib.parse.quote(new_ff)}'
+            frag_parts.append(part)
+        if not any(part.startswith('ff=') for part in frag_parts):
+            frag_parts.insert(0, f'ff={urllib.parse.quote(new_ff)}')
+        if not any(part.startswith('fs=') for part in frag_parts):
+            frag_parts.append(f'fs={fs_val}')
+        new_href = href.split('#', 1)[0] + '#' + '&'.join(frag_parts)
+
+        l1_data = self.current_template_data.get('layer1', {})
+        if not l1_data:
+            return
+        old_content = l1_data.get('content', '') or ''
+        raw_old = f'href="{href}"'
+        raw_new = f'href="{new_href}"'
+        _h_old = href.replace("&", "&amp;").replace('"', "&quot;")                 # [PACK94] sin barra invertida dentro del f-string (Python < 3.12)
+        _h_new = new_href.replace("&", "&amp;").replace('"', "&quot;")
+        esc_old = f'href="{_h_old}"'
+        esc_new = f'href="{_h_new}"'
+
+        if raw_old in old_content:
+            updated = old_content.replace(raw_old, raw_new)
+        elif esc_old in old_content:
+            updated = old_content.replace(esc_old, esc_new)
+        else:
+            return
+
+        l1_data['content'] = updated
+        self._resync_button_colors()
+        log_debug(self.widget_id, f"Rueda bot\u8d38n fuente: {ff_val} -> {new_ff} (label='{label}')")
+
+    def _with_layer(self, n, fn):
+        """Ejecuta fn con la capa n como 'seleccionada' (los gestos de teclado / rueda actuan sobre ella)."""
+        prev = self._selected_layer_num
+        self._selected_layer_num = n
+        try:
+            fn()
+        finally:
+            self._selected_layer_num = prev
+            self._update_selection_borders()
+
+    def act_select_layer(self, n):
+        self._selected_layer_num = n
+        self._update_selection_borders()
+        self.save_timer.start()
+
+    def act_key(self, n, key, mods):
+        """Equivale a pulsar esa combinacion de teclas con la capa n seleccionada (rotar, inclinar...)."""
+        from PySide6.QtGui import QKeyEvent
+        ev = QKeyEvent(QEvent.KeyPress, key, mods)
+        self._with_layer(n, lambda: self.keyPressEvent(ev))
+
+    def act_wheel(self, n, up, mods):
+        """Equivale a una vuelta de rueda con esos modificadores sobre la capa n (tono, tamano...)."""
+        from PySide6.QtGui import QWheelEvent
+        from PySide6.QtCore import QPointF
+        ev = QWheelEvent(QPointF(-1, -1), QPointF(-1, -1), QPoint(0, 0), QPoint(0, 120 if up else -120),
+                         Qt.NoButton, mods, Qt.NoScrollPhase, False)
+        self._wheel_from_menu = True                   # [PACK85] desde el men\u00fa, Ctrl+rueda en una imagen sigue siendo el tono
+        try:
+            self._with_layer(n, lambda: self.wheelEvent(ev))
+        finally:
+            self._wheel_from_menu = False
+
+    def act_shear(self, n, dx, dy):
+        """Inclina la capa n (dx, dy en pasos de 0,1 / 0,01). dx = None: quita la inclinacion."""
+        d = self.current_template_data.setdefault(f"layer{n}", {})
+        if dx is None:
+            d['shear_x'] = 0.0
+            d['shear_y'] = 0.0
+        else:
+            d['shear_x'] = round(d.get('shear_x', 0.0) + dx, 2)
+            d['shear_y'] = round(d.get('shear_y', 0.0) + dy, 2)
+        self.load_template_data(self.current_template_data)
+        self.save_timer.start()
+
+    def act_resize(self, n, dw, dh):
+        """Cambia el ancho / alto de la capa n (como Ctrl+rueda / Mayus+rueda en una capa de texto)."""
+        label = self.layer1_label if n == 1 else (self.layer2_label if self.layer2_label.isVisible() else self.layer2_web)
+        d = self.current_template_data.setdefault(f"layer{n}", {})
+        r = label.geometry()
+        g = d.setdefault('geometry', {'x': r.x(), 'y': r.y(), 'w': r.width(), 'h': r.height()})
+        if dw:
+            g['w'] = max(50, g.get('w', r.width()) + dw)
+        if dh:
+            g['h'] = max(50, g.get('h', r.height()) + dh)
+        self.load_template_data(self.current_template_data)
+        self.save_timer.start()
+
+    def act_rotate_note(self, target=None):
+        """Rota toda la nota (las dos capas con el mismo delta). None = aleatoria, 0 = resetear."""
+        if target is None:
+            target = random.randint(-20, 20)
+        l1 = self.current_template_data.setdefault('layer1', {})
+        l2 = self.current_template_data.setdefault('layer2', {})
+        delta = target - l2.get('rotation', 0)
+        l1['rotation'] = (l1.get('rotation', 0) + delta) % 360
+        l2['rotation'] = target % 360
+        self.load_template_data(self.current_template_data)
+        self.save_timer.start()
+
+    def act_rotate_note_by(self, delta):
+        """[PACK90] Gira toda la nota 'delta' grados respecto a su rotacion actual (+ = sentido horario)."""
+        cur = float(self.current_template_data.get('layer2', {}).get('rotation', 0) or 0)
+        new = round((cur + float(delta)) % 360.0, 2)
+        self.act_rotate_note(int(new) if abs(new - round(new)) < 1e-9 else new)
+
+    def contextMenuEvent(self, event):
+        QToolTip.hideText()
+        self._is_window_dragging = False
+        self._is_layer_dragging = False
+        self._is_link_dragging = False
+        self._potential_drag_target = None
+        self._dragging_children_windows = None
+        self._dragging_children_start = None
+        
+        if self.layer1_editor.isVisible() and self.layer1_editor.hasFocus():
+            event.accept()
+            return
+            
+        _need = Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier
+        if (QApplication.keyboardModifiers() & _need) == _need:
+            event.accept()      # [PACK52] gesto Ctrl+Alt+Mayus(+Win)+click der.: no abre el menu contextual
+            return
+        menu = self.manager.build_widget_context_menu(self.widget_id)
+        menu.setToolTipsVisible(True)
+
+        link_url = self._get_link_at(event.pos())
+        if link_url:
+            edit_link_action = QAction("Editar este bot贸n/enlace...", self)
+            edit_link_action.triggered.connect(lambda: self._edit_link_from_view_mode(link_url))
+            actions = menu.actions()
+            if actions:
+                menu.insertAction(actions[0], edit_link_action)
+                menu.insertSeparator(actions[0])
+            else:
+                menu.addAction(edit_link_action)
+
+        menu.exec(event.globalPos())
+
+    def _edit_link_from_view_mode(self, link_url):
+        self._start_inline_edit_l1()
+
+        def _select_and_open():
+            cursor = self.layer1_editor.select_anchor_by_href(link_url)
+            if cursor is not None:
+                self.layer1_editor.setTextCursor(cursor)
+            self.layer1_editor._insert_link()
+
+        QTimer.singleShot(60, _select_and_open)
+
+    def closeEvent(self, event):
+        # Una nota cerrada/eliminada no debe seguir disparando notificaciones.
+        self.widget_timer.stop()
+        if self.manager.app_is_quitting:
+            event.accept()
+            return
+            
+        if self._is_closing:
+            event.accept()
+            return
+
+        self._is_closing = True
+        _pid = (self.manager.global_state.get(self.widget_id) or {}).get("parent_id")
+        self.manager.remove_widget(self.widget_id, from_close_event=True)
+        QTimer.singleShot(0, lambda p=_pid: self.manager._focus_any_note(p))      # [PACK55] el foco no se pierde (Ctrl+Z lo necesita)
+        event.accept()
+        
+    def _update_selection_borders(self):
+        self.selection_border.hide()
+        
+        target_geom = None
+        if self._selected_layer_num == 1:
+            target_geom = self.layer1_label.geometry()
+        elif self._selected_layer_num == 2:
+            target_geom = self.layer2_label.geometry() if self.layer2_label.isVisible() else self.layer2_web.geometry()
+
+        if target_geom:
+            self.selection_border.setGeometry(target_geom)
+            self.selection_border.raise_()
+            self.selection_border.show()
+
+    @property
+    def _TINT_HOVER(self):
+        return self.manager.get_tint_color('hover')
+
+    @property
+    def _TINT_PARENT(self):
+        return self.manager.get_tint_color('parent')
+
+    @property
+    def _TINT_CHILD(self):
+        return self.manager.get_tint_color('child')
+
+    def _set_hierarchy_highlighted(self, active, color=None):
+        if not active:
+            self.hierarchy_border.hide()
+            self._hierarchy_tint_timer.stop()
+            self._hierarchy_tint_color = None
+            return
+        new_color = color if isinstance(color, QColor) else self._TINT_HOVER
+        # Si ya esta mostrado con ese color no se vuelve a hacer grab()+numpy
+        # (durante el arrastre de enlace esto se llamaba en cada mouseMove).
+        if new_color == self._hierarchy_tint_color and self.hierarchy_border.isVisible():
+            return
+        self._hierarchy_tint_color = new_color
+        self._refresh_hierarchy_tint()
+
+    def _schedule_tint_refresh(self):
+        """Refresca el tinte (si esta activo) cuando deja de cambiar el contenido."""
+        if self._hierarchy_tint_color is not None:
+            self._hierarchy_tint_timer.start()   # reinicia: dispara ~16 ms despues del ultimo cambio
+
+    def _refresh_hierarchy_tint(self):
+        if self._hierarchy_tint_color is None:
+            return
+        was_visible = self.hierarchy_border.isVisible()
+        self.hierarchy_border.hide()
+        pixmap = self._build_hierarchy_tint_pixmap(self._hierarchy_tint_color)
+        if pixmap.isNull():
+            if was_visible:
+                self.hierarchy_border.show()
+            return
+        self.hierarchy_border.setPixmap(pixmap)
+        self.hierarchy_border.setGeometry(self.central_widget.rect())
+        self.hierarchy_border.raise_()
+        self.hierarchy_border.show()
+
+    def _build_hierarchy_tint_pixmap(self, color):
+        base_pixmap = self.central_widget.grab()
+        if base_pixmap.isNull():
+            return QPixmap()
+
+        image = base_pixmap.toImage().convertToFormat(QImage.Format_RGBA8888)
+        h, w = image.height(), image.width()
+        if h == 0 or w == 0:
+            return QPixmap()
+
+        ptr = image.bits()
+        try:
+            arr = np.frombuffer(ptr, dtype=np.uint8).reshape((h, w, 4)).copy()
+        except Exception:
+            arr = np.array(ptr, copy=True).reshape((h, w, 4))
+
+        r = arr[:, :, 0].astype(np.int16)
+        g = arr[:, :, 1].astype(np.int16)
+        b = arr[:, :, 2].astype(np.int16)
+        alpha = arr[:, :, 3].astype(np.uint16)
+        brightness = r + g + b
+
+        mx = np.maximum(np.maximum(r, g), b).astype(np.float32)
+        mn = np.minimum(np.minimum(r, g), b).astype(np.float32)
+        saturation = np.divide(mx - mn, mx, out=np.zeros_like(mx), where=mx > 0)
+
+        hs = self.manager.get_hierarchy_settings()
+
+        def above_min(values, minimum):
+            # Un minimo de 0 significa 'sin limite inferior' (con '>' los pixeles de valor 0 quedarian fuera).
+            return (values > minimum) if minimum > 0 else np.ones(values.shape, dtype=bool)
+
+        tint_mask = (
+            above_min(alpha, hs['opacity']) & (alpha <= hs['opacity_max']) &
+            above_min(brightness, hs['brightness']) & (brightness <= hs['brightness_max']) &
+            above_min(saturation, hs['saturation']) & (saturation <= hs['saturation_max'])
+        )
+
+        eroded = tint_mask.copy()
+        eroded[1:, :] &= tint_mask[:-1, :]
+        eroded[:-1, :] &= tint_mask[1:, :]
+        eroded[:, 1:] &= tint_mask[:, :-1]
+        eroded[:, :-1] &= tint_mask[:, 1:]
+        tint_mask = eroded
+
+        out = np.zeros((h, w, 4), dtype=np.uint8)
+        out[:, :, 0] = color.red()
+        out[:, :, 1] = color.green()
+        out[:, :, 2] = color.blue()
+        out[:, :, 3] = np.where(tint_mask, color.alpha(), 0).astype(np.uint8)
+
+        out_img = QImage(out.data, w, h, out.strides[0], QImage.Format_RGBA8888).copy()
+        # grab() devuelve pixeles FISICOS (p. ej. 1,5x en una pantalla al 150 %): hay que conservar la escala
+        # para que el tinte se muestre a tamano logico y no 1,5 veces mas grande que la nota.
+        out_img.setDevicePixelRatio(base_pixmap.devicePixelRatio())
+        return QPixmap.fromImage(out_img)
+
+    def _update_fold_badge(self):
+        """
+        Muestra/oculta la insignia de plegar/desplegar (solo con hover y si
+        la nota tiene hijas). Usa el mismo sistema de anclaje por pixeles
+        reales que la campana del temporizador (ver _badge_anchor_point).
+        """
+        children = self.manager.get_children(self.widget_id)
+        self._update_crown_badge()
+        if not children or not self._is_hovered:
+            self.fold_badge.hide()
+            return
+
+        collapsed = self.manager.global_state.get(self.widget_id, {}).get('collapsed', False)
+        arrow = "\u25b8" if collapsed else "\u25be"
+        total_descendants = len(self.manager.get_descendants(self.widget_id))
+        if total_descendants > len(children):
+            text = f"{arrow} {len(children)}\u00b7{total_descendants}"
+        else:
+            text = f"{arrow} {len(children)}"
+
+        anchor_point, rotation = self._badge_anchor_point(bottom_left=True)
+        pixmap = self._render_badge_pixmap(text, rotation)
+        if pixmap.isNull():
+            self.fold_badge.hide()
+            return
+
+        self.fold_badge.setPixmap(pixmap)
+        self.fold_badge.resize(pixmap.size())
+        self.fold_badge.move(
+            anchor_point.x() - pixmap.width() // 2,
+            anchor_point.y() - pixmap.height() // 2
+        )
+        self.fold_badge.raise_()
+        self.fold_badge.show()
+
+    def _render_crown_pixmap(self, rotation):
+        """Corona dorada (insignia de la nota raiz), girada con la nota."""
+        from PySide6.QtCore import QPointF, QRectF
+        base = QPixmap(30, 22)
+        base.fill(Qt.transparent)
+        p = QPainter(base)
+        p.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        pts = [(3, 18), (2, 6), (9, 12), (15, 3), (21, 12), (28, 6), (27, 18)]
+        path.moveTo(*pts[0])
+        for pt in pts[1:]:
+            path.lineTo(*pt)
+        path.closeSubpath()
+        p.setPen(QPen(QColor(120, 80, 0, 230), 1.3))
+        p.setBrush(QColor(255, 205, 64, 245))
+        p.drawPath(path)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(140, 95, 0, 150))
+        p.drawRect(QRectF(3.5, 15, 23, 2.5))
+        p.setPen(QPen(QColor(120, 80, 0, 230), 1.0))
+        p.setBrush(QColor(255, 240, 170, 250))
+        for cx, cy in ((2, 6), (15, 3), (28, 6)):
+            p.drawEllipse(QPointF(cx, cy), 2.2, 2.2)
+        p.end()
+        if not rotation:
+            return base
+        return base.transformed(QTransform().rotate(rotation), Qt.SmoothTransformation)
+
+    def _update_crown_badge(self):
+        """(La corona ya no es una insignia de la ventana: la dibuja el overlay de los cables, ver _cable_draw_crown.)"""
+        try:
+            self.crown_badge.hide()
+        except Exception as e:
+            log_warn(self.widget_id, f"No se pudo actualizar la corona: {e}")
+            self.crown_badge.hide()
+
+    def _format_remaining(self, remaining_seconds):
+        """Formatea segundos restantes como H:MM:SS, MM:SS o, si falta
+        mas de un dia, 'Nd HH:MM'."""
+        remaining_seconds = max(0, int(remaining_seconds))
+        days, rem = divmod(remaining_seconds, 86400)
+        hours, rem = divmod(rem, 3600)
+        mins, secs = divmod(rem, 60)
+        if days > 0:
+            return f"{days}d {hours:02d}:{mins:02d}"
+        if hours > 0:
+            return f"{hours}:{mins:02d}:{secs:02d}"
+        return f"{mins:02d}:{secs:02d}"
+
+    def _update_bell_badge(self):
+        """
+        Muestra la campana con la cuenta regresiva mientras haya un
+        temporizador activo (sea por "en X minutos" o por fecha/hora
+        destino: internamente ambos son un instante absoluto).
+        """
+        if not self.timer_active or self.timer_target_dt is None:
+            self.bell_badge.hide()
+            return
+
+        remaining = (self.timer_target_dt - datetime.datetime.now()).total_seconds()
+        text = f"\U0001f514 {self._format_remaining(remaining)}"
+
+        anchor_point, rotation = self._badge_anchor_point(bottom_left=False)
+        pixmap = self._render_badge_pixmap(text, rotation, bg_color=QColor(200, 50, 50, 210))
+        if pixmap.isNull():
+            self.bell_badge.hide()
+            return
+
+        self.bell_badge.setPixmap(pixmap)
+        self.bell_badge.resize(pixmap.size())
+        self.bell_badge.move(
+            anchor_point.x() - pixmap.width() // 2,
+            anchor_point.y() - pixmap.height() // 2
+        )
+        self.bell_badge.raise_()
+        self.bell_badge.show()
+        self.bell_badge.setToolTip(
+            f"Notificacion programada para {self.timer_target_dt.strftime('%d/%m/%Y %H:%M:%S')}\n"
+            "Click para cancelar"
+        )
+
+    def _start_timer_at(self, target_datetime, custom_message="", persist=True):
+        """
+        Arranca (o reprograma) el temporizador de esta nota para que dispare
+        en target_datetime (un datetime absoluto).
+        """
+        self.timer_target_dt = target_datetime
+        self.timer_custom_message = custom_message
+        self.timer_active = True
+        self.widget_timer.start()
+        self._update_bell_badge()
+        if persist:
+            self.manager.set_widget_timer(self.widget_id, target_datetime.isoformat(), custom_message)
+
+    def _cancel_timer(self):
+        self.timer_active = False
+        self.timer_target_dt = None
+        self.timer_custom_message = ""
+        self.widget_timer.stop()
+        self._update_bell_badge()
+        self.manager.set_widget_timer(self.widget_id, None)
+
+    @Slot()
+    def _on_widget_timer_tick(self):
+        if not self.timer_active or self.timer_target_dt is None:
+            return
+        remaining = (self.timer_target_dt - datetime.datetime.now()).total_seconds()
+        if remaining <= 0:
+            self.timer_active = False
+            self.timer_target_dt = None
+            self.widget_timer.stop()
+            self._update_bell_badge()
+            
+            # CRITICO: Primero enviamos el mensaje a Telegram...
+            self.manager.send_telegram_notification(self.widget_id)
+            # ...y DESPUES borramos el mensaje de la memoria global
+            self.manager.set_widget_timer(self.widget_id, None)
+        else:
+            self._update_bell_badge()
+
+    def _detect_upright_angle(self):
+        """Inclinacion (grados, sentido horario) con la que viene dibujada la imagen de la capa 2."""
+        try:
+            pm = getattr(self, 'layer2_base_pixmap', None)
+            if pm is None or pm.isNull() or self.current_template_data.get('layer2', {}).get('type') != 'png':
+                return 0.0
+            pts, _w, _h = _paper_valid_points(pm)
+            return _min_area_tilt(pts)
+        except Exception as e:
+            log_warn(self.widget_id, f"No se pudo detectar la inclinacion de la imagen: {e}")
+            return 0.0
+
+    def _upright_angle(self):
+        """'upright_angle' del JSON del widget (grados, sentido horario: inclinacion propia de la imagen de la capa 2).
+        Si no existe se detecta una vez y se guarda en el JSON."""
+        d = self.current_template_data
+        v = d.get('upright_angle')
+        if v is None:
+            v = self._detect_upright_angle()
+            d['upright_angle'] = v
+            self.manager._pending_disk_write = True
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _get_paper_frame(self, u):
+        """Centro del borde superior del papel medido en SU sistema de ejes (inclinado u grados), en coordenadas de la
+        geometria original de la capa 2 sin rotar. None si no se puede calcular. Cacheado por imagen y angulo."""
+        pm = getattr(self, 'layer2_base_pixmap', None)
+        l2 = self.current_template_data.get('layer2', {})
+        if pm is None or pm.isNull() or l2.get('type') != 'png':
+            return None
+        g = l2.get('geometry', {})
+        ow, oh = float(g.get('w', 0) or 0), float(g.get('h', 0) or 0)
+        key = (pm.cacheKey(), round(float(u), 3), ow, oh)
+        c = getattr(self, '_paper_frame_cache', None)
+        if c is not None and c[0] == key:
+            return c[1]
+        res = None
+        try:
+            pts, w, h = _paper_valid_points(pm)
+            if len(pts) >= 10 and ow > 0 and oh > 0:
+                import math
+                P = pts * np.array([ow / w, oh / h])
+                a = math.radians(u)
+                r = np.array([math.cos(a), math.sin(a)])
+                up = np.array([math.sin(a), -math.cos(a)])
+                sr, su = P @ r, P @ up
+                s_c = 0.5 * (np.percentile(sr, 0.2) + np.percentile(sr, 99.8))
+                s_t = np.percentile(su, 99.8)
+                res = tuple(r * s_c + up * s_t)
+        except Exception as e:
+            log_warn(self.widget_id, f"No se pudo calcular el borde superior del papel: {e}")
+        self._paper_frame_cache = (key, res)
+        return res
+
+    def _crown_anchor(self):
+        """(QPointF en coordenadas de la ventana, angulo en grados) donde apoyar la corona: centro del borde superior del
+        papel, siguiendo la rotacion de la capa 2 y la inclinacion propia de la imagen (upright_angle)."""
+        import math
+        from PySide6.QtCore import QPointF
+        l2_widget = self.layer2_label if self.layer2_label.isVisible() else self.layer2_web
+        l2_geom = l2_widget.geometry()
+        rot = self.layer2_label.property("rotation") or 0.0
+        u = self._upright_angle()
+        l2_data = self.current_template_data.get('layer2', {})
+        og = l2_data.get('geometry', {})
+        ow, oh = og.get('w', l2_geom.width()), og.get('h', l2_geom.height())
+        fr = self._get_paper_frame(u)
+        if fr is None:
+            b = self._get_unrotated_paper_bounds()
+            fr = (b.center().x(), b.top())
+        lx, ly = fr[0] - ow / 2.0, fr[1] - oh / 2.0
+        a = math.radians(rot)
+        rx, ry = lx * math.cos(a) - ly * math.sin(a), lx * math.sin(a) + ly * math.cos(a)
+        return QPointF(l2_geom.center().x() + rx, l2_geom.center().y() + ry), rot + u
+
+    def _paper_fractions(self):
+        """[PACK102] (x0, y0, x1, y1) del papel visible como fraccion (0-1) de la imagen de la capa 2. Se calcula sobre una copia
+        reducida (160 px como mucho) y se guarda por imagen: ~1 ms en vez de escanear la imagen entera."""
+        pm = getattr(self, 'layer2_base_pixmap', None)
+        if pm is None or pm.isNull():
+            return (0.0, 0.0, 1.0, 1.0)
+        key = pm.cacheKey()
+        c = getattr(self, '_pfrac_cache', None)
+        if c is not None and c[0] == key:
+            return c[1]
+        res = (0.0, 0.0, 1.0, 1.0)
+        try:
+            k = 160.0 / max(pm.width(), pm.height(), 1)
+            small = pm if k >= 1.0 else pm.scaled(max(1, int(pm.width() * k)), max(1, int(pm.height() * k)),
+                                                  Qt.IgnoreAspectRatio, Qt.FastTransformation)
+            img = small.toImage().convertToFormat(QImage.Format_RGBA8888)
+            w, h = img.width(), img.height()
+            arr = np.frombuffer(img.bits(), dtype=np.uint8).reshape((h, w, 4)).astype(np.int32)
+            luma = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
+            ok = (arr[:, :, 3] > 40) & (luma > 80)
+            rows, cols = np.any(ok, axis=1), np.any(ok, axis=0)
+            if rows.any() and cols.any():
+                r0, r1 = np.where(rows)[0][[0, -1]]
+                c0, c1 = np.where(cols)[0][[0, -1]]
+                res = (c0 / float(w), r0 / float(h), (c1 + 1) / float(w), (r1 + 1) / float(h))
+        except Exception as e:
+            log_warn(self.widget_id, f"No se pudo calcular el borde del papel: {e}")
+        self._pfrac_cache = (key, res)
+        return res
+
+    def paper_rect_global(self):
+        """[PACK101] Rectangulo (coordenadas globales) del papel visible de este widget, sin el margen de sombra de la ventana:
+        ahi anclan los cables con fisica. Si no se puede calcular, la geometria de la ventana recortada un 12 % por lado."""
+        import math
+        from PySide6.QtCore import QRect
+        geo = self.geometry()
+        try:
+            l2w = self.layer2_label if self.layer2_label.isVisible() else self.layer2_web
+            g = l2w.geometry()
+            _pm = getattr(self, 'layer2_base_pixmap', None)           # [PACK103] en cache mientras no cambie la geometria ni la imagen
+            _key = (geo.x(), geo.y(), geo.width(), geo.height(), g.x(), g.y(), g.width(), g.height(),
+                    self.layer2_label.property("rotation"), _pm.cacheKey() if _pm is not None else 0,
+                    tuple(self.current_template_data.get('layer2', {}).get('geometry', {}).get(k_) for k_ in 'wh'),
+                    bool(self.current_template_data.get('layer2', {}).get('scaled_contents', True)))
+            _c = getattr(self, '_prect_cache', None)
+            if _c is not None and _c[0] == _key:
+                return _c[1]
+            og = self.current_template_data.get('layer2', {}).get('geometry', {})
+            ow, oh = float(og.get('w', 0) or g.width()), float(og.get('h', 0) or g.height())
+            if ow <= 0 or oh <= 0 or g.width() <= 0 or g.height() <= 0:
+                raise ValueError('capa 2 sin tamano')
+            f0x, f0y, f1x, f1y = self._paper_fractions()
+            sw, sh = ow, oh        # [PACK110] tamano de la imagen SIN girar (la etiqueta g ya mide la imagen girada: con 90 grados las medidas salian traspuestas y el cable nacia lejos del papel)
+            if _pm is not None and not _pm.isNull() and not self.current_template_data.get('layer2', {}).get('scaled_contents', True):
+                _ks = min(ow / max(1.0, _pm.width()), oh / max(1.0, _pm.height()))
+                sw, sh = _pm.width() * _ks, _pm.height() * _ks
+            w, h = (f1x - f0x) * sw, (f1y - f0y) * sh
+            a = math.radians(float(self.layer2_label.property("rotation") or 0.0))
+            lcx, lcy = g.x() + g.width() / 2.0, g.y() + g.height() / 2.0      # la capa gira alrededor de su centro
+            dx, dy = ((f0x + f1x) / 2.0 - 0.5) * sw, ((f0y + f1y) / 2.0 - 0.5) * sh
+            cx, cy = lcx + dx * math.cos(a) - dy * math.sin(a), lcy + dx * math.sin(a) + dy * math.cos(a)
+            shrink = 4.0 + 0.3 * min(w, h) * abs(math.sin(2.0 * a))
+            if abs(math.sin(a)) > 0.7071:
+                w, h = h, w
+            w, h = max(8.0, w - 2.0 * shrink), max(8.0, h - 2.0 * shrink)
+            _r = QRect(int(round(geo.x() + cx - w / 2.0)), int(round(geo.y() + cy - h / 2.0)), int(round(w)), int(round(h)))
+            self._prect_cache = (_key, _r)
+            return _r
+        except Exception:
+            dx, dy = int(geo.width() * 0.12), int(geo.height() * 0.12)
+            return geo.adjusted(dx, dy, -dx, -dy)
+
+    def _get_unrotated_paper_bounds(self):
+        """
+        Limites reales (en coordenadas de la geometria original, SIN rotar)
+        de la zona visible de la Capa 2: se escanea el pixmap base buscando
+        pixeles opacos y con algo de brillo (descarta sombras y bordes
+        transparentes). Se cachea; se invalida cuando cambia el pixmap.
+        """
+        if self._cached_paper_bounds is not None:
+            return self._cached_paper_bounds
+
+        l2_widget = self.layer2_label if self.layer2_label.isVisible() else self.layer2_web
+        l2_geom = l2_widget.geometry()
+
+        l2_data = self.current_template_data.get('layer2', {})
+        orig_geom = l2_data.get('geometry', {})
+        orig_w = orig_geom.get('w', l2_geom.width())
+        orig_h = orig_geom.get('h', l2_geom.height())
+
+        pixmap = getattr(self, 'layer2_base_pixmap', None)
+        if pixmap is None or pixmap.isNull():
+            self._cached_paper_bounds = QRect(0, 0, orig_w, orig_h)
+            return self._cached_paper_bounds
+
+        img = pixmap.toImage().convertToFormat(QImage.Format_RGBA8888)
+        w, h = img.width(), img.height()
+        ptr = img.bits()
+        try:
+            arr = np.frombuffer(ptr, dtype=np.uint8).reshape((h, w, 4))
+        except Exception:
+            arr = np.array(ptr, copy=True).reshape((h, w, 4))
+
+        r = arr[:, :, 0].astype(np.int32)
+        g = arr[:, :, 1].astype(np.int32)
+        b = arr[:, :, 2].astype(np.int32)
+        alpha = arr[:, :, 3].astype(np.int32)
+        luma = (0.299 * r + 0.587 * g + 0.114 * b)
+
+        valid_pixels = (alpha > 40) & (luma > 80)
+        rows = np.any(valid_pixels, axis=1)
+        cols = np.any(valid_pixels, axis=0)
+
+        if np.any(rows) and np.any(cols):
+            rmin, rmax = np.where(rows)[0][[0, -1]]
+            cmin, cmax = np.where(cols)[0][[0, -1]]
+
+            scale_x = orig_w / float(w) if w else 1.0
+            scale_y = orig_h / float(h) if h else 1.0
+
+            self._cached_paper_bounds = QRect(
+                int(cmin * scale_x),
+                int(rmin * scale_y),
+                int((cmax - cmin) * scale_x),
+                int((rmax - rmin) * scale_y)
+            )
+        else:
+            self._cached_paper_bounds = QRect(0, 0, orig_w, orig_h)
+
+        return self._cached_paper_bounds
+
+    def _badge_anchor_point(self, bottom_left=True, top_center=False):
+        """
+        Punto (en coordenadas de la ventana) donde clavar una insignia,
+        DENTRO de la zona visible y siguiendo la rotacion de la nota.
+        bottom_left=True: esquina inferior izquierda (plegado);
+        False: esquina superior derecha (campana del temporizador).
+
+        Se calcula un offset respecto del CENTRO del papel usando los
+        limites reales del contenido visible (no la caja completa de la
+        imagen), y se rota ese offset con el angulo actual de la Capa 2
+        (la propiedad viva 'rotation', que tambien refleja animaciones en
+        curso). Devuelve (QPoint, angulo_en_grados).
+        """
+        import math
+        l2_widget = self.layer2_label if self.layer2_label.isVisible() else self.layer2_web
+        l2_geom = l2_widget.geometry()
+        rotation = self.layer2_label.property("rotation") or 0.0
+
+        cx = l2_geom.center().x()
+        cy = l2_geom.center().y()
+
+        bounds = self._get_unrotated_paper_bounds()
+
+        l2_data = self.current_template_data.get('layer2', {})
+        orig_geom = l2_data.get('geometry', {})
+        orig_w = orig_geom.get('w', l2_geom.width())
+        orig_h = orig_geom.get('h', l2_geom.height())
+
+        MARGIN_X = 35
+        MARGIN_Y = 22
+
+        if top_center:
+            target_x = bounds.center().x()
+            target_y = bounds.top() + 12
+        elif bottom_left:
+            target_x = bounds.left() + MARGIN_X
+            target_y = bounds.bottom() - MARGIN_Y
+        else:
+            target_x = bounds.right() - MARGIN_X
+            target_y = bounds.top() + MARGIN_Y
+
+        local_x = target_x - orig_w / 2.0
+        local_y = target_y - orig_h / 2.0
+
+        angle_rad = math.radians(rotation)
+        cos_a, sin_a = math.cos(angle_rad), math.sin(angle_rad)
+        rot_x = local_x * cos_a - local_y * sin_a
+        rot_y = local_x * sin_a + local_y * cos_a
+
+        return QPoint(int(cx + rot_x), int(cy + rot_y)), rotation
+
+    def _render_badge_pixmap(self, text, rotation, bg_color=QColor(30, 30, 30, 210)):
+        """Dibuja una insignia (pildora con texto) y la rota con la nota."""
+        from PySide6.QtGui import QFontMetrics
+
+        font = QFont()
+        font.setPointSize(9)
+        font.setBold(True)
+        fm = QFontMetrics(font)
+        pad_x, pad_y = 7, 3
+        base_w = fm.horizontalAdvance(text) + pad_x * 2
+        base_h = fm.height() + pad_y * 2
+        if base_w <= 0 or base_h <= 0:
+            return QPixmap()
+
+        base = QPixmap(base_w, base_h)
+        base.fill(Qt.transparent)
+        p = QPainter(base)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor(255, 255, 255, 90), 1))
+        p.setBrush(bg_color)
+        p.drawRoundedRect(base.rect().adjusted(0, 0, -1, -1), base_h / 2, base_h / 2)
+        p.setPen(QColor("white"))
+        p.setFont(font)
+        p.drawText(base.rect(), Qt.AlignCenter, text)
+        p.end()
+
+        if not rotation:
+            return base
+        transform = QTransform().rotate(rotation)
+        return base.transformed(transform, Qt.SmoothTransformation)
+
+    def _show_hierarchy_tree_menu(self):
+        menu = self.manager.build_hierarchy_tree_menu(self.widget_id, self)
+        menu.exec(QCursor.pos())
+
+
+    def _recalculate_and_normalize(self):
+        content_bbox = self.calculate_bounding_box()
+        
+        window_bbox = content_bbox.marginsAdded(
+            QMargins(self.GRAB_PADDING, self.GRAB_PADDING, self.GRAB_PADDING, self.GRAB_PADDING)
+        )
+        
+        new_size = window_bbox.size()
+        offset = window_bbox.topLeft()
+        
+        if offset.x() != 0 or offset.y() != 0:
+        
+            new_win_pos = self.pos() + offset
+            self.move(new_win_pos)
+            
+            main_geom = self.current_template_data.setdefault('geometry', {})
+            main_geom['x'] = new_win_pos.x()
+            main_geom['y'] = new_win_pos.y()
+            
+            l1_geom = self.layer1_label.geometry()
+            l1_geom.moveTo(l1_geom.topLeft() - offset)
+            self.layer1_label.setGeometry(l1_geom)
+
+            l2_widget = self.layer2_label if self.layer2_label.isVisible() else self.layer2_web
+            l2_geom = l2_widget.geometry()
+            l2_geom.moveTo(l2_geom.topLeft() - offset)
+            l2_widget.setGeometry(l2_geom)
+            
+            l1_editor_geom = self.layer1_editor.geometry()
+            l1_editor_geom.moveTo(l1_editor_geom.topLeft() - offset)
+            self.layer1_editor.setGeometry(l1_editor_geom)
+            
+            l1_data = self.current_template_data.setdefault('layer1', {})
+            l1_geom_data = l1_data.setdefault('geometry', {})
+            if 'x' in l1_geom_data and 'y' in l1_geom_data:
+                l1_geom_data['x'] -= offset.x()
+                l1_geom_data['y'] -= offset.y()
+            else:
+                l1_geom_data['x'] = l1_geom.x()
+                l1_geom_data['y'] = l1_geom.y()
+            
+            l2_data = self.current_template_data.setdefault('layer2', {})
+            l2_geom_data = l2_data.setdefault('geometry', {})
+            if 'x' in l2_geom_data and 'y' in l2_geom_data:
+                l2_geom_data['x'] -= offset.x()
+                l2_geom_data['y'] -= offset.y()
+            else:
+                l2_geom_data['x'] = l2_geom.x()
+                l2_geom_data['y'] = l2_geom.y()
+            
+        self.resize(new_size)
+        self._expected_size = QSize(new_size)
+        self.setFixedSize(new_size)   # tamano LOGICO fijo: Windows/Qt ya no pueden reescalar la nota al cruzar de pantalla
+        
+        self._update_fold_badge()
+        self._update_bell_badge()
+        self.update_window_mask()
+        self._update_selection_borders()
+            
+    def _apply_layer1_pixmap(self, base_pixmap):
+        if base_pixmap.isNull(): return
+        l1_data = self.current_template_data.get('layer1', {})
+        l1_geom_dict = l1_data.get('geometry', {'x': 0, 'y': 0, 'w': 400, 'h': 225})
+        l1_scaled = l1_data.get('scaled_contents', False)
+        l1_rotation = l1_data.get('rotation', 0)
+        
+        original_geom_size = QSize(l1_geom_dict['w'], l1_geom_dict['h'])
+        aspect_mode = Qt.IgnoreAspectRatio if l1_scaled else Qt.KeepAspectRatio
+        
+        self.layer1_base_pixmap = base_pixmap.scaled(
+            original_geom_size, 
+            aspect_mode, 
+            Qt.SmoothTransformation
+        )
+        
+        self._on_layer1_rotation_changed(l1_rotation)
+
+    def _renormalize_window(self):
+        """[PACK52] Tras un prerender asincrono (efectos de imagen sin cache) las capas cambian de tamano
+        o de rotacion: se reajusta la ventana para que no recorte la nota."""
+        if self._is_closing or getattr(self, '_is_window_dragging', False) or getattr(self, '_is_layer_dragging', False):
+            return
+        try:
+            before = (self.size(), self.pos())
+            self._recalculate_and_normalize()
+            if (self.size(), self.pos()) != before:
+                self.save_timer.start()
+                try:
+                    self.manager.cable_overlay_poke()
+                except Exception:
+                    pass
+        except Exception as e_rn:
+            log_warn(self.widget_id, f"_renormalize_window: {e_rn}")
+
+    def calculate_bounding_box(self):
+        bounding_box = QRect() 
+        
+        if not self.layer1_label.isHidden():
+            if not bounding_box.isValid():
+                bounding_box = self.layer1_label.geometry()
+            else:
+                bounding_box = bounding_box.united(self.layer1_label.geometry())
+        
+        if not self.layer2_label.isHidden():
+            if not bounding_box.isValid():
+                bounding_box = self.layer2_label.geometry()
+            else:
+                bounding_box = bounding_box.united(self.layer2_label.geometry())
+        
+        if not self.layer2_web.isHidden():
+            if not bounding_box.isValid():
+                bounding_box = self.layer2_web.geometry()
+            else:
+                bounding_box = bounding_box.united(self.layer2_web.geometry())
+        
+        if not bounding_box.isValid():
+            bounding_box = QRect(0, 0, 1, 1) 
+
+        return bounding_box
+    
+    @Slot(QImage, int)
+    def _on_image_effects_finished(self, processed_image, layer_num):
+        processed_pixmap = QPixmap.fromImage(processed_image)
+        QTimer.singleShot(0, self._renormalize_window)      # [PACK52] la ventana se ajusta a la capa ya procesada
+        log_debug(f"{self.widget_id}", f"Hilo ImgFX terminado. Aplicando pixmap procesado a L{layer_num}.")
+        
+        if layer_num == 1:
+            self._apply_layer1_pixmap(processed_pixmap)
+        elif layer_num == 2:
+            self.layer2_base_pixmap = processed_pixmap
+            self._cached_paper_bounds = None
+            
+            current_rot_prop = self.layer2_label.property("rotation")
+            self._on_layer2_rotation_changed(current_rot_prop)
+            
+        self.update_window_mask()
+
+    def _save_changes_to_manager(self):
+        
+        if self.manager.app_is_quitting:
+            return
+            
+        if not self._undoing:
+            self._record_history()
+            
+        self.manager.update_widget_state(self.widget_id, self.current_template_data)
+
+    def _record_history(self):
+        hist = self._history
+        if self._history_idx < len(hist) - 1:
+            del hist[self._history_idx + 1:]
+        hist.append(copy.deepcopy(self.current_template_data))
+        self._hist_t = time.time()
+        self.manager.__dict__.setdefault("_undo_kinds", []).clear()
+        self._history_idx = len(hist) - 1
+        if len(hist) > 50:
+            del hist[0]
+            self._history_idx = len(hist) - 1
+
+    def _local_step_target(self, direction):
+        self.manager.run_deferred_now()      # [PACK108] el historial pendiente de un arrastre se registra antes de moverse por el
+        """[PACK55] Paso local al que ir (-1 deshacer, +1 rehacer), saltando los que solo difieren por reajustes
+        internos de la ventana; None si no hay."""
+        m = self.manager
+        hist = self._history
+        cur = {'template_data': self.current_template_data}
+        j = self._history_idx + direction
+        while 0 <= j < len(hist):
+            if not m._state_same({'template_data': hist[j]}, cur):
+                return j
+            j += direction
+        return None
+
+    def _goto_local_step(self, j):
+        self._undoing = True
+        try:
+            self.current_template_data = copy.deepcopy(self._history[j])
+            self._history_idx = j
+            self.load_template_data(self.current_template_data)
+            log_debug(self.widget_id, f"Historial local: paso {j}.")
+            self._save_changes_to_manager()
+        finally:
+            self._undoing = False
+
+    def _undo_widget_changes(self):
+        j = self._local_step_target(-1)
+        if j is None:
+            return False
+        self._goto_local_step(j)
+        return True
+
+    def _redo_widget_changes(self):
+        j = self._local_step_target(1)
+        if j is None:
+            return False
+        self._goto_local_step(j)
+        return True
+
+    @Slot(int, dict)
+    def apply_preview_effects(self, layer_num, effects_dict):
+        original_image = self.layer1_original_image if layer_num == 1 else self.layer2_original_image
+        
+        if original_image and not original_image.isNull():
+            self._apply_image_effects(original_image, effects_dict, layer_num)
+            
+    @Slot(int)
+    def revert_preview(self, layer_num):
+        log_debug(self.widget_id, f"Revirtiendo preview para L{layer_num}")
+        
+        if layer_num == 1:
+            self.load_template_data(self.current_template_data)
+            return
+
+        original_image = self.layer2_original_image
+        
+        if original_image and not original_image.isNull():
+            layer_key = f"layer{layer_num}"
+            layer_data = self.current_template_data.get(layer_key, {})
+            original_effects = layer_data.get('image_effects')
+            if not original_effects:
+                old_hue = layer_data.get('hue_target', 0)
+                original_effects = {
+                    "hue": old_hue, "saturation": 0, "brightness": 0, "contrast": 0, "colorize": False
+                }
+            
+            is_default = (
+                original_effects['hue'] == 0 and
+                original_effects['saturation'] == 0 and
+                original_effects['brightness'] == 0 and
+                original_effects['contrast'] == 0 and
+                not original_effects['colorize']
+            )
+
+            if is_default:
+                self.layer2_base_pixmap = QPixmap.fromImage(original_image)
+                self._cached_paper_bounds = None
+                self._on_layer2_rotation_changed(self.layer2_anim_original_rot)
+            else:
+                self._apply_image_effects(original_image, original_effects, layer_num)
+        else:
+            self.load_template_data(self.current_template_data)
+
+    @Slot(float)
+    def _on_layer2_rotation_changed(self, rotation_angle):
+        if self.layer2_base_pixmap.isNull():
+            return
+        
+        try:
+            l2_data = self.current_template_data.get('layer2', {})
+            l2_geom_data = l2_data.get('geometry', {'x': 0, 'y': 0, 'w': 400, 'h': 225})
+            original_geom_size = QSize(l2_geom_data['w'], l2_geom_data['h'])
+
+            center_x_widget = l2_geom_data['x'] + l2_geom_data['w'] / 2.0
+            center_y_widget = l2_geom_data['y'] + l2_geom_data['h'] / 2.0
+            
+            l2_scaled_type = l2_data.get('scaled_contents', True)
+            aspect_mode = Qt.IgnoreAspectRatio if l2_scaled_type else Qt.KeepAspectRatio
+            
+            scaled_base_pixmap = self._scaled_cached('l2', self.layer2_base_pixmap, original_geom_size, aspect_mode)
+
+            if rotation_angle % 360 == 0:
+                rotated_pixmap = scaled_base_pixmap
+            else:
+                transform = QTransform().rotate(rotation_angle)
+                rotated_pixmap = scaled_base_pixmap.transformed(transform, Qt.SmoothTransformation)
+            
+            self.layer2_label.setScaledContents(False) 
+            self.layer2_label.setPixmap(rotated_pixmap)
+            
+            new_size = rotated_pixmap.size()
+            new_x = int(round(center_x_widget - new_size.width() / 2.0))
+            new_y = int(round(center_y_widget - new_size.height() / 2.0))
+            
+            self.layer2_label.setGeometry(new_x, new_y, new_size.width(), new_size.height())
+            try:
+                self.manager.cable_overlay_poke()
+            except Exception:
+                pass
+            
+            self._update_fold_badge()
+            self._update_bell_badge()
+            self.update_window_mask()
+            self._schedule_tint_refresh()
+        
+        except Exception as e:
+            log_error(self.widget_id, f"Fallo al rotar L2: {e}")
+
+    @Slot(float)
+    def _on_layer1_rotation_changed(self, rotation_angle):
+        if not hasattr(self, 'layer1_base_pixmap') or self.layer1_base_pixmap.isNull():
+            return
+        
+        try:
+            l1_data = self.current_template_data.get('layer1', {})
+            l1_geom_data = l1_data.get('geometry', {'x': 0, 'y': 0, 'w': 400, 'h': 225})
+            
+            c1_x_orig = l1_geom_data['x'] + l1_geom_data['w'] / 2.0
+            c1_y_orig = l1_geom_data['y'] + l1_geom_data['h'] / 2.0
+
+            l2_data = self.current_template_data.get('layer2', {})
+            l2_geom = l2_data.get('geometry', {'x': 0, 'y': 0, 'w': 400, 'h': 225})
+            pivot_x = l2_geom['x'] + l2_geom['w'] / 2.0
+            pivot_y = l2_geom['y'] + l2_geom['h'] / 2.0
+
+            import math
+            angle_rad = math.radians(rotation_angle)
+            dx = c1_x_orig - pivot_x
+            dy = c1_y_orig - pivot_y
+            center_x = pivot_x + dx * math.cos(angle_rad) - dy * math.sin(angle_rad)
+            center_y = pivot_y + dx * math.sin(angle_rad) + dy * math.cos(angle_rad)
+
+            transform = QTransform().rotate(rotation_angle)
+            if rotation_angle % 360 == 0:
+                rotated_pixmap = self.layer1_base_pixmap
+            else:
+                rotated_pixmap = self.layer1_base_pixmap.transformed(transform, Qt.SmoothTransformation)
+            
+            self.layer1_label.setScaledContents(False) 
+            self.layer1_label.setPixmap(rotated_pixmap)
+            
+            new_size = rotated_pixmap.size()
+            new_x = int(round(center_x - new_size.width() / 2.0))
+            new_y = int(round(center_y - new_size.height() / 2.0))
+            
+            self.layer1_label.setGeometry(new_x, new_y, new_size.width(), new_size.height())
+            self._schedule_tint_refresh()
+        except Exception as e:
+            log_error(self.widget_id, f"Fallo al rotar L1: {e}")
+
+
+    def _get_shortest_angle_path(self, start_angle, target_angle):
+        diff = target_angle - start_angle
+        
+        while diff > 180:
+            diff -= 360
+        while diff < -180:
+            diff += 360
+            
+        return start_angle + diff
+
+    def _crown_cfg(self):
+        """Ajustes propios de la corona de este widget (JSON 'crown'): off, hue_mode (0 nota / 1 dominante /
+        2 complementario / 3 personalizado), hue, sat, bright, opacity (0-100; ausentes = ajustes generales)."""
+        c = self.current_template_data.get('crown')
+        return c if isinstance(c, dict) else {}
+
+    def _crown_dominant(self):
+        """Color dominante de lo que se ve de la nota (imagen de la capa 2 con sus efectos). Cacheado por imagen."""
+        pm = getattr(self, 'layer2_base_pixmap', None)
+        if pm is None or pm.isNull():
+            pm = self.layer2_label.pixmap()
+        if pm is None or pm.isNull():
+            pm = self.grab()
+        key = pm.cacheKey()
+        c = getattr(self, '_crown_dom_cache', None)
+        if c is not None and c[0] == key:
+            return c[1]
+        col = _dominant_color(pm)
+        self._crown_dom_cache = (key, col)
+        return col
+
+    def _crown_style(self, cfg=None, fade=1.0, base_op=1.0):
+        """(color, opacidad) de la corona de este widget. 'cfg' sustituye a su JSON (vista previa del dialogo)."""
+        m = self.manager
+        cfg = self._crown_cfg() if cfg is None else cfg
+        hm = int(cfg.get('hue_mode', 0) or 0)
+        base = QColor(self._get_layer2_button_color())
+        if hm:
+            h, s, v, _a = self._crown_dominant().getHsvF()
+            h = max(h, 0.0)
+            if hm == 2:
+                h = (h + 0.5) % 1.0
+            elif hm == 3:
+                h = (float(cfg.get('hue', 0)) % 360.0) / 360.0
+                s, v = max(s, 0.55), max(v, 0.6)       # un tono elegido a mano tiene que verse
+            base = QColor.fromHsvF(h, s, v)
+        col = _cable_color(base, CABLE_STYLE['alpha'] * m.cable_length_style(0.0)[0])
+        o_s, o_v = cfg.get('sat'), cfg.get('bright')
+        if o_s is not None or o_v is not None:
+            h, s, v, _a = col.getHsvF()
+            if o_s is not None:
+                s = max(0.0, min(1.0, float(o_s) / 100.0))
+            if o_v is not None:
+                v = max(0.0, min(1.0, float(o_v) / 100.0))
+            c2 = QColor.fromHsvF(max(h, 0.0), s, v)
+            c2.setAlpha(col.alpha())
+            col = c2
+        gmode = int(m.get_cable_param('_crown_opacity_mode'))
+        op = base_op        # 0: como los cables en cada momento
+        if cfg.get('opacity') is not None:
+            op = float(cfg['opacity']) / 100.0 * fade
+        elif gmode:         # 1: como cables en hover, 2: como arrastre / control de plegar, 3: personalizado
+            op = {1: m.get_cable_hover_opacity(), 2: 1.0, 3: m.get_cable_param('_crown_opacity') / 100.0}.get(gmode, 1.0) * fade
+        return col, op
+
+    def _get_layer2_button_color(self):
+        pixmap = getattr(self, 'layer2_base_pixmap', None)
+        if pixmap is None or pixmap.isNull():
+            pixmap = self.layer2_label.pixmap()
+
+        current_key = pixmap.cacheKey() if pixmap and not pixmap.isNull() else 0
+        if getattr(self, '_last_btn_color_key', None) == current_key and hasattr(self, '_cached_btn_color'):
+            return self._cached_btn_color
+
+        if pixmap is not None and not pixmap.isNull():
+            image = pixmap.toImage()
+            w, h = image.width(), image.height()
+            if w > 0 and h > 0:
+                candidates = [
+                    (w // 2, h // 2),
+                    (w // 2, h // 4),
+                    (w // 2, (3 * h) // 4),
+                    (w // 4, h // 2),
+                    ((3 * w) // 4, h // 2),
+                ]
+                for x, y in candidates:
+                    if 0 <= x < w and 0 <= y < h:
+                        color = image.pixelColor(x, y)
+                        if color.alpha() > 200:
+                            self._last_btn_color_key = current_key
+                            self._cached_btn_color = color.name()
+                            return self._cached_btn_color
+
+        l2_data = self.current_template_data.get('layer2', {})
+        effects = l2_data.get('image_effects', {})
+        hue = effects.get('hue', 0)
+        sat = effects.get('saturation', 0)
+        val = effects.get('brightness', 0)
+        base_color = QColor.fromHsv(hue % 360, max(50, min(255, 120 + int(sat * 0.8))), max(80, min(255, 180 + int(val * 0.5))))
+        self._last_btn_color_key = current_key
+        self._cached_btn_color = base_color.name()
+        return self._cached_btn_color
+
+    def _execute_link(self, link_url):
+        clean_url = link_url.split('#')[0]
+        is_async = "mode=async" in link_url
+        
+        if is_async:
+            req = QNetworkRequest(QUrl(clean_url))
+            req.setRawHeader(b"User-Agent", b"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            
+            reply = self.manager.network_manager.get(req)
+            
+            def handle_reply():
+                if reply.error() == QNetworkReply.NoError:
+                    log_info(self.widget_id, f"Llamada async exitosa a {clean_url}")
+                else:
+                    err_msg = reply.errorString()
+                    log_error(self.widget_id, f"Fallo en llamada async a {clean_url}: {err_msg}")
+                    if hasattr(self.manager, 'tray_icon') and self.manager.tray_icon:
+                        self.manager.tray_icon.showMessage(
+                            "Error de enlace async", f"No se pudo contactar con {clean_url}:\n{err_msg}", QSystemTrayIcon.Warning, 4000
+                        )
+                reply.deleteLater()
+                
+            reply.finished.connect(handle_reply)
+        else:
+            import webbrowser
+            webbrowser.open(clean_url)
+
+    def _start_inline_edit_l1(self):
+        log_debug(self.widget_id, "Iniciando edicion inline L1")
+        self._escape_backup = copy.deepcopy(self.current_template_data)
+        
+        l1_data = self.current_template_data.get('layer1', {})
+        content = l1_data.get('content', '')
+        font_family = l1_data.get('font_family', 'Inter')
+        font_size = l1_data.get('font_size', 16)
+        color = l1_data.get('color', 'white')
+
+        l1_geom_dict = l1_data.get('geometry', {'x': 0, 'y': 0, 'w': 100, 'h': 100})
+        l1_rotation = l1_data.get('rotation', 0)
+        
+        l2_data = self.current_template_data.get('layer2', {})
+        l2_geom_dict = l2_data.get('geometry', {'x': 0, 'y': 0, 'w': 400, 'h': 225})
+        
+        c1_x = int(l1_geom_dict['x'] + l1_geom_dict['w'] / 2.0)
+        c1_y = int(l1_geom_dict['y'] + l1_geom_dict['h'] / 2.0)
+        
+        c2_x = int(l2_geom_dict['x'] + l2_geom_dict['w'] / 2.0)
+        c2_y = int(l2_geom_dict['y'] + l2_geom_dict['h'] / 2.0)
+        
+        transform = QTransform()
+        transform.translate(c2_x, c2_y)
+        transform.rotate(-l1_rotation)
+        transform.translate(-c2_x, -c2_y)
+        
+        import math
+        # Girar TODO el conjunto -theta1 alrededor del pivote (centro de L2) deja a L1 exactamente en su
+        # centro guardado (c1): antes se le aplicaba la rotacion una segunda vez y se desplazaba.
+        # d1 = donde esta ahora L1 (centro orbitado), de donde arranca la animacion.
+        c1f_x = l1_geom_dict['x'] + l1_geom_dict['w'] / 2.0
+        c1f_y = l1_geom_dict['y'] + l1_geom_dict['h'] / 2.0
+        _ang = math.radians(l1_rotation)
+        d1_x = c2_x + (c1f_x - c2_x) * math.cos(_ang) - (c1f_y - c2_y) * math.sin(_ang)
+        d1_y = c2_y + (c1f_x - c2_x) * math.sin(_ang) + (c1f_y - c2_y) * math.cos(_ang)
+        new_c1 = QPoint(int(round(c1f_x)), int(round(c1f_y)))
+        geom = QRect(new_c1.x() - int(l1_geom_dict['w'] / 2.0), 
+                     new_c1.y() - int(l1_geom_dict['h'] / 2.0), 
+                     l1_geom_dict['w'], l1_geom_dict['h'])
+        
+        self.layer2_anim.stop()
+        current_l2_rot = self.layer2_label.property("rotation")
+        l2_original_rot = self.layer2_anim_original_rot
+        target_rotation_raw = float(l2_original_rot) - float(l1_rotation)
+        target_rotation_anim = self._get_shortest_angle_path(current_l2_rot, target_rotation_raw)
+        self.layer2_anim.setStartValue(current_l2_rot)
+        self.layer2_anim.setEndValue(target_rotation_anim)
+        self.layer2_anim.start()
+        
+        self.layer1_editor.setGeometry(geom)
+        self.layer1_editor.setFont(QFont(font_family, font_size))
+        self.layer1_editor.document().setDocumentMargin(0)
+        
+        self.layer1_editor.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: transparent; 
+                color: {color}; 
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }}
+        """)
+        
+        if not content.strip().startswith('<'):
+            text_html = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            text_html = text_html.replace('\n', '<br>')
+            content = f'<p style="color:{color};" align="center">{text_html}</p>'
+            l1_data['content'] = content
+        
+        self.layer1_editor.setHtml(content)
+        
+        self.layer1_editor.moveCursor(QTextCursor.End)
+        
+        if hasattr(self, 'layer1_base_pixmap') and not self.layer1_base_pixmap.isNull():
+            self.l1_edit_anim = QVariantAnimation()
+            self.l1_edit_anim.setDuration(50)
+            self.l1_edit_anim.setStartValue(0.0)
+            self.l1_edit_anim.setEndValue(1.0)
+            self.l1_edit_anim.setEasingCurve(QEasingCurve.InOutQuad)
+            
+            start_l1_rot = l1_rotation % 360
+            if start_l1_rot > 180:
+                start_l1_rot -= 360
+                
+            def update_l1_anim(progress):
+                current_rot = start_l1_rot * (1.0 - progress)
+                curr_c_x = d1_x + (new_c1.x() - d1_x) * progress
+                curr_c_y = d1_y + (new_c1.y() - d1_y) * progress
+                
+                trans = QTransform().rotate(current_rot)
+                rotated_pixmap = self.layer1_base_pixmap.transformed(trans, Qt.SmoothTransformation)
+                self.layer1_label.setPixmap(rotated_pixmap)
+                
+                new_size = rotated_pixmap.size()
+                self.layer1_label.setGeometry(
+                    int(curr_c_x - new_size.width() / 2.0),
+                    int(curr_c_y - new_size.height() / 2.0),
+                    new_size.width(), new_size.height()
+                )
+                self.update_window_mask()
+
+            def finish_l1_anim():
+                self.layer1_label.hide()
+                self.layer1_editor.show()
+                self.layer1_editor.setFocus()
+                
+            self.l1_edit_anim.valueChanged.connect(update_l1_anim)
+            self.l1_edit_anim.finished.connect(finish_l1_anim)
+            self.l1_edit_anim.start()
+        else:
+            self.layer1_label.hide()
+            self.layer1_editor.show()
+            self.layer1_editor.setFocus()
+
+    @Slot(object)
+    def _on_layer1_editing_finished(self, html_content):
+        self.layer1_editor.hide()
+        self.layer1_label.show()
+        
+        self.layer2_anim.stop()
+        current_l2_rot = self.layer2_label.property("rotation")
+        target_l2_rot_raw = float(self.layer2_anim_original_rot)
+        target_l2_rot_anim = self._get_shortest_angle_path(current_l2_rot, target_l2_rot_raw)
+        self.layer2_anim.setStartValue(current_l2_rot)
+        self.layer2_anim.setEndValue(target_l2_rot_anim)
+        self.layer2_anim.start()
+        
+        if html_content is None:
+            log_debug(self.widget_id, "Escape: restaurando contenido original")
+            backup = getattr(self, '_escape_backup', None)
+            if backup is not None:
+                l1_content = backup.get('layer1', {}).get('content', '')
+                self.current_template_data.setdefault('layer1', {})['content'] = l1_content
+                log_debug(self.widget_id, f"Escape: backup content len={len(l1_content)} preview={l1_content[:80]}")
+            self.load_template_data(self.current_template_data)
+            self.update_window_mask()
+            return
+
+        log_debug(self.widget_id, "Edicion inline finalizada. Guardando HTML.")
+        l1_data = self.current_template_data.setdefault('layer1', {})
+        l1_data['content'] = html_content
+        
+        self.load_template_data(self.current_template_data)
+
+        self._save_changes_to_manager()
+        self.manager.flush_pending_save()
+
+
+_sticker_focus_out_orig = StickerWindow.focusOutEvent
+
+
+def _sticker_focus_out_safe(self, event):
+    try:
+        self._abort_drag_cleanly()
+    except Exception as e_drag:
+        log_error("Drag", f"Error cerrando el arrastre al perder el foco: {e_drag}")
+    _sticker_focus_out_orig(self, event)
+
+
+StickerWindow.focusOutEvent = _sticker_focus_out_safe
+
+
+_sticker_move_orig = StickerWindow.mouseMoveEvent
+_sticker_release_orig = StickerWindow.mouseReleaseEvent
+
+
+def _sticker_move_fwd(self, event):
+    pd = getattr(self, '_cas_pending', None)
+    if pd is not None:
+        if not (event.buttons() & Qt.LeftButton):
+            self._cas_pending = None
+        elif (event.globalPosition().toPoint() - pd['start']).manhattanLength() > min(QApplication.startDragDistance(), 5):
+            self._cas_pending = None          # [PACK63] el raton se movio: se crea la HIJA y se arrastra
+            self.manager._hist_begin()
+            try:
+                self.manager.create_child_by_type(self.widget_id, pd['win'])
+            except Exception as e_ch:
+                log_warn(self.widget_id, f"No se pudo crear la hija: {e_ch}")
+            self._begin_new_note_drag(event)
+        else:
+            event.accept()
+            return
+    fw = getattr(self, '_fwd_win', None)
+    if fw is not None:
+        if (event.buttons() & Qt.LeftButton) and fw.isVisible() and self.manager.widgets.get(fw.widget_id) is fw:
+            try:
+                fw.offset = self._note_center_local(fw)      # el centro de la nota sigue al cursor aunque la ventana se reajuste
+            except Exception:
+                pass
+            fw.mouseMoveEvent(event)
+            event.accept()
+            return
+        self._end_new_note_drag()
+    _sticker_move_orig(self, event)
+
+
+def _sticker_release_fwd(self, event):
+    pd = getattr(self, '_cas_pending', None)
+    if pd is not None and event.button() == Qt.LeftButton:
+        self._cas_pending = None              # [PACK63] sin arrastre: un CLON (hereda la jerarquia del original)
+        self.manager._hist_begin()
+        try:
+            self.manager.clone_widget(self.widget_id, independent=pd['win'])
+        finally:
+            self.manager._hist_end()
+        event.accept()
+        return
+    fw = getattr(self, '_fwd_win', None)
+    if fw is not None and event.button() == Qt.LeftButton:
+        try:
+            if fw._is_window_dragging:
+                fw.mouseReleaseEvent(event)
+            else:
+                fw._potential_drag_target = None
+                fw._save_changes_to_manager()
+                self.manager.flush_pending_save()
+        except Exception as e_fw:
+            log_warn(self.widget_id, f"Soltar la nota nueva: {e_fw}")
+        self._end_new_note_drag()
+        event.accept()
+        return
+    _sticker_release_orig(self, event)
+
+
+StickerWindow.mouseMoveEvent = _sticker_move_fwd
+StickerWindow.mouseReleaseEvent = _sticker_release_fwd
+
+
+class LinkEditDialog(QDialog):
+    def __init__(self, current_url="", current_mode="browser", current_is_button=False, current_label="", current_ff="", current_fs=0, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configurar Hiperenlace")
+        self.setMinimumWidth(380)
+        
+        layout = QFormLayout(self)
+        
+        self.label_edit = QLineEdit(current_label)
+        self.label_edit.setPlaceholderText("(se usa el texto seleccionado si se deja vacio)")
+        layout.addRow("Texto del boton:", self.label_edit)
+        
+        self.url_edit = QLineEdit(current_url)
+        layout.addRow("URL:", self.url_edit)
+        
+        self.async_check = QCheckBox("Hacer llamada as铆ncrona (petici贸n HTTP en segundo plano sin abrir ventana)")
+        self.async_check.setChecked(current_mode == "async")
+        layout.addRow("", self.async_check)
+        
+        self.button_check = QCheckBox("Mostrar como bot贸n estilizado")
+        self.button_check.setChecked(current_is_button)
+        layout.addRow("", self.button_check)
+        
+        self.font_combo = QFontComboBox()
+        if current_ff:
+            self.font_combo.setCurrentFont(QFont(current_ff))
+        layout.addRow("Fuente:", self.font_combo)
+        
+        self.size_spin = QSpinBox()
+        self.size_spin.setRange(6, 200)
+        self.size_spin.setValue(current_fs if current_fs else 16)
+        layout.addRow("Tama帽o:", self.size_spin)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+        
+    def get_data(self):
+        url = self.url_edit.text().strip()
+        mode = "async" if self.async_check.isChecked() else "browser"
+        is_button = self.button_check.isChecked()
+        label = self.label_edit.text().strip()
+        ff = self.font_combo.currentFont().family()
+        fs = self.size_spin.value()
+        return url, mode, is_button, label, ff, fs
+
+
+# --- [NUEVO] Dialogo de Máscara de Jerarquía ---
+class _SliderSpin(QWidget):
+    """Slider + spinbox sincronizados. decimals > 0: valores fraccionarios (el slider avanza en 10**-decimals)."""
+    valueChanged = Signal(object)
+
+    def __init__(self, lo, hi, value, suffix="", parent=None, decimals=0):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QDoubleSpinBox
+        self._dec = max(0, int(decimals))
+        self._k = 10 ** self._dec
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(int(round(lo * self._k)), int(round(hi * self._k)))
+        self.slider.setPageStep(10 * max(1, self._k // 10))
+        if self._dec:
+            self.spin = QDoubleSpinBox()
+            self.spin.setDecimals(self._dec)
+            self.spin.setSingleStep(1.0 / self._k)
+        else:
+            self.spin = QSpinBox()
+        self.spin.setRange(lo, hi)
+        if suffix:
+            self.spin.setSuffix(suffix)
+        self.spin.setMinimumWidth(70 if not self._dec else 84)
+        lay.addWidget(self.slider, 1)
+        lay.addWidget(self.spin)
+        self.slider.valueChanged.connect(self._from_slider)
+        self.spin.valueChanged.connect(self._from_spin)
+        self.setValue(value)
+
+    def _conv(self, v):
+        return round(v / self._k, self._dec) if self._dec else int(v)
+
+    def _from_slider(self, v):
+        val = self._conv(v)
+        if self.spin.value() != val:
+            self.spin.blockSignals(True); self.spin.setValue(val); self.spin.blockSignals(False)
+        self.valueChanged.emit(val)
+
+    def _from_spin(self, v):
+        if self.slider.value() != int(round(v * self._k)):
+            self.slider.blockSignals(True); self.slider.setValue(int(round(v * self._k))); self.slider.blockSignals(False)
+        self.valueChanged.emit(round(v, self._dec) if self._dec else int(v))
+
+    def value(self):
+        return self.spin.value()
+
+    def setValue(self, v, emit=False):
+        v = round(float(v), self._dec) if self._dec else int(round(float(v)))
+        self.slider.blockSignals(True); self.spin.blockSignals(True)
+        self.slider.setValue(int(round(v * self._k))); self.spin.setValue(v)
+        self.slider.blockSignals(False); self.spin.blockSignals(False)
+        if emit:
+            self.valueChanged.emit(v)
+
+
+class HierarchySettingsDialog(QDialog):
+    """Ajustes del resaltado de hover.
+       - Umbral: que pixeles disparan el resaltado (minimo y maximo de opacidad, brillo y saturacion).
+       - Mascara: color del resaltado (matiz, saturacion, brillo, opacidad) para cada modo.
+       Con 'Vista previa en vivo' el resaltado se muestra en todas las notas mientras se ajusta."""
+
+    settingsChanged = Signal(dict, str, bool)   # (ajustes, modo de vista previa, vista previa activa)
+
+    MODES = (("hover", "Hover pasivo"), ("parent", "Arrastre de enlace: padre"), ("child", "Arrastre de enlace: hijo"))
+
+    def __init__(self, current_settings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Resaltado al pasar el rat\u00f3n")
+        self.setMinimumWidth(460)
+
+        cs = current_settings
+        self._tints = {k: dict(cs.get(f'tint_{k}', HIERARCHY_DEFAULTS[f'tint_{k}'])) for k, _ in self.MODES}
+
+        root = QVBoxLayout(self)
+        from PySide6.QtWidgets import QTabWidget, QScrollArea
+        hs_tabs = QTabWidget()                         # [PACK106] sub-pestanas: el umbral y la mascara (cada una con su desplazamiento)
+        root.addWidget(hs_tabs, 1)
+
+        def _hs_page(title, box):
+            sa = QScrollArea()
+            sa.setWidgetResizable(True)
+            sa.setFrameShape(QFrame.NoFrame)
+            sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            sa.setWidget(box)
+            hs_tabs.addTab(sa, title)
+
+        # ---- Umbral -------------------------------------------------------
+        thr_box = QGroupBox("Umbral: qué píxeles disparan el resaltado")
+        thr = QFormLayout(thr_box)
+        self.op_min = _SliderSpin(0, 255, cs.get('opacity', 40))
+        self.op_max = _SliderSpin(0, 255, cs.get('opacity_max', 255))
+        self.br_min = _SliderSpin(0, 765, cs.get('brightness', 130))
+        self.br_max = _SliderSpin(0, 765, cs.get('brightness_max', 765))
+        self.sa_min = _SliderSpin(0, 100, round(cs.get('saturation', 0.35) * 100, 2), "%", decimals=2)
+        self.sa_max = _SliderSpin(0, 100, round(cs.get('saturation_max', 1.0) * 100, 2), "%", decimals=2)
+        thr.addRow("Opacidad mínima (0-255):", self.op_min)
+        thr.addRow("Opacidad máxima (0-255):", self.op_max)
+        thr.addRow("Brillo mínimo (0-765):", self.br_min)
+        thr.addRow("Brillo máximo (0-765):", self.br_max)
+        thr.addRow("Saturación mínima:", self.sa_min)
+        thr.addRow("Saturación máxima:", self.sa_max)
+        _hs_page("Umbral", thr_box)
+
+        # ---- Mascara ------------------------------------------------------
+        mask_box = QGroupBox("Máscara: color del resaltado")
+        mk = QFormLayout(mask_box)
+        self.mode_combo = QComboBox()
+        for key, label in self.MODES:
+            self.mode_combo.addItem(label, key)
+        mk.addRow("Modo:", self.mode_combo)
+        t0 = self._tints['hover']
+        self.t_h = _SliderSpin(0, 359.9, t0['h'], "\u00b0", decimals=1)
+        self.t_s = _SliderSpin(0, 255, t0['s'], decimals=1)
+        self.t_v = _SliderSpin(0, 255, t0['v'], decimals=1)
+        self.t_a = _SliderSpin(0, 255, t0['a'], decimals=1)
+        mk.addRow("Matiz:", self.t_h)
+        mk.addRow("Saturación (0-255):", self.t_s)
+        mk.addRow("Brillo (0-255):", self.t_v)
+        mk.addRow("Opacidad (0-255):", self.t_a)
+        _hs_page("M\u00e1scara (color)", mask_box)
+
+        # ---- Vista previa / restaurar -------------------------------------
+        bottom = QHBoxLayout()
+        self.preview_check = QCheckBox("Vista previa en vivo en todos los widgets")
+        self.preview_check.setChecked(True)
+        reset_btn = QPushButton("Restaurar valores por defecto")
+        bottom.addWidget(self.preview_check)
+        bottom.addStretch(1)
+        bottom.addWidget(reset_btn)
+        root.addLayout(bottom)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+        # emision con 'debounce' para no recalcular el tinte de todas las notas en cada pixel de slider
+        self._emit_timer = QTimer(self)
+        self._emit_timer.setSingleShot(True)
+        self._emit_timer.setInterval(40)
+        self._emit_timer.timeout.connect(self._emit_now)
+
+        for w in (self.op_min, self.op_max, self.br_min, self.br_max, self.sa_min, self.sa_max):
+            w.valueChanged.connect(self._on_threshold_changed)
+        for w in (self.t_h, self.t_s, self.t_v, self.t_a):
+            w.valueChanged.connect(self._on_tint_changed)
+        self._last_threshold_sender = None
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        self.preview_check.toggled.connect(lambda _c: self._emit_timer.start())
+        reset_btn.clicked.connect(self._reset_defaults)
+
+    # -- utilidades -----------------------------------------------------------
+    def mode_key(self):
+        return self.mode_combo.currentData()
+
+    def preview_enabled(self):
+        return self.preview_check.isChecked()
+
+    def _on_threshold_changed(self, _v):
+        # minimo <= maximo: el control que se mueve arrastra al otro si hace falta
+        for lo, hi in ((self.op_min, self.op_max), (self.br_min, self.br_max), (self.sa_min, self.sa_max)):
+            if lo.value() > hi.value():
+                if self.sender() is lo:
+                    hi.setValue(lo.value())
+                else:
+                    lo.setValue(hi.value())
+        self._emit_timer.start()
+
+    def _on_tint_changed(self, _v):
+        self._tints[self.mode_key()] = {'h': self.t_h.value(), 's': self.t_s.value(),
+                                        'v': self.t_v.value(), 'a': self.t_a.value()}
+        self._emit_timer.start()
+
+    def _on_mode_changed(self, _idx):
+        t = self._tints[self.mode_key()]
+        self.t_h.setValue(t['h']); self.t_s.setValue(t['s']); self.t_v.setValue(t['v']); self.t_a.setValue(t['a'])
+        self._emit_timer.start()
+
+    def _reset_defaults(self):
+        d = HIERARCHY_DEFAULTS
+        self.op_min.setValue(d['opacity']); self.op_max.setValue(d['opacity_max'])
+        self.br_min.setValue(d['brightness']); self.br_max.setValue(d['brightness_max'])
+        self.sa_min.setValue(int(round(d['saturation'] * 100))); self.sa_max.setValue(int(round(d['saturation_max'] * 100)))
+        self._tints = {k: dict(d[f'tint_{k}']) for k, _ in self.MODES}
+        self._on_mode_changed(0)
+
+    def _emit_now(self):
+        self.settingsChanged.emit(self.get_data(), self.mode_key(), self.preview_enabled())
+
+    def get_data(self):
+        return {
+            'opacity': self.op_min.value(),
+            'opacity_max': self.op_max.value(),
+            'brightness': self.br_min.value(),
+            'brightness_max': self.br_max.value(),
+            'saturation': self.sa_min.value() / 100.0,
+            'saturation_max': self.sa_max.value() / 100.0,
+            'tint_hover': dict(self._tints['hover']),
+            'tint_parent': dict(self._tints['parent']),
+            'tint_child': dict(self._tints['child']),
+        }
+
+# --- [NUEVO] Dialogo para programar el temporizador de una nota ---
+
+class TimerSetDialog(QDialog):
+    def __init__(self, current_dt=None, current_message="", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Establecer temporizador")
+        self.setMinimumWidth(380)
+
+        layout = QVBoxLayout(self)
+
+        self.mode_countdown = QRadioButton("Dentro de un tiempo (cuenta regresiva)")
+        self.mode_datetime = QRadioButton("En una fecha y hora específicas")
+        
+        layout.addWidget(self.mode_countdown)
+        countdown_row = QHBoxLayout()
+        countdown_row.addSpacing(24)
+        self.minutes_spin = QSpinBox()
+        self.minutes_spin.setRange(1, 60 * 24 * 30)
+        self.minutes_spin.setValue(5)
+        self.minutes_spin.setSuffix(" min")
+        countdown_row.addWidget(self.minutes_spin)
+        countdown_row.addStretch(1)
+        layout.addLayout(countdown_row)
+
+        layout.addWidget(self.mode_datetime)
+        datetime_row = QHBoxLayout()
+        datetime_row.addSpacing(24)
+        self.datetime_edit = QDateTimeEdit()
+        self.datetime_edit.setCalendarPopup(True)
+        self.datetime_edit.setDisplayFormat("dd/MM/yyyy HH:mm")
+        
+        if current_dt:
+            self.mode_datetime.setChecked(True)
+            self.datetime_edit.setDateTime(current_dt)
+            self.minutes_spin.setEnabled(False)
+        else:
+            self.mode_countdown.setChecked(True)
+            default_dt = QDateTime.currentDateTime().addSecs(15 * 60)
+            self.datetime_edit.setDateTime(default_dt)
+            self.datetime_edit.setEnabled(False)
+            
+        self.datetime_edit.setMinimumDateTime(QDateTime.currentDateTime())
+        datetime_row.addWidget(self.datetime_edit)
+        datetime_row.addStretch(1)
+        layout.addLayout(datetime_row)
+
+        self.mode_countdown.toggled.connect(self.minutes_spin.setEnabled)
+        self.mode_datetime.toggled.connect(self.datetime_edit.setEnabled)
+
+        layout.addWidget(QLabel("Mensaje (se admite formato HTML: <b>, <i>, <a>):"))
+        self.msg_edit = QTextEdit()
+        self.msg_edit.setAcceptRichText(False)
+        self.msg_edit.setPlainText(current_message)
+        layout.addWidget(self.msg_edit)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.btn_remove = QPushButton("Eliminar Temporizador")
+        self.buttons.addButton(self.btn_remove, QDialogButtonBox.DestructiveRole)
+
+        if not current_dt:
+            self.btn_remove.hide()
+
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.btn_remove.clicked.connect(self._on_remove)
+        
+        layout.addWidget(self.buttons)
+        self.remove_requested = False
+
+    def _on_remove(self):
+        self.remove_requested = True
+        self.accept()
+
+    def get_target_datetime(self):
+        if self.mode_countdown.isChecked():
+            return datetime.datetime.now() + datetime.timedelta(minutes=self.minutes_spin.value())
+        qdt = self.datetime_edit.dateTime()
+        return datetime.datetime(
+            qdt.date().year(), qdt.date().month(), qdt.date().day(),
+            qdt.time().hour(), qdt.time().minute(), qdt.time().second()
+        )
+
+    def get_message(self):
+        return self.msg_edit.toPlainText().strip()
+
+
+class TelegramConfigDialog(QDialog):
+    def __init__(self, token="", chat_id="", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configurar Telegram")
+        self.setMinimumWidth(350)
+
+        layout = QFormLayout(self)
+        self.token_edit = QLineEdit(token)
+        self.token_edit.setPlaceholderText("Ej: 123456789:ABCdefGHIjklMNO...")
+        layout.addRow("Bot Token:", self.token_edit)
+
+        self.chat_id_edit = QLineEdit(chat_id)
+        self.chat_id_edit.setPlaceholderText("Ej: 123456789 o @mi_canal")
+        layout.addRow("Chat ID:", self.chat_id_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def get_data(self):
+        return self.token_edit.text().strip(), self.chat_id_edit.text().strip()
+
+
+# --- Dialogo de Efectos de Imagen ---
+
+class ImageEffectsDialog(QDialog):
+    effects_changed = Signal(dict)
+
+    def __init__(self, current_effects, parent=None, base_hue=None, auto_base_hue=None, source_image=None):
+        super().__init__(parent)
+        self.setWindowTitle("Editar Efectos de Imagen")
+        self.setMinimumWidth(350)
+
+        self._effects = {
+            "hue": current_effects.get('hue', 0),
+            "saturation": current_effects.get('saturation', 0),
+            "brightness": current_effects.get('brightness', 0),
+            "contrast": current_effects.get('contrast', 0),
+            "colorize": current_effects.get('colorize', False)
+        }
+
+        layout = QVBoxLayout(self)
+        from PySide6.QtWidgets import QTabWidget
+        ie_tabs = QTabWidget()                         # [PACK106] sub-pestanas: color (base y tono) y ajustes (saturacion, brillo, contraste)
+        layout.addWidget(ie_tabs)
+        pg_c, pg_a = QWidget(), QWidget()
+        fc, fa = QFormLayout(pg_c), QFormLayout(pg_a)
+        ie_tabs.addTab(pg_c, "Color base y tono")
+        ie_tabs.addTab(pg_a, "Saturaci\u00f3n, brillo y contraste")
+
+        self._source_image = source_image
+        self._auto_base = int(auto_base_hue) % 360 if isinstance(auto_base_hue, (int, float)) else None
+        self._base_manual = (int(base_hue) % 360 if isinstance(base_hue, (int, float))
+                             and not isinstance(base_hue, bool) else None)
+
+        self.base_swatch = QLabel()
+        self.base_swatch.setFixedSize(22, 22)
+        self.base_spin = QSpinBox()
+        self.base_spin.setRange(0, 359)
+        self.base_spin.setSuffix("\u00b0")
+        btn_pick = QPushButton("Elegir color...")
+        btn_auto = QPushButton("Auto")
+        btn_img = QPushButton("De la imagen...")
+        self.base_info = QLabel()
+        self.base_info.setWordWrap(True)
+        base_row = QHBoxLayout()
+        for wdg in (self.base_swatch, self.base_spin, btn_pick, btn_img, btn_auto):
+            base_row.addWidget(wdg)
+        base_row.addStretch(1)
+        fc.addRow("Color base de la imagen:", base_row)
+        fc.addRow("", self.base_info)
+
+        # El tono se muestra ABSOLUTO (0 = rojo): tono visible = desplazamiento + color base.
+        ref0 = 0 if (self._effects['colorize'] or self._base() is None) else self._base()
+        self.hue_slider = QSlider(Qt.Horizontal)
+        self.hue_slider.setRange(0, 359)
+        self.hue_slider.setValue((int(self._effects['hue']) + ref0) % 360)
+        self.hue_label = QLabel(f"{self.hue_slider.value()}")
+        self.hue_slider.valueChanged.connect(lambda v: self.hue_label.setText(f"{v}"))
+        fc.addRow("Tono (Hue):", self.create_slider_row(self.hue_slider, self.hue_label))
+        self.base_spin.valueChanged.connect(lambda v: self._set_base_manual(int(v)))
+        btn_pick.clicked.connect(self._pick_base_color)
+        btn_auto.clicked.connect(lambda: self._set_base_manual(None))
+        btn_img.clicked.connect(self._pick_base_from_image)
+        self._refresh_base_ui()
+
+        self.sat_slider = QSlider(Qt.Horizontal)
+        self.sat_slider.setRange(-100, 100)
+        self.sat_slider.setValue(self._effects['saturation'])
+        self.sat_label = QLabel(f"{self._effects['saturation']}%")
+        self.sat_slider.valueChanged.connect(lambda v: self.sat_label.setText(f"{v}%"))
+        fa.addRow("Saturacion:", self.create_slider_row(self.sat_slider, self.sat_label))
+
+        self.bright_slider = QSlider(Qt.Horizontal)
+        self.bright_slider.setRange(-100, 100)
+        self.bright_slider.setValue(self._effects['brightness'])
+        self.bright_label = QLabel(f"{self._effects['brightness']}%")
+        self.bright_slider.valueChanged.connect(lambda v: self.bright_label.setText(f"{v}%"))
+        fa.addRow("Brillo:", self.create_slider_row(self.bright_slider, self.bright_label))
+
+        self.contrast_slider = QSlider(Qt.Horizontal)
+        self.contrast_slider.setRange(-100, 100)
+        self.contrast_slider.setValue(self._effects['contrast'])
+        self.contrast_label = QLabel(f"{self._effects['contrast']}%")
+        self.contrast_slider.valueChanged.connect(lambda v: self.contrast_label.setText(f"{v}%"))
+        fa.addRow("Contraste:", self.create_slider_row(self.contrast_slider, self.contrast_label))
+
+        self.colorize_check = QCheckBox("Colorear")
+        self.colorize_check.setToolTip("Fuerza el tono y la saturacion. Util para imagenes en blanco y negro.")
+        self.colorize_check.setChecked(self._effects['colorize'])
+        self.colorize_check.toggled.connect(self._on_slider_released)
+        fc.addRow("", self.colorize_check)
+        
+        buttons = QDialogButtonBox()
+        btn_ok = buttons.addButton(QDialogButtonBox.Ok)
+        btn_cancel = buttons.addButton(QDialogButtonBox.Cancel)
+        btn_reset = buttons.addButton("Restablecer", QDialogButtonBox.ResetRole)
+        
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel.clicked.connect(self.reject)
+        btn_reset.clicked.connect(self.reset_values)
+        
+        layout.addWidget(buttons)
+
+    def _base(self):
+        """Color base efectivo (None = imagen sin color propio)."""
+        return self._base_manual if self._base_manual is not None else self._auto_base
+
+    def _ref(self):
+        """Referencia para pasar de tono absoluto a desplazamiento (en Colorear el tono ya es absoluto)."""
+        if self.colorize_check.isChecked() or self._base() is None:
+            return 0
+        return self._base()
+
+    def get_base_hue(self):
+        """Color base fijado a mano (None = automatico)."""
+        return self._base_manual
+
+    def _refresh_base_ui(self):
+        b = self._base()
+        self.base_spin.blockSignals(True)
+        self.base_spin.setValue(b if b is not None else 0)
+        self.base_spin.blockSignals(False)
+        col = QColor.fromHsv(b, 255, 255) if b is not None else QColor(128, 128, 128)
+        self.base_swatch.setStyleSheet(f"background-color: {col.name()}; border: 1px solid #555;")
+        auto_txt = f"{self._auto_base}\u00b0" if self._auto_base is not None else "sin color"
+        if self._base_manual is not None:
+            warn = ""
+            if self._auto_base is not None:
+                d = abs(self._base_manual - self._auto_base) % 360
+                d = min(d, 360 - d)
+                if d >= 15:
+                    warn = f" OJO: difiere {d}\u00b0 del detectado; si no es a prop\u00f3sito, usa 'De la imagen...' o 'Auto'."
+            self.base_info.setText(f"Fijado a mano (autom\u00e1tico: {auto_txt}).{warn}")
+        elif self._auto_base is not None:
+            self.base_info.setText(f"Detectado autom\u00e1ticamente: {auto_txt}. C\u00e1mbialo si la imagen tiene varios colores.")
+        else:
+            self.base_info.setText("Imagen sin color propio (gris): usa Colorear o fija un color base.")
+
+    def _set_base_manual(self, value):
+        """Cambia el color base SIN cambiar lo que se ve (solo reinterpreta el tono)."""
+        shift = (self.hue_slider.value() - self._ref()) % 360
+        self._base_manual = None if value is None else int(value) % 360
+        self.hue_slider.blockSignals(True)
+        self.hue_slider.setValue((shift + self._ref()) % 360)
+        self.hue_slider.blockSignals(False)
+        self.hue_label.setText(f"{self.hue_slider.value()}")
+        self._refresh_base_ui()
+
+    def _pick_base_from_image(self):
+        """Muestrea el color base con un clic sobre la propia imagen (promedia 5x5 px)."""
+        img = self._source_image
+        if img is None or img.isNull():
+            QMessageBox.information(self, "Sin imagen", "No hay imagen original para muestrear.")
+            return
+
+        class _Pick(QLabel):
+            picked = Signal(int, int)
+
+            def mousePressEvent(self, ev):
+                self.picked.emit(int(ev.position().x()), int(ev.position().y()))
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Clic en el color que quieras como base")
+        lay = QVBoxLayout(dlg)
+        scaled = img.scaled(640, 480, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        lbl = _Pick()
+        lbl.setPixmap(QPixmap.fromImage(scaled))
+        lbl.setFixedSize(scaled.size())
+        lbl.setCursor(Qt.CrossCursor)
+        lay.addWidget(lbl)
+        info = QLabel("Haz clic sobre la parte de la imagen que quieras tomar como color base.")
+        lay.addWidget(info)
+        chosen = {'hue': None}
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setEnabled(False)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+
+        def on_pick(x, y):
+            ox = min(img.width() - 1, max(0, int(x * img.width() / max(1, scaled.width()))))
+            oy = min(img.height() - 1, max(0, int(y * img.height() / max(1, scaled.height()))))
+            hist = [0.0] * 360
+            for dy in range(-2, 3):
+                for dx in range(-2, 3):
+                    px, py = ox + dx, oy + dy
+                    if 0 <= px < img.width() and 0 <= py < img.height():
+                        c = img.pixelColor(px, py)
+                        if c.alpha() > 128 and c.hsvSaturation() > 10 and c.hsvHue() >= 0:
+                            hist[c.hsvHue() % 360] += c.hsvSaturation() * c.value()
+            if sum(hist) <= 0:
+                info.setText("Ese punto no tiene color (gris, blanco, negro o transparente). Prueba en otro.")
+                chosen['hue'] = None
+                bb.button(QDialogButtonBox.Ok).setEnabled(False)
+                return
+            chosen['hue'] = max(range(360), key=lambda k: hist[k])
+            info.setText(f"Tono tomado: {chosen['hue']}\u00b0")
+            bb.button(QDialogButtonBox.Ok).setEnabled(True)
+
+        lbl.picked.connect(on_pick)
+        if dlg.exec() and chosen['hue'] is not None:
+            self._set_base_manual(int(chosen['hue']))
+
+    def _pick_base_color(self):
+        b = self._base()
+        c = QColorDialog.getColor(QColor.fromHsv(b if b is not None else 0, 255, 255), self,
+                                  "Color base de la imagen (se guarda su tono)")
+        if not c.isValid():
+            return
+        if c.hsvHue() < 0:
+            QMessageBox.information(self, "Color sin tono",
+                                    "Ese color es gris/blanco/negro y no tiene tono. Elige uno con matiz.")
+            return
+        self._set_base_manual(int(c.hsvHue()))
+
+    def create_slider_row(self, slider, label):
+        layout = QHBoxLayout()
+        layout.addWidget(slider)
+        layout.addWidget(label)
+        slider.sliderReleased.connect(self._on_slider_released)
+        return layout
+        
+    @Slot()
+    def _on_slider_released(self):
+        self.effects_changed.emit(self.get_effects())
+
+    def reset_values(self):
+        self.sat_slider.setValue(0)
+        self.bright_slider.setValue(0)
+        self.contrast_slider.setValue(0)
+        self.colorize_check.blockSignals(True)
+        self.colorize_check.setChecked(False)
+        self.colorize_check.blockSignals(False)
+        self.hue_slider.setValue(self._ref() % 360)   # desplazamiento 0 = color original de la imagen
+        self._on_slider_released()
+
+    def get_effects(self):
+        return {
+            "hue": (self.hue_slider.value() - self._ref()) % 360,
+            "saturation": self.sat_slider.value(),
+            "brightness": self.bright_slider.value(),
+            "contrast": self.contrast_slider.value(),
+            "colorize": self.colorize_check.isChecked()
+        }
+
+
+# --- [NUEVO] QLabel clickeable (para la insignia de plegado renderizada) ---
+
+class ClickableLabel(QLabel):
+    """
+    [MODIFICADO] Un QLabel con senales 'clicked' (click izquierdo) y
+    'right_clicked' (click derecho).
+    """
+    clicked = Signal()
+    right_clicked = Signal()
+    hover_entered = Signal()
+    hover_left = Signal()
+
+    def enterEvent(self, event):
+        self.hover_entered.emit()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.hover_left.emit()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+            event.accept()
+        elif event.button() == Qt.RightButton:
+            self.right_clicked.emit()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        event.accept()
+
+
+# --- Editor de Texto Inline ---
+
+class InlineTextEditor(QTextEdit):
+    editing_finished = Signal(object)
+
+    FONT_CYCLE = [
+        "Inter", "Segoe UI", "Arial", "Calibri", "Verdana",
+        "Trebuchet MS", "Georgia", "Times New Roman",
+        "Comic Sans MS", "Consolas", "Courier New",
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptRichText(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        self.setContentsMargins(0, 0, 0, 0)
+        self.viewport().setContentsMargins(0, 0, 0, 0)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setViewportMargins(0, 0, 0, 0)
+        
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_text_context_menu)
+        self._finishing = False
+
+    def _show_text_context_menu(self, pos):
+        menu = QMenu(self)
+
+        cursor = self.textCursor()
+        has_selection = cursor.hasSelection()
+        can_undo = self.document().isUndoAvailable()
+        can_redo = self.document().isRedoAvailable()
+        clipboard_has_text = bool(QApplication.clipboard().text())
+        has_any_text = bool(self.toPlainText())
+
+        undo_action = QAction("Deshacer (Ctrl+Z)", self)
+        undo_action.setEnabled(can_undo)
+        undo_action.triggered.connect(self.undo)
+        menu.addAction(undo_action)
+
+        redo_action = QAction("Rehacer (Ctrl+Y)", self)
+        redo_action.setEnabled(can_redo)
+        redo_action.triggered.connect(self.redo)
+        menu.addAction(redo_action)
+
+        menu.addSeparator()
+
+        cut_action = QAction("Cortar (Ctrl+X)", self)
+        cut_action.setEnabled(has_selection)
+        cut_action.triggered.connect(self.cut)
+        menu.addAction(cut_action)
+
+        copy_action = QAction("Copiar (Ctrl+C)", self)
+        copy_action.setEnabled(has_selection)
+        copy_action.triggered.connect(self.copy)
+        menu.addAction(copy_action)
+
+        paste_action = QAction("Pegar (Ctrl+V)", self)
+        paste_action.setEnabled(clipboard_has_text)
+        paste_action.triggered.connect(self.paste)
+        menu.addAction(paste_action)
+
+        delete_action = QAction("Eliminar", self)
+        delete_action.setEnabled(has_selection)
+        delete_action.triggered.connect(self._delete_selection)
+        menu.addAction(delete_action)
+
+        menu.addSeparator()
+
+        select_all_action = QAction("Seleccionar Todo (Ctrl+A)", self)
+        select_all_action.setEnabled(has_any_text)
+        select_all_action.triggered.connect(self.selectAll)
+        menu.addAction(select_all_action)
+
+        menu.addSeparator()
+        
+        bold_action = QAction("Negrita (Ctrl+B)", self)
+        bold_action.triggered.connect(lambda: self.setFontWeight(QFont.Bold if self.fontWeight() != QFont.Bold else QFont.Normal))
+        menu.addAction(bold_action)
+        
+        italic_action = QAction("Cursiva (Ctrl+I)", self)
+        italic_action.triggered.connect(lambda: self.setFontItalic(not self.fontItalic()))
+        menu.addAction(italic_action)
+        
+        underline_action = QAction("Subrayado (Ctrl+U)", self)
+        underline_action.triggered.connect(lambda: self.setFontUnderline(not self.fontUnderline()))
+        menu.addAction(underline_action)
+        
+        strike_action = QAction("Tachado (Ctrl+Shift+X)", self)
+        strike_action.triggered.connect(self._toggle_strikethrough)
+        menu.addAction(strike_action)
+        
+        menu.addSeparator()
+
+        align_menu = QMenu("Alinear Texto", self)
+        align_group = QActionGroup(align_menu)
+        align_group.setExclusive(True)
+
+        align_left_action = QAction("Izquierda", self, checkable=True)
+        align_left_action.triggered.connect(lambda: self.setAlignment(Qt.AlignLeft))
+        align_menu.addAction(align_left_action)
+        align_group.addAction(align_left_action)
+
+        align_center_action = QAction("Centrado", self, checkable=True)
+        align_center_action.triggered.connect(lambda: self.setAlignment(Qt.AlignCenter))
+        align_menu.addAction(align_center_action)
+        align_group.addAction(align_center_action)
+
+        align_right_action = QAction("Derecha", self, checkable=True)
+        align_right_action.triggered.connect(lambda: self.setAlignment(Qt.AlignRight))
+        align_menu.addAction(align_right_action)
+        align_group.addAction(align_right_action)
+        
+        align_justify_action = QAction("Justificado", self, checkable=True)
+        align_justify_action.triggered.connect(lambda: self.setAlignment(Qt.AlignJustify))
+        align_menu.addAction(align_justify_action)
+        align_group.addAction(align_justify_action)
+        
+        current_alignment = int(self.alignment()) & 0x0f      # [PACK56] solo la parte horizontal (AlignCenter incluye la vertical y nunca coincidia)
+        if current_alignment == 1:
+            align_left_action.setChecked(True)
+        elif current_alignment == 4:
+            align_center_action.setChecked(True)
+        elif current_alignment == 2:
+            align_right_action.setChecked(True)
+        elif current_alignment == 8:
+            align_justify_action.setChecked(True)
+        else:
+            align_left_action.setChecked(True)
+        
+        menu.addMenu(align_menu)
+        
+        menu.addSeparator()
+        
+        link_at_click = self.anchorAt(pos)
+        cursor_on_link = has_selection and bool(cursor.charFormat().anchorHref())
+        link_action = QAction("Insertar/Editar Enlace (Ctrl+K)...", self)
+        link_action.setEnabled(has_selection or cursor_on_link or bool(link_at_click))
+
+        def _trigger_insert_link():
+            if not self.textCursor().hasSelection() and link_at_click:
+                self.setTextCursor(self.cursorForPosition(pos))
+            self._insert_link()
+
+        link_action.triggered.connect(_trigger_insert_link)
+        menu.addAction(link_action)
+        
+        menu.addSeparator()
+        
+        font_action = QAction("Cambiar Fuente...", self)
+        font_action.setEnabled(has_selection)
+        font_action.triggered.connect(self._change_selection_font)
+        menu.addAction(font_action)
+        
+        size_action = QAction("Cambiar Tama帽o...", self)
+        size_action.setEnabled(has_selection)
+        size_action.triggered.connect(self._change_selection_size)
+        menu.addAction(size_action)
+        
+        color_action = QAction("Cambiar Color...", self)
+        color_action.setEnabled(has_selection)
+        color_action.triggered.connect(self._change_selection_color)
+        menu.addAction(color_action)
+        
+        menu.exec(self.mapToGlobal(pos))
+        
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            current_cursor = self.textCursor()
+            if current_cursor.hasSelection():
+                click_cursor = self.cursorForPosition(event.position().toPoint())
+                click_pos = click_cursor.position()
+                if current_cursor.selectionStart() <= click_pos <= current_cursor.selectionEnd():
+                    return
+            self.setTextCursor(self.cursorForPosition(event.position().toPoint()))
+            return
+            
+        if event.button() == Qt.LeftButton and (event.modifiers() & Qt.ControlModifier):
+            anchor = self.anchorAt(event.position().toPoint())
+            if anchor:
+                parent_win = self.window()
+                if hasattr(parent_win, '_execute_link'):
+                    parent_win._execute_link(anchor)
+                event.accept()
+                return
+        
+        super().mousePressEvent(event)
+        
+    def _toggle_strikethrough(self):
+        fmt = self.currentCharFormat()
+        fmt.setFontStrikeOut(not fmt.fontStrikeOut())
+        self.setCurrentCharFormat(fmt)
+
+    def _delete_selection(self):
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            cursor.removeSelectedText()
+            self.setTextCursor(cursor)
+    
+    def _expand_selection_to_full_link(self, cursor):
+        return expand_href_selection(self.document(), cursor)
+
+    def select_anchor_by_href(self, href):
+        doc = self.document()
+        length = doc.characterCount()
+        for i in range(length - 1):
+            probe = QTextCursor(doc)
+            probe.setPosition(i)
+            probe.setPosition(i + 1, QTextCursor.KeepAnchor)
+            if probe.charFormat().anchorHref() == href:
+                start_cursor = QTextCursor(doc)
+                start_cursor.setPosition(i)
+                return self._expand_selection_to_full_link(start_cursor)
+        return None
+
+    def _insert_link(self):
+        cursor = self.textCursor()
+
+        if not cursor.hasSelection():
+            if not cursor.charFormat().anchorHref():
+                return
+        
+        if cursor.charFormat().anchorHref():
+            cursor = self._expand_selection_to_full_link(cursor)
+
+        fmt = cursor.charFormat()
+        current_href = fmt.anchorHref()
+        
+        current_url = current_href.split('#')[0] if current_href else ""
+        frag = current_href.split('#', 1)[1] if '#' in current_href else ""
+        current_mode = "async" if "mode=async" in frag else "browser"
+        current_is_button = "btn=1" in frag
+
+        current_label = ""
+        current_ff = ""
+        current_fs = 0
+        for part in frag.split('&'):
+            if part.startswith('label='):
+                current_label = urllib.parse.unquote(part[len('label='):])
+            elif part.startswith('ff='):
+                current_ff = urllib.parse.unquote(part[len('ff='):])
+            elif part.startswith('fs='):
+                try:
+                    current_fs = int(part[len('fs='):])
+                except ValueError:
+                    current_fs = 0
+        if not current_label:
+            raw_selected = cursor.selectedText().replace('\ufffc', '').strip()
+            if raw_selected:
+                current_label = raw_selected
+        
+        dialog = LinkEditDialog(current_url, current_mode, current_is_button, current_label, current_ff, current_fs, self)
+        if dialog.exec():
+            url, mode, is_button, label_text, ff_val, fs_val = dialog.get_data()
+            selected_text = cursor.selectedText()
+            
+            clear_fmt = QTextCharFormat()
+            clear_fmt.setFontUnderline(False)
+            clear_fmt.setAnchor(False)
+            clear_fmt.setAnchorHref("")
+            cursor.setCharFormat(clear_fmt)
+
+            _st56 = cursor.selectionStart()          # [PACK56] formato del parrafo para restaurarlo tras insertar
+            _c056 = QTextCursor(cursor.document())
+            _c056.setPosition(_st56)
+            _bf56 = _c056.blockFormat()
+            _snap56 = _snap_blocks56(self.document())
+            cursor.removeSelectedText()
+            
+            if url.strip():
+                full_href = url.strip()
+                frag_parts = []
+                if mode == "async":
+                    frag_parts.append("mode=async")
+                if is_button:
+                    frag_parts.append("btn=1")
+
+                clean_text = label_text.strip()
+                if not clean_text:
+                    clean_text = selected_text.replace('\ufffc', ' ').replace('\u2029', ' ').replace('\n', ' ').strip()
+                if not clean_text:
+                    clean_text = url.strip()
+
+                if is_button:
+                    frag_parts.append(f"label={urllib.parse.quote(clean_text)}")
+                    frag_parts.append(f"ff={urllib.parse.quote(ff_val)}")
+                    frag_parts.append(f"fs={fs_val}")
+
+                if frag_parts:
+                    full_href += "#" + "&".join(frag_parts)
+                    
+                bg_color = "#7c3aed"
+                parent_win = self.window()
+                if hasattr(parent_win, '_get_layer2_button_color'):
+                    bg_color = parent_win._get_layer2_button_color()
+
+                if is_button:
+                    font = cursor.charFormat().font()
+                    if font.pointSize() <= 0 and font.pixelSize() <= 0: font = self.font()
+                    font.setBold(True)
+                    if ff_val:
+                        font.setFamily(ff_val)
+                    if fs_val:
+                        font.setPointSize(fs_val)
+
+                    btn_normal, w, h = generate_button_images(clean_text, bg_color, font, IMAGES_DIR)
+
+                    html = f'<a href="{full_href}" style="text-decoration: none;"><img src="{btn_normal}" width="{w}" height="{h}" alt="{clean_text}" border="0" style="vertical-align: middle;" /></a>'
+                else:
+                    html = f'<a href="{full_href}" style="color: #3b82f6; text-decoration: underline;">{clean_text}</a>'
+                
+                cursor.insertHtml(html)
+                _fx56 = QTextCursor(cursor.document())
+                _fx56.setPosition(_st56)
+                _fx56.setPosition(cursor.position(), QTextCursor.KeepAnchor)
+                _fx56.setBlockFormat(_bf56)
+                _restore_blocks56(self.document(), _snap56)
+            else:
+                fallback_text = label_text.strip() if label_text.strip() else selected_text.replace('\ufffc', '').strip()
+                cursor.insertText(fallback_text)
+
+    def _change_selection_font(self):
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return
+        
+        current_fmt = cursor.charFormat()
+        current_font = current_fmt.font()
+        
+        ok, font = QFontDialog.getFont(current_font, self, "Seleccionar Fuente")
+        if ok:
+            fmt = QTextCharFormat()
+            fmt.setFont(font)
+            cursor.mergeCharFormat(fmt)
+    
+    def _change_selection_size(self):
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return
+        
+        current_fmt = cursor.charFormat()
+        current_size = int(current_fmt.font().pointSize())
+        
+        size, ok = QInputDialog.getInt(self, "Cambiar Tama帽o", "Tama帽o de fuente:", current_size, 6, 200)
+        if ok:
+            fmt = QTextCharFormat()
+            fmt.setFontPointSize(size)
+            cursor.mergeCharFormat(fmt)
+    
+    def _change_selection_color(self):
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return
+        
+        current_fmt = cursor.charFormat()
+        current_color = current_fmt.foreground().color()
+        
+        color = QColorDialog.getColor(current_color, self, "Seleccionar Color de Texto")
+        if color.isValid():
+            fmt = QTextCharFormat()
+            fmt.setForeground(color)
+            cursor.mergeCharFormat(fmt)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        modifiers = event.modifiers()
+        
+        if (modifiers & Qt.ControlModifier):
+            if event.key() == Qt.Key_K:
+                cur = self.textCursor()
+                if cur.hasSelection() or cur.charFormat().anchorHref():
+                    self._insert_link()
+                event.accept()
+                return
+            elif event.key() == Qt.Key_B:
+                self.setFontWeight(QFont.Bold if self.fontWeight() != QFont.Bold else QFont.Normal)
+                event.accept()
+                return
+            elif event.key() == Qt.Key_I:
+                self.setFontItalic(not self.fontItalic())
+                event.accept()
+                return
+            elif event.key() == Qt.Key_U:
+                self.setFontUnderline(not self.fontUnderline())
+                event.accept()
+                return
+            elif (modifiers & Qt.ShiftModifier) and event.key() == Qt.Key_X:
+                fmt = self.currentCharFormat()
+                fmt.setFontStrikeOut(not fmt.fontStrikeOut())
+                self.setCurrentCharFormat(fmt)
+                event.accept()
+                return
+            elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+                self._finishing = True
+                self.editing_finished.emit(self.toHtml())
+                self.clearFocus()
+                self._finishing = False
+                event.accept()
+                return
+
+        if event.key() == Qt.Key_Escape:
+            self._finishing = True
+            self.editing_finished.emit(None)
+            self.clearFocus()
+            self._finishing = False
+            event.accept()
+            return
+
+        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+            self.textCursor().insertText('\n')
+            event.accept()
+            return
+            
+        super().keyPressEvent(event)
+
+    def focusOutEvent(self, event):
+        active_popup = QApplication.activePopupWidget()
+        active_modal = QApplication.activeModalWidget()
+        
+        if active_popup and isinstance(active_popup, QMenu):
+            log_debug("Editor", "Focus out ignorado (menu activo).")
+            super().focusOutEvent(event)
+            return
+
+        if active_modal:
+            log_debug("Editor", "Focus out ignorado (dialogo modal activo).")
+            super().focusOutEvent(event)
+            return
+
+        if not self._finishing:
+            log_debug("Editor", "Focus out real. Finalizando edicion.")
+            self.editing_finished.emit(self.toHtml())
+        super().focusOutEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent):
+        modifiers = event.modifiers()
+        
+        if modifiers & Qt.ControlModifier:
+            delta_y = event.angleDelta().y()
+            if delta_y == 0:
+                event.ignore()
+                return
+
+            probe = self.cursorForPosition(event.position().toPoint())
+            if probe.charFormat().anchorHref() and 'btn=1' in probe.charFormat().anchorHref():
+                self._adjust_button_size_on_wheel(event.position().toPoint(), 1 if delta_y > 0 else -1)
+                event.accept()
+                return
+
+            step = 1 if delta_y > 0 else -1
+
+            cursor = self.textCursor()
+            has_selection = cursor.hasSelection()
+
+            if not has_selection:
+                cursor.select(QTextCursor.Document)
+
+            fmt = cursor.charFormat()
+            current_size = fmt.fontPointSize()
+            if current_size <= 0:
+                current_size = fmt.font().pointSize()
+            if current_size <= 0:
+                current_size = 14
+
+            new_size = max(2, current_size + step)
+
+            new_fmt = QTextCharFormat()
+            new_fmt.setFontPointSize(new_size)
+            cursor.mergeCharFormat(new_fmt)
+
+            event.accept()
+
+        elif modifiers & Qt.ShiftModifier:
+            delta = event.angleDelta().y()
+            if delta == 0:
+                delta = event.angleDelta().x()
+            if delta == 0:
+                event.ignore()
+                return
+
+            step = 1 if delta > 0 else -1
+
+            probe = self.cursorForPosition(event.position().toPoint())
+            if probe.charFormat().anchorHref() and 'btn=1' in probe.charFormat().anchorHref():
+                self._adjust_button_font_on_wheel(event.position().toPoint(), step)
+                event.accept()
+                return
+
+            from PySide6.QtGui import QFontDatabase
+            fonts = QFontDatabase.families()
+
+            current_family = self.currentCharFormat().fontFamily()
+            if not current_family:
+                current_family = self.font().family()
+
+            try:
+                current_idx = fonts.index(current_family)
+            except ValueError:
+                current_idx = getattr(self, '_font_cycle_idx', 0)
+
+            self._font_cycle_idx = (current_idx + step) % len(fonts)
+            new_family = fonts[self._font_cycle_idx]
+
+            cursor = self.textCursor()
+            has_selection = cursor.hasSelection()
+            
+            if not has_selection:
+                cursor.select(QTextCursor.Document)
+                
+            fmt = QTextCharFormat()
+            fmt.setFontFamily(new_family)
+            cursor.mergeCharFormat(fmt)
+            
+            if not has_selection:
+                cursor.clearSelection()
+                
+            self.setTextCursor(cursor)
+
+            QToolTip.showText(QCursor.pos(), new_family, self)
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+    def _adjust_button_size_on_wheel(self, pos, direction):
+        import urllib.parse
+        cursor = self.cursorForPosition(pos)
+        href = cursor.charFormat().anchorHref()
+        if not href or 'btn=1' not in href:
+            return False
+
+        frag = href.split('#', 1)[1] if '#' in href else ''
+        ff_val = ""
+        fs_val = 0
+        label = ""
+        for part in frag.split('&'):
+            if part.startswith('label='):
+                label = urllib.parse.unquote(part[len('label='):])
+            elif part.startswith('ff='):
+                ff_val = urllib.parse.unquote(part[len('ff='):])
+            elif part.startswith('fs='):
+                try:
+                    fs_val = int(part[len('fs='):])
+                except ValueError:
+                    fs_val = 0
+
+        if not fs_val:
+            fs_val = 16
+
+        new_fs = max(6, fs_val + direction)
+        if new_fs == fs_val:
+            return False
+
+        frag_parts = []
+        for part in frag.split('&'):
+            if part.startswith('fs='):
+                part = f'fs={new_fs}'
+            frag_parts.append(part)
+        if not any(part.startswith('fs=') for part in frag_parts):
+            frag_parts.append(f'fs={new_fs}')
+        if not any(part.startswith('ff=') for part in frag_parts):
+            frag_parts.insert(0, f'ff={urllib.parse.quote(ff_val)}')
+        new_href = href.split('#', 1)[0] + '#' + '&'.join(frag_parts)
+
+        span = expand_href_selection(self.document(), cursor)
+
+        bg_color = "#7c3aed"
+        parent_win = self.window()
+        if hasattr(parent_win, '_get_layer2_button_color'):
+            bg_color = parent_win._get_layer2_button_color()
+
+        font = QFont(ff_val, new_fs)
+        font.setBold(True)
+        btn_normal, w, h = generate_button_images(label, bg_color, font, IMAGES_DIR)
+        html = f'<a href="{new_href}" style="text-decoration: none;"><img src="{btn_normal}" width="{w}" height="{h}" alt="{label}" border="0" style="vertical-align: middle;" /></a>'
+        replace_span_with_html(span, html)       # [PACK56] conserva la alineacion del parrafo
+        QToolTip.showText(QCursor.pos(), f"{label}: {new_fs}pt", self)
+        return True
+
+    def _adjust_button_font_on_wheel(self, pos, direction):
+        import urllib.parse
+        from PySide6.QtGui import QFontDatabase
+        cursor = self.cursorForPosition(pos)
+        href = cursor.charFormat().anchorHref()
+        if not href or 'btn=1' not in href:
+            return False
+
+        fonts = QFontDatabase.families()
+
+        frag = href.split('#', 1)[1] if '#' in href else ''
+        ff_val = ""
+        fs_val = 0
+        label = ""
+        for part in frag.split('&'):
+            if part.startswith('label='):
+                label = urllib.parse.unquote(part[len('label='):])
+            elif part.startswith('ff='):
+                ff_val = urllib.parse.unquote(part[len('ff='):])
+            elif part.startswith('fs='):
+                try:
+                    fs_val = int(part[len('fs='):])
+                except ValueError:
+                    fs_val = 0
+
+        if not ff_val:
+            ff_val = self.font().family() or 'Inter'
+        if not fs_val:
+            fs_val = 16
+
+        step = 1 if direction > 0 else -1          # [PACK56] 'step' no estaba definido (NameError)
+        try:
+            cur_idx = fonts.index(ff_val)
+        except ValueError:
+            cur_idx = getattr(self, '_btn_font_cycle_idx', 0)
+        self._btn_font_cycle_idx = (cur_idx + step) % len(fonts)
+        new_ff = fonts[self._btn_font_cycle_idx]
+        if new_ff == ff_val:
+            return False
+
+        frag_parts = []
+        for part in frag.split('&'):
+            if part.startswith('ff='):
+                part = f'ff={urllib.parse.quote(new_ff)}'
+            frag_parts.append(part)
+        if not any(part.startswith('ff=') for part in frag_parts):
+            frag_parts.insert(0, f'ff={urllib.parse.quote(new_ff)}')
+        if not any(part.startswith('fs=') for part in frag_parts):
+            frag_parts.append(f'fs={fs_val}')
+        new_href = href.split('#', 1)[0] + '#' + '&'.join(frag_parts)
+
+        span = expand_href_selection(self.document(), cursor)
+
+        bg_color = "#7c3aed"
+        parent_win = self.window()
+        if hasattr(parent_win, '_get_layer2_button_color'):
+            bg_color = parent_win._get_layer2_button_color()
+
+        font = QFont(new_ff, fs_val)
+        font.setBold(True)
+        btn_normal, w, h = generate_button_images(label, bg_color, font, IMAGES_DIR)
+        html = f'<a href="{new_href}" style="text-decoration: none;"><img src="{btn_normal}" width="{w}" height="{h}" alt="{label}" border="0" style="vertical-align: middle;" /></a>'
+        replace_span_with_html(span, html)       # [PACK56] conserva la alineacion del parrafo
+        QToolTip.showText(QCursor.pos(), f"{label}: {new_ff}", self)
+        return True
+
+
+# --- Overlay de Conexiones de Nodos ---
+
+_USER32_CACHE = [None]
+def _user32_cached():
+    """[PACK108] Una sola instancia de user32 para el orden Z de cables y corona."""
+    if _USER32_CACHE[0] is None:
+        _USER32_CACHE[0] = ctypes.WinDLL('user32', use_last_error=True)
+    return _USER32_CACHE[0]
+
+
+class ConnectorOverlay(QWidget):
+    def __init__(self, manager):
+        super().__init__()
+        self.manager = manager
+        self.source_id = None
+        self.drag_id = None
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)   # mostrarse nunca debe activar/reordenar nada
+        self._last_req = 0.0
+        self.faint = False   # True: cables de hover normal (opacidad configurable)
+        self._fade = 1.0     # fundido de entrada/salida de los cables de hover (0-1)
+        self.blank = False   # True: pinta un fotograma transparente (justo antes de ocultarse)
+        self._pending_timer = QTimer(self)
+        self._pending_timer.setSingleShot(True)
+        self._pending_timer.setInterval(33)
+        self._pending_timer.timeout.connect(self._pending_fire)
+        self._rope_last = 0.0                      # [PACK100] cuerdas vivas: repintado continuo mientras haya cables a la vista
+        self._rope_timer = QTimer(self)
+        self._rope_timer.setInterval(33)
+        self._rope_timer.timeout.connect(self._rope_tick)
+        self._paint_t0 = 0.0                       # [PACK101] hora del ultimo repintado y su coste medio (ms)
+        self._paint_ms = 5.0
+        self._rope_box = None
+        self._lod = 0                              # [PACK103] nivel de detalle 0-2 y retraso medido del bucle de eventos
+        self._lag_ms = 0.0
+        self._tick_t = 0.0
+        self._sync_ms = 0.0                        # [PACK108] coste medio de un repintado sincrono (pintar + volcar a pantalla)
+        self._lod_t = 0.0
+        self._samp = [0, 0.0, 0.0, 0.0, 0.0]       # [PACK111] muestreo de rendimiento: repintados, suma ms, max ms, hora de inicio, CPU de inicio
+        self._n_edges = 0
+        self._grad_cache = {}                      # [PACK109] paradas de color del degradado por (colores, ajustes): no se recalculan cada fotograma
+        self._rope_fast = True                     # [PACK109] hay una cuerda moviendose deprisa (si no, el balanceo suave va a menos fotogramas)
+        self._flush_log_t = 0.0
+
+    def _pending_fire(self):
+        self._last_req = time.monotonic()
+        self.update()
+
+    def drag_refresh(self):
+        """[PACK108] Arrastre: si pintar es barato, el overlay se repinta AHORA (en el mismo turno en que se movieron las ventanas):
+        los cables salen pegados a los widgets en vez de ir unos fotogramas por detras. Si es caro (medido de verdad, volcado a
+        pantalla incluido), vuelve al repintado diferido con hueco minimo entre fotogramas."""
+        if max(self._paint_ms, self._sync_ms) <= 10.0 and self.isVisible():      # [PACK111] antes 24 ms: con 20 cables el bucle de eventos no descansaba
+            _t0 = time.perf_counter()
+            self._pending_timer.stop()
+            self._last_req = time.monotonic()
+            self.repaint()
+            self._sync_ms = 0.7 * self._sync_ms + 0.3 * min(250.0, (time.perf_counter() - _t0) * 1000.0)
+            if self._sync_ms > 40.0 and time.monotonic() - self._flush_log_t > 5.0:
+                self._flush_log_t = time.monotonic()
+                _perf_log(f"cables al arrastrar: pintar {self._paint_ms:.0f} ms, repintado completo {self._sync_ms:.0f} ms "
+                          f"(volcado a pantalla ~{max(0.0, self._sync_ms - self._paint_ms):.0f} ms), overlay {self.width()}x{self.height()}, detalle {self._lod}")
+        else:
+            self._sync_ms = 0.97 * self._sync_ms          # sin repintados sincronos la medida se relaja: se vuelve a probar
+            self.request_update()
+
+    def _rope_interval(self):
+        """Milisegundos entre fotogramas vivos: los que pide el ajuste de fps, y nunca menos de 2,5 x lo que cuesta pintar
+        (un PC lento baja solo los fotogramas por segundo en vez de acumular repintados)."""
+        fps = max(5.0, self.manager.get_cable_param('_rope_fps'))
+        if not self._rope_fast and not self.drag_id:      # [PACK109] balanceo suave y lento: 2/3 de los fotogramas se ven igual y cuestan 1/3 menos
+            fps = min(fps, max(10.0, 0.67 * fps))
+        return int(max(1000.0 / fps, min(250.0, 4.0 * self._paint_ms), 66.0 if self._lod >= 2 else 0.0))
+
+    def _lod_for(self, n):
+        """[PACK103] Nivel de detalle segun el ajuste de calidad: 0 todo; 1 sin resplandor y con degradado / grosor mas simples;
+        2 ademas sin grosor variable y con las cuerdas quietas (solo se mueven al mover los widgets). En 'Automatica' sube solo
+        con muchos cables o si el PC va justo (coste de pintar o retraso del bucle de eventos) y baja con histeresis."""
+        q = int(self.manager.get_cable_param('_cable_quality'))
+        if q == 1:
+            self._lod = 0
+            return 0
+        if q == 2:
+            self._lod = 2
+            return 2
+        if q == 3:
+            self._lod = 3
+            return 3
+        load = max(self._paint_ms, 0.5 * self._lag_ms)
+        want = 3 if (n > 30 or load > 45) else (2 if (n > 14 or load > 28) else (1 if (n > 6 or load > 14) else 0))
+        cur = self._lod
+        now = time.monotonic()
+        if want > cur:
+            self._lod_t = now
+        if want < cur:
+            if cur == 3:      # [PACK109] 'Minima' pinta mucho mas barato: no se baja al instante (oscilaria) ni de golpe
+                want = 3 if (now - self._lod_t < 8.0 or n > 22 or load > 12) else max(want, 2)
+            elif cur == 2 and (n > 10 or load > 20):
+                want = 2
+            elif cur == 1 and want == 0 and (n > 4 or load > 10):
+                want = 1
+        self._lod = want
+        return want
+
+    def _rope_keepalive(self):
+        self._rope_last = time.monotonic()
+        if not self._rope_timer.isActive():
+            self._rope_timer.start(self._rope_interval())
+
+    def _rope_tick(self):
+        now = time.monotonic()
+        if now - self._rope_last > 0.35 or not self.isVisible():
+            self._rope_timer.stop()
+            self._tick_t = 0.0
+            return
+        if self._tick_t:                           # un temporizador que llega tarde = bucle de eventos saturado
+            self._lag_ms = 0.7 * self._lag_ms + 0.3 * min(400.0, max(0.0, (now - self._tick_t) * 1000.0 - self._rope_timer.interval()))
+        self._tick_t = now
+        if QApplication.activePopupWidget() is not None:       # menu desplegado: no se compite con el
+            self._rope_last = now
+            return
+        iv = self._rope_interval()
+        if iv != self._rope_timer.interval():
+            self._rope_timer.setInterval(iv)
+        if (now - self._paint_t0) * 1000.0 < 0.8 * iv:     # el arrastre u otro repintado acaba de pintar: no se duplica
+            return
+        if self._rope_box is not None and not self.drag_id:
+            self.update(self._rope_box)                      # solo la zona de los cables
+        else:
+            self.update()
+
+    def request_update(self):
+        """update() limitado a ~30 Hz (con repintado final garantizado)."""
+        now = time.monotonic()
+        gap = max(0.033, min(0.25, 2.2 * max(self._paint_ms, self._sync_ms) / 1000.0))      # [PACK111] pintar ocupa como mucho ~45 % del tiempo
+        if now - self._last_req >= gap:
+            self._last_req = now
+            self.update()
+        elif not self._pending_timer.isActive():
+            self._pending_timer.start(max(1, int((gap - (now - self._last_req)) * 1000.0) + 1))      # [PACK108] el repintado final respeta el hueco
+
+    def _sample_perf(self, now, ms):
+        """[PACK111] Cada ~10 s de animacion continua escribe UNA linea en rendimiento.log: cuantos repintados por segundo se consiguen,
+        cuanto cuesta pintar y que parte de la CPU usa el programa. Solo mide (no cambia nada); sirve para saber que pasa en cada PC."""
+        s = self._samp
+        if not s[3] or now - s[3] > 30.0:                 # primera vez, o hubo una pausa larga: se empieza de cero
+            s[:] = [0, 0.0, 0.0, now, time.process_time()]
+        s[0] += 1
+        s[1] += ms
+        s[2] = max(s[2], ms)
+        if now - s[3] >= 10.0:
+            if s[0] >= 20:
+                wall = now - s[3]
+                cpu = (time.process_time() - s[4]) / wall * 100.0
+                _perf_log(f"cables: {self._n_edges} | {s[0] / wall:.1f} repintados/s | pintar medio {s[1] / s[0]:.1f} ms (maximo {s[2]:.0f}) | "
+                          f"CPU del programa {cpu:.0f} % | detalle {self._lod} | overlay {self.width()}x{self.height()} | fps pedidos {self.manager.get_cable_param('_rope_fps'):.0f}")
+            s[:] = [0, 0.0, 0.0, now, time.process_time()]
+
+    def paintEvent(self, event):
+        _pt0 = time.perf_counter()
+        self.manager._cparam_memo = {}          # [PACK109] durante un repintado los ajustes no cambian: se leen una sola vez
+        try:
+            self._paintEvent(event)
+        finally:
+            self.manager._cparam_memo = None
+            _now = time.perf_counter()
+            self._paint_t0 = time.monotonic()
+            self._paint_ms = 0.8 * self._paint_ms + 0.2 * min(200.0, (_now - _pt0) * 1000.0)
+            self._sample_perf(_now, (_now - _pt0) * 1000.0)
+
+    def _paintEvent(self, event):
+        from PySide6.QtCore import QPointF
+        painter = QPainter(self)
+        # Siempre se escribe un fotograma COMPLETO (transparente si no hay nada que dibujar).
+        # Una ventana translucida conserva su ultimo bitmap al ocultarse y Windows lo vuelve a
+        # mostrar en el siguiente show(): de ahi los cables 'fantasma' de la nota anterior.
+        painter.setCompositionMode(QPainter.CompositionMode_Source)
+        painter.fillRect(self.rect(), Qt.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+
+        preview_all = bool(getattr(self.manager, '_cable_preview_all', False)) and not self.blank
+        target_id = None if self.blank else (self.drag_id or self.source_id)
+        if not target_id:
+            painter.end()
+            return
+
+        edges_to_draw_normal = []
+        edges_to_draw_dimmed = []
+
+        visited_children = set()
+        def collect_children(current_id):
+            if current_id in visited_children: return
+            visited_children.add(current_id)
+            children_ids = self.manager.get_children(current_id)
+            if not children_ids: return
+            for cid in children_ids:
+                edges_to_draw_normal.append((current_id, cid))
+                collect_children(cid)
+
+        collect_children(target_id)
+
+        # Ascender recursivamente a todos los ancestros
+        visited_parents = set()
+        def collect_parents(current_id):
+            if current_id in visited_parents: return
+            visited_parents.add(current_id)
+            state = self.manager.global_state.get(current_id, {})
+            parent_id = state.get('parent_id')
+            if parent_id and parent_id in self.manager.widgets:
+                edges_to_draw_dimmed.append((parent_id, current_id))
+                collect_parents(parent_id)
+
+        collect_parents(target_id)
+        if preview_all:   # vista previa de un dialogo de ajustes: se dibujan TODOS los enlaces a la vez
+            pv_edges = [(s.get('parent_id'), k) for k, s in self.manager.global_state.items()
+                        if isinstance(s, dict) and k in self.manager.widgets
+                        and s.get('parent_id') in self.manager.widgets]
+            _pd = self.manager._cable_preview_dash_now()     # [PACK90] un solo estilo a la vez
+            edges_to_draw_dimmed[:] = [] if _pd else pv_edges     # continuo y grueso (estilo 'hacia el padre')
+            edges_to_draw_normal[:] = pv_edges if _pd else []     # discontinuo y fino (estilo 'hacia los hijos')
+
+        if not edges_to_draw_normal and not edges_to_draw_dimmed:
+            painter.end()
+            return
+
+        painter.setRenderHint(QPainter.Antialiasing)
+        offset = self.geometry().topLeft()
+        painter.setOpacity(self._fade)
+        if self.faint:
+                painter.setOpacity(self.manager.get_cable_hover_opacity() * self._fade)
+        # Los cables nunca se pintan SOBRE una nota, este en la banda Z que este (siempre encima / normal):
+        # si el overlay quedara por encima de una nota de otra banda, esa zona se recorta.
+        # Los cables van por debajo de las notas de su banda Z (siempre encima / normal): ver _place_overlay_under.
+        st = CABLE_STYLE
+        self._n_edges = len(edges_to_draw_normal) + len(edges_to_draw_dimmed)
+        _lod = self._lod_for(self._n_edges)      # [PACK103]
+        if _lod >= 3:
+            painter.setRenderHint(QPainter.Antialiasing, False)      # [PACK109] nivel 'Minima': bordes sin suavizar (pintar es mucho mas barato)
+        _nc = {}
+
+        def note_color(win):
+            c = _nc.get(id(win))
+            if c is None:
+                try:
+                    c = win._get_layer2_button_color()
+                except Exception:
+                    c = '#a0a0a4'
+                _nc[id(win)] = c
+            return c
+
+        _rope_live = [False]
+        _rope_bx = [None]
+        _rope_fast = [False]
+        _rope_pre = {}
+        import math as _m9
+        _items, _seen = [], set()
+        for _p_id, _c_id in edges_to_draw_normal + edges_to_draw_dimmed:       # [PACK109] todas las cuerdas se simulan juntas
+            if (_p_id, _c_id) in _seen:
+                continue
+            _seen.add((_p_id, _c_id))
+            _pw, _cw = self.manager.widgets.get(_p_id), self.manager.widgets.get(_c_id)
+            if not _pw or not _pw.isVisible() or not _cw or not _cw.isVisible():
+                continue
+            _pc, _cc = _pw.geometry().center(), _cw.geometry().center()
+            if _m9.hypot(_cc.x() - _pc.x(), _cc.y() - _pc.y()) >= 2:
+                _items.append(((_p_id, _c_id), _pw.paper_rect_global(), _cw.paper_rect_global()))
+        if _items:
+            _rope_pre = self.manager.cable_ropes_many(_items, time.monotonic(), _lod)
+
+        def draw_edge(p_id, c_id, is_dimmed):
+            p_win = self.manager.widgets.get(p_id)
+            c_win = self.manager.widgets.get(c_id)
+            if not p_win or not p_win.isVisible() or not c_win or not c_win.isVisible(): return
+
+            start_pt = p_win.geometry().center() - offset
+            end_pt = c_win.geometry().center() - offset
+
+            path = QPainterPath()
+            path.moveTo(start_pt)
+
+            import math
+            _clen = math.hypot(end_pt.x() - start_pt.x(), end_pt.y() - start_pt.y())
+            _rope = _rope_pre.get((p_id, c_id)) if _clen >= 2 else None
+            pl = None
+            if _rope is not None:      # [PACK100] cuerda con fisica anclada a los bordes de los widgets
+                start_pt = QPointF(_rope[2][0] - offset.x(), _rope[2][1] - offset.y())
+                end_pt = QPointF(_rope[3][0] - offset.x(), _rope[3][1] - offset.y())
+                pl = (_rope[0] - np.array([offset.x(), offset.y()], dtype=float), _rope[1])      # [PACK109] polilinea directa
+                path = None
+                _mn, _mx = pl[0].min(axis=0), pl[0].max(axis=0)
+                _bb = QRectF(float(_mn[0]), float(_mn[1]), float(_mx[0] - _mn[0]), float(_mx[1] - _mn[1]))
+                _rope_bx[0] = _bb if _rope_bx[0] is None else _rope_bx[0].united(_bb)
+                if _rope[4]:
+                    _rope_live[0] = True
+                if _rope[5] > 5.0:
+                    _rope_fast[0] = True
+            else:
+                path = _cable_path(start_pt, end_pt, self.manager.cable_curve(_clen), self.manager.cable_fx(_clen))      # [PACK90] la curvatura mengua con la longitud; [PACK99] efectos peso / resorte
+            op_mul, w_main = self.manager.cable_length_style(_clen)
+            w_end, w_ctr = self.manager.cable_width_profile(_clen)
+            alpha = (st['alpha'] if (self.faint or not is_dimmed) else st['dim_alpha']) * op_mul   # cables largos: mas tenues
+            col_a = _cable_color(note_color(p_win), alpha)
+            col_b = _cable_color(note_color(c_win), alpha)
+
+            chord = end_pt - start_pt
+            if abs(chord.x()) + abs(chord.y()) < 2:
+                brush = QBrush(col_a)
+            else:
+                # Degradado padre->hija con la transicion concentrada en el centro:
+                # los extremos conservan el color puro de cada nota.
+                # El degradado empieza en el '% de inicio' del cable (contado desde el padre) y ocupa el '% de longitud'.
+                lo = max(0.0, min(0.499, self.manager.get_cable_param('_cable_grad_start') / 100.0))
+                hi = 1.0 - lo   # simetrico: el mismo tramo de color puro junto al padre y junto al hijo
+                if hi - lo < 1e-4:
+                    lo, hi = max(0.0, lo - 5e-5), min(1.0, lo + 5e-5)
+                blend = _cable_blend if st['blend_hsv'] else _cable_blend_rgb
+                # Opacidad a lo largo del recorrido: plena junto al padre y al hijo (% de inicio, simetrico) y mas tenue
+                # hacia el centro en los cables largos (mismo criterio que el degradado de color).
+                _om = self.manager.cable_opacity_profile(_clen)
+                _os = max(0.0, min(0.499, self.manager.get_cable_param('_cable_ograd_start') / 100.0))
+
+                def _stop_color(s):
+                    c = col_a if s <= lo else (col_b if s >= hi else blend(col_a, col_b, (s - lo) / (hi - lo)))
+                    d = min(s, 1.0 - s)
+                    if _om < 0.999 and _os < 0.495 and d > _os:
+                        u = (d - _os) / (0.5 - _os)
+                        c = QColor(c)
+                        c.setAlpha(int(round(c.alpha() * (1.0 + (_om - 1.0) * (u * u * (3.0 - 2.0 * u))))))
+                    return c
+                grad = QLinearGradient(QPointF(start_pt), QPointF(end_pt))
+                _gkey = (col_a.rgba(), col_b.rgba(), round(lo, 5), round(hi, 5), round(_om, 4), round(_os, 4), _lod, bool(st['blend_hsv']))
+                _stops = self._grad_cache.get(_gkey)        # [PACK109] las paradas solo dependen de los colores y los ajustes
+                if _stops is None:
+                    _ss = {0.0, 1.0, lo, hi} | {lo + (hi - lo) * i / 8.0 for i in range(1, 8, 1 if _lod < 1 else 3)}
+                    if _om < 0.999 and _os < 0.495 and _lod < 1:
+                        _ss |= {i / 16.0 for i in range(17)}      # solo con perfil de opacidad: mas muestras
+                    _stops = [(s, _stop_color(s)) for s in sorted(_ss)]
+                    if len(self._grad_cache) > 96:
+                        self._grad_cache.clear()
+                    self._grad_cache[_gkey] = _stops
+                grad.setStops(_stops)
+                brush = QBrush(grad)
+
+            if is_dimmed:
+                pen = None      # [PACK109] los punteados se dibujan trazo a trazo: no hace falta el lapiz punteado nativo
+            else:
+                pen = QPen(brush, w_main, Qt.SolidLine)   # cables largos: mas finos
+
+            _gl = self.manager.get_cable_param('_cable_glow')
+            if _gl > 0 and _lod < 1 and abs(chord.x()) + abs(chord.y()) >= 2:
+                # Resplandor: 3 trazos mas anchos y muy transparentes bajo el cable (sin desenfoques ni cache: barato).
+                _gs = self.manager.get_cable_param('_cable_glow_size')
+                _gk = (st['dim_width'] / st['width']) if is_dimmed else 1.0
+                _gbase = painter.opacity()
+                _gpass = (3.0,) if self.drag_id else (3.0, 1.5)    # durante el arrastre solo un trazo: coste minimo
+                painter.setOpacity(_gbase * min(1.0, _gl / 100.0 * (0.3 if self.drag_id else 0.2)))
+                for _gi in _gpass:
+                    _ge = _gs * 2.0 * _gi / 3.0
+                    if abs(w_end - w_ctr) >= 0.08:        # [PACK89] el resplandor sigue el afinado del cable
+                        _cable_draw_tapered(painter, path, brush, max(0.3, w_end * _gk) + _ge, max(0.3, w_ctr * _gk) + _ge,
+                                            self.manager.get_cable_param('_cable_wgrad_start') / 100.0, False, 0, pl)
+                        continue
+                    _gp = QPen(brush, max(0.3, w_end * _gk) + _ge, Qt.SolidLine)
+                    _gp.setCapStyle(Qt.RoundCap)
+                    painter.setPen(_gp)
+                    if pl is not None:
+                        painter.drawPolyline(_np_poly(pl[0]))
+                    else:
+                        painter.drawPath(path)
+                painter.setOpacity(_gbase)
+            if abs(w_end - w_ctr) >= 0.08 and _lod < 2 and abs(chord.x()) + abs(chord.y()) >= 2:
+                # cable largo: grosor variable a lo largo del recorrido (pleno en los extremos, mas fino en el centro)
+                _k = (st['dim_width'] / st['width']) if is_dimmed else 1.0
+                _cable_draw_tapered(painter, path, brush, max(0.3, w_end * _k), max(0.3, w_ctr * _k),
+                                    self.manager.get_cable_param('_cable_wgrad_start') / 100.0,
+                                    ((self.manager.get_cable_param('_cable_dash_len'), self.manager.get_cable_param('_cable_dash_gap'))
+                                     if is_dimmed else False), _lod, pl)
+                return
+            if is_dimmed:       # [PACK108] punteado: trazos sueltos (mucho mas barato que el lapiz punteado nativo)
+                _cable_draw_dashed_path(painter, path, brush, max(0.3, w_main * st['dim_width'] / st['width']),
+                                        self.manager.get_cable_param('_cable_dash_len'), self.manager.get_cable_param('_cable_dash_gap'), pl)
+                return
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+            if pl is not None:
+                painter.drawPolyline(_np_poly(pl[0]))
+            else:
+                painter.drawPath(path)
+
+        # Estilo: hacia el PADRE (ancestros) = continuo y grueso; hacia los HIJOS = punteado y fino.
+        # (el parametro is_dimmed de draw_edge significa ahora "estilo punteado")
+        for p, c in edges_to_draw_normal:
+            draw_edge(p, c, True)
+        for p, c in edges_to_draw_dimmed:
+            draw_edge(p, c, False)
+        self._rope_box = (_rope_bx[0].toAlignedRect().adjusted(-70, -70, 70, 70) if _rope_bx[0] is not None else None)
+        self._rope_fast = _rope_fast[0]
+        if _rope_live[0]:
+            self._rope_keepalive()
+        if self.manager.get_show_crown():
+            self.manager.crown_sync(target_id, note_color, self._fade, painter.opacity())
+        else:
+            self.manager.crown_hide()
+        painter.end()
+
+
+from PySide6.QtGui import QKeySequence
+
+# ======================================================================
+# Atajos personalizables (JSON) + teclas de acceso de los menus + navegador de widgets
+# ======================================================================
+HOTKEYS_FILE = os.path.join(DATA_DIR, "hotkeys.json")
+HOTKEY_PROFILES_DIR = os.path.join(DATA_DIR, "hotkey_profiles")
+
+# (id, etiqueta, atajo por defecto, global por defecto, necesita un widget enfocado)
+HOTKEY_COMMANDS = [
+    ("open_browser", "Abrir el navegador de widgets", "Ctrl+Alt+B", True, False),
+    ("toggle_all", "Mostrar / ocultar todos los widgets", "", False, False),
+    ("add_widget", "Agregar nuevo widget (elegir template)", "", False, False),
+    ("new_default", "Nuevo widget con el template predeterminado", "", False, False),
+    ("toggle_collapse_all", "Plegar / desplegar todos los hijos", "", False, False),
+    ("reload_all", "Recargar todos los widgets", "", False, False),
+    ("undo_global", "Deshacer \u00faltimo cambio (todos los widgets)", "Ctrl+Alt+Z", False, False),
+    ("redo_global", "Rehacer (todos los widgets)", "Ctrl+Alt+Y", False, False),
+    ("toggle_console", "Mostrar / ocultar la consola", "Ctrl+F12", False, False),
+    ("undo_widget", "Deshacer cambios del widget enfocado", "Ctrl+Z", False, True),
+    ("redo_widget", "Rehacer cambios del widget enfocado", "Ctrl+Y", False, True),
+    ("reload_widget", "Recargar el widget enfocado", "F5", False, True),
+    ("open_hotkeys", "Abrir el editor de atajos", "", False, False),
+    ("show_all", "Mostrar todos los widgets", "", False, False),
+    ("hide_all", "Ocultar todos los widgets", "", False, False),
+    ("collapse_all", "Plegar todos los hijos (ver solo los padres)", "", False, False),
+    ("expand_all", "Desplegar todos los hijos", "", False, False),
+    ("cycle_sort", "Cambiar el criterio de orden de las listas", "", False, False),
+    ("set_load_1", "Cargar el perfil de la ranura 1", "Alt+1", True, False),
+    ("set_save_1", "Guardar el perfil activo en la ranura 1", "Ctrl+Alt+1", True, False),
+    ("set_load_2", "Cargar el perfil de la ranura 2", "Alt+2", True, False),
+    ("set_save_2", "Guardar el perfil activo en la ranura 2", "Ctrl+Alt+2", True, False),
+    ("set_load_3", "Cargar el perfil de la ranura 3", "Alt+3", True, False),
+    ("set_save_3", "Guardar el perfil activo en la ranura 3", "Ctrl+Alt+3", True, False),
+    ("set_load_4", "Cargar el perfil de la ranura 4", "Alt+4", True, False),
+    ("set_save_4", "Guardar el perfil activo en la ranura 4", "Ctrl+Alt+4", True, False),
+    ("set_load_5", "Cargar el perfil de la ranura 5", "Alt+5", True, False),
+    ("set_save_5", "Guardar el perfil activo en la ranura 5", "Ctrl+Alt+5", True, False),
+    ("set_load_6", "Cargar el perfil de la ranura 6", "Alt+6", True, False),
+    ("set_save_6", "Guardar el perfil activo en la ranura 6", "Ctrl+Alt+6", True, False),
+    ("set_load_7", "Cargar el perfil de la ranura 7", "Alt+7", True, False),
+    ("set_save_7", "Guardar el perfil activo en la ranura 7", "Ctrl+Alt+7", True, False),
+    ("set_load_8", "Cargar el perfil de la ranura 8", "Alt+8", True, False),
+    ("set_save_8", "Guardar el perfil activo en la ranura 8", "Ctrl+Alt+8", True, False),
+    ("set_load_9", "Cargar el perfil de la ranura 9", "Alt+9", True, False),
+    ("set_save_9", "Guardar el perfil activo en la ranura 9", "Ctrl+Alt+9", True, False),
+    ("set_load_10", "Cargar el perfil de la ranura 10", "Alt+0", True, False),
+    ("set_save_10", "Guardar el perfil activo en la ranura 10", "Ctrl+Alt+0", True, False),
+    ("set_loadc_1", "Cargar el perfil de la ranura 1 (o el perfil n.1 de la lista) - Ctrl+cifra", "Ctrl+1", True, False),
+    ("set_loadc_2", "Cargar el perfil de la ranura 2 (o el perfil n.2 de la lista) - Ctrl+cifra", "Ctrl+2", True, False),
+    ("set_loadc_3", "Cargar el perfil de la ranura 3 (o el perfil n.3 de la lista) - Ctrl+cifra", "Ctrl+3", True, False),
+    ("set_loadc_4", "Cargar el perfil de la ranura 4 (o el perfil n.4 de la lista) - Ctrl+cifra", "Ctrl+4", True, False),
+    ("set_loadc_5", "Cargar el perfil de la ranura 5 (o el perfil n.5 de la lista) - Ctrl+cifra", "Ctrl+5", True, False),
+    ("set_loadc_6", "Cargar el perfil de la ranura 6 (o el perfil n.6 de la lista) - Ctrl+cifra", "Ctrl+6", True, False),
+    ("set_loadc_7", "Cargar el perfil de la ranura 7 (o el perfil n.7 de la lista) - Ctrl+cifra", "Ctrl+7", True, False),
+    ("set_loadc_8", "Cargar el perfil de la ranura 8 (o el perfil n.8 de la lista) - Ctrl+cifra", "Ctrl+8", True, False),
+    ("set_loadc_9", "Cargar el perfil de la ranura 9 (o el perfil n.9 de la lista) - Ctrl+cifra", "Ctrl+9", True, False),
+    ("set_loadc_10", "Cargar el perfil de la ranura 10 (o el perfil n.10 de la lista) - Ctrl+cifra", "Ctrl+0", True, False),
+    ("open_gestures", "Abrir la guia de gestos y atajos", "F1", False, False),
+    ("profile_next", "Perfil siguiente (orden alfabetico)", "Ctrl+Shift+Down", False, False),
+    ("profile_prev", "Perfil anterior (orden alfabetico)", "Ctrl+Shift+Up", False, False),
+    ("clone_set", "Duplicar el perfil activo como perfil nuevo (pide nombre y ranura)", "", False, False),
+]
+# [PACK104] Rutas del menu del widget que cambiaron (nombres de [PACK78] -> estructura nueva); el orden importa: lo especifico antes.
+_WIDGET_PATH_MOVES_A = ([
+    ("widget/Ocultar este widget", "widget/Ocultar"), ("widget/Mostrar este widget", "widget/Mostrar"),
+    ("widget/Renombrar este widget...", "widget/Renombrar..."),
+    ("widget/Mostrar en el navegador de widgets", "widget/Ver en el navegador de widgets"),
+    ("widget/Girar este widget", "widget/Aspecto/Girar widget"),
+    ("widget/Orientaci\u00f3n de la imagen (inclinaci\u00f3n de la corona)...", "widget/Aspecto/Corona/Orientaci\u00f3n de la imagen (inclinaci\u00f3n de la corona)..."),
+    ("widget/Corona de este widget (tono, saturaci\u00f3n, brillo, opacidad)...", "widget/Aspecto/Corona/Tono, saturaci\u00f3n, brillo y opacidad..."),
+    ("widget/Generar capa 2 (nota base: forma y color)...", "widget/Aspecto/Estilo/Generar estilo..."),
+    ("widget/Editar forma de la nota base...", "widget/Aspecto/Estilo/Editar este estilo..."),
+    ("widget/Cambiar el template de este widget...", "widget/Aspecto/Template/Cambiar el template..."),
+    ("widget/Guardar como template...", "widget/Aspecto/Template/Guardar como template..."),
+    ("widget/Exportar el template de este widget...", "widget/Aspecto/Template/Exportar el template..."),
+    ("widget/Copiar el template de este widget (json)", "widget/Aspecto/Template/Copiar template (json)"),
+    ("widget/Pegar el template en este widget (json)", "widget/Aspecto/Template/Pegar template (json)"),
+    ("widget/Usar como template predeterminado", "widget/Aspecto/Template/Usar como predeterminado"),
+    ("widget/Copiar el estilo de este widget (json)", "widget/Aspecto/Estilo/Copiar estilo (json)"),
+    ("widget/Pegar el estilo en este widget (json)", "widget/Aspecto/Estilo/Pegar estilo (json)"),
+    # [PACK107] rutas de [PACK104] -> estructura actual
+    ("widget/Aspecto/Nota base/Generar capa 2 (forma y color)...", "widget/Aspecto/Estilo/Generar estilo..."),
+    ("widget/Aspecto/Nota base/Editar forma de la nota base...", "widget/Aspecto/Estilo/Editar este estilo..."),
+    ("widget/Aspecto/Template/Copiar (json)", "widget/Aspecto/Template/Copiar template (json)"),
+    ("widget/Aspecto/Template/Pegar (json)", "widget/Aspecto/Template/Pegar template (json)"),
+    ("widget/Aspecto/Estilo/Copiar (json)", "widget/Aspecto/Estilo/Copiar estilo (json)"),
+    ("widget/Aspecto/Estilo/Pegar (json)", "widget/Aspecto/Estilo/Pegar estilo (json)"),
+    ("widget/Crear hijo", "widget/Relaciones/Crear hijo"), ("widget/Enlazar con otro widget", "widget/Relaciones/Enlazar con otro widget"),
+    ("widget/Independizar posici\u00f3n de este hijo", "widget/Relaciones/Independizar posici\u00f3n de este hijo"),
+    ("widget/Desvincular de su padre", "widget/Relaciones/Desvincular de su padre"),
+    ("widget/Plegar hijos", "widget/Relaciones/Plegar hijos"), ("widget/Desplegar hijos", "widget/Relaciones/Desplegar hijos"),
+    ("widget/Clonar este widget", "widget/Clonar/Este widget"), ("widget/Clonar con sus descendientes", "widget/Clonar/Con sus descendientes"),
+    ("widget/Clonar como hijo independiente", "widget/Clonar/Como hijo independiente"),
+    ("widget/Eliminar este widget y sus descendientes...", "widget/Eliminar/Con sus descendientes..."),
+    ("widget/Eliminar este widget...", "widget/Eliminar/Este widget..."),
+])
+# elementos del menu tray que ya son un comando de arriba (ruta normalizada -> id)
+MENU_PATH_TO_CMD = {
+    "tray/Ocultar todos los widgets": "toggle_all", "tray/Mostrar todos los widgets": "toggle_all",
+    "tray/Recargar todos los widgets": "reload_all", "tray/Nuevo widget...": "add_widget",
+    "tray/Nuevo widget predeterminado": "new_default", "tray/Desplegar todos los hijos": "toggle_collapse_all",
+    "tray/Plegar todos los hijos": "toggle_collapse_all", "tray/Ajustes/Atajos de teclado...": "open_hotkeys",
+    "tray/Navegador de widgets...": "open_browser", "tray/Gu\u00eda de gestos y atajos...": "open_gestures",
+    "tray/Mostrar u ocultar la consola": "toggle_console", "tray/Perfiles/Perfil siguiente": "profile_next",
+    "tray/Perfiles/Perfil anterior": "profile_prev", "tray/Perfiles/Duplicar el perfil activo como perfil nuevo...": "clone_set",
+    "tray/Edici\u00f3n/Deshacer \u00faltimo cambio": "undo_global", "tray/Edici\u00f3n/Rehacer": "redo_global",
+}
+_WIDGET_PATH_MOVES = tuple(_WIDGET_PATH_MOVES_A + [mv for n in (1, 2) for mv in (
+    ("widget/Contenido y capas/Capa %d/Tipo de capa" % n, "widget/Capas/Capa %d/Tipo de capa" % n),
+    ("widget/Contenido y capas/Capa %d/Cambiar Fuente..." % n, "widget/Capas/Capa %d/Contenido/Cambiar fuente..." % n),
+    ("widget/Contenido y capas/Capa %d/Posici\u00f3n y tama\u00f1o de la capa (X, Y, ancho, alto)..." % n,
+     "widget/Capas/Capa %d/Transformar/Posici\u00f3n y tama\u00f1o (X, Y, ancho, alto)..." % n),
+    ("widget/Contenido y capas/Capa %d/Editar texto en una ventana..." % n, "widget/Capas/Capa %d/Contenido/Editar texto en una ventana..." % n),
+    ("widget/Contenido y capas/Capa %d/Cargar desde .txt..." % n, "widget/Capas/Capa %d/Contenido/Cargar desde .txt..." % n),
+    ("widget/Contenido y capas/Capa %d/Efectos de Imagen (Tono, Color base, Brillo...)" % n,
+     "widget/Capas/Capa %d/Contenido/Efectos de Imagen (Tono, Color base, Brillo...)" % n),
+    ("widget/Contenido y capas/Capa %d/Estirar imagen para llenar el recuadro" % n,
+     "widget/Capas/Capa %d/Contenido/Estirar imagen para llenar el recuadro" % n),
+    ("widget/Transformar capas/Capa %d/Tama\u00f1o de la capa" % n, "widget/Capas/Capa %d/Transformar/Tama\u00f1o" % n),
+    ("widget/Transformar capas/Capa %d/Tono de la imagen" % n, "widget/Capas/Capa %d/Contenido/Tono" % n),
+    ("widget/Capas/Capa %d/Transformar/Tono" % n, "widget/Capas/Capa %d/Contenido/Tono" % n),                      # [PACK107]
+    ("widget/Capas/Capa %d/Posici\u00f3n y tama\u00f1o (X, Y, ancho, alto)..." % n,
+     "widget/Capas/Capa %d/Transformar/Posici\u00f3n y tama\u00f1o (X, Y, ancho, alto)..." % n),
+    ("widget/Transformar capas/Capa %d" % n, "widget/Capas/Capa %d/Transformar" % n),
+    ("widget/Contenido y capas/Capa %d" % n, "widget/Capas/Capa %d" % n))]
+  + [("widget/Contenido y capas", "widget/Capas"), ("widget/Transformar capas", "widget/Capas")])
+_MOD_KEYS = None
+
+
+def _hk_norm_label(text):
+    import re
+    t = (text or "").split("\t")[0].replace("&&", "\0").replace("&", "").replace("\0", "&")
+    t = re.sub(r"\s*:\s*\[.*\]\s*$", "", t)
+    t = re.sub(r"\s+\u00b7\s+(?:texto|imagen|web)\s*$", "", t)         # [PACK104] "Capa 1 \u00b7 texto"
+    t = re.sub(r"\s*\((?=[^)]*(?:\d|Ctrl|Alt|Shift))[^)]*\)\s*$", "", t)
+    t = re.sub(r"\b\d+(?= hijo)", "N", t)
+    return t.strip()
+
+
+# ---------------------------------------------------------------------------------------------
+# [PACK53] Jerarquia visual de los menus: secciones con titulo de color, franja y fondo tenue por
+# grupo, iconos (emoji cacheados) y los atajos de gesto alineados a la derecha. Es un post-proceso
+# del menu ya construido (no cambia nombres internos ni atajos); un interruptor en Apariencia lo
+# apaga para PCs lentos. Sin animaciones ni transparencias: solo pinta unos rectangulos.
+# ---------------------------------------------------------------------------------------------
+# [PACK78] Vocabulario unico de los textos visibles:
+#   widget   = todo lo que flota en el escritorio. Hay dos TIPOS: nota (se escribe sobre un papel: post-it o nota base)
+#              e imagen/web (su fondo es una imagen o una pagina web).
+#   perfil   = conjunto con nombre de widgets ("perfil activo" = el que esta en pantalla; antes tambien "set" / "conjunto").
+#   template = aspecto guardado de un widget (antes tambien "plantilla"); "aspecto" = grupo de widgets con el mismo look.
+#   padre / hijo / descendientes; plegar / desplegar; ocultar / mostrar; eliminar; clonar (widgets) / duplicar (perfiles).
+#   nota base = el papel que genera el editor de nota base (forma, color, borde, sombra); estilo = los parametros de una nota
+#   base (sin su texto): se genera, se edita, se guarda ("Mis estilos"), se copia y se pega. Todo eso vive bajo "Estilo".
+# El ORDEN de los menus lo dan las reglas de abajo: cada regla es (prefijo de la etiqueta, grupo) y las opciones salen
+# por grupo y, dentro de el, en el orden de la lista. Una opcion nueva solo necesita su prefijo en la lista.
+_KIND_LABEL = {"nota": "Nota", "imagen": "Imagen/web"}
+
+
+def _widget_kind(state):
+    """Tipo de un widget: 'nota' (texto sobre un papel: post-it, nota base o imagen de la carpeta sticky) o 'imagen'
+    (su fondo es una imagen o una pagina web)."""
+    td = state.get('template_data') if isinstance(state, dict) else None
+    td = td if isinstance(td, dict) else {}
+    l2 = td.get('layer2') if isinstance(td.get('layer2'), dict) else {}
+    c2 = str(l2.get('content', '')).replace('\\', '/')
+    if isinstance(td.get('base_note'), dict) or os.path.basename(c2).startswith('nota_base_') \
+            or os.path.basename(os.path.dirname(c2)).lower() == 'sticky':
+        return 'nota'
+    return 'nota' if l2.get('type', 'png') == 'text' else 'imagen'
+
+
+_MENU_GROUPS_W = (
+    ("este", "", "~#94a3b8"),                      # su titulo se calcula: TIPO y nombre del widget
+    ("aspecto", "CAPAS Y ASPECTO", "~#94a3b8"),
+    ("familia", "RELACIONES", "~#94a3b8"),
+    ("copia", "CLONAR", "~#94a3b8"),
+    ("general", "TODOS LOS WIDGETS", "~#94a3b8"),
+    ("peligro", "PELIGRO", "#f87171"),
+)
+# [PACK104] menu del widget: Capas / Aspecto / Relaciones / Clonar / Eliminar son submenus
+_MENU_RULES_W = (
+    ("Renombrar", "este"), ("Cancelar temporizador", "este"), ("Establecer temporizador", "este"),
+    ("Nuevo widget", "general"), ("Ocultar todos", "general"), ("Mostrar todos", "general"),
+    ("Ocultar", "este"), ("Mostrar", "este"), ("Siempre encima", "este"), ("Ver en el navegador", "este"),
+    ("Capas", "aspecto"), ("Aspecto", "aspecto"), ("Relaciones", "familia"), ("Clonar", "copia"), ("Eliminar", "peligro"),
+)
+_MENU_GROUPS_T = (
+    ("pantalla", "MOSTRAR Y OCULTAR", "~#94a3b8"),
+    ("crear", "CREAR", "~#94a3b8"),
+    ("explorar", "WIDGETS Y PERFILES", "~#94a3b8"),
+    ("app", "APLICACI\u00d3N", "~#94a3b8"),
+)
+_MENU_RULES_T = (
+    ("Ocultar todos", "pantalla"), ("Mostrar todos", "pantalla"), ("Plegar todos", "pantalla"), ("Desplegar todos", "pantalla"),
+    ("Recargar", "pantalla"),
+    ("Nuevo widget", "crear"), ("Nuevo con un aspecto", "crear"), ("Nueva nota base", "crear"),
+    ("Navegador", "explorar"), ("Widgets", "explorar"), ("Perfiles", "explorar"), ("Guardar y cargar", "explorar"), ("Edici", "explorar"),
+    ("Ajustes", "app"), ("Gu\u00eda", "app"), ("Mostrar u ocultar", "app"), ("Acerca", "app"), ("Salir", "app"),
+)
+# Solo estas opciones (las mas usadas) llevan icono y negrita; sin colores ni franjas.
+_MENU_KEYS_W = ("Capas", "Relaciones", "Clonar", "Eliminar")
+_MENU_KEYS_T = ("Nuevo widget...", "Navegador", "Perfiles", "Guardar y cargar", "Ajustes", "Salir")
+_MENU_ICONS = (
+    ("Capas", "\U0001f6e0"), ("Relaciones", "\U0001f331"), ("Clonar", "\U0001f4cb"),
+    ("Eliminar", "\U0001f5d1"), ("Nuevo widget...", "\u2795"), ("Navegador", "\U0001f50d"),
+    ("Perfiles", "\U0001f464"), ("Guardar y cargar", "\U0001f4be"), ("Ajustes", "\u2699"), ("Salir", "\U0001f6aa"),
+)
+
+_MENU_ICON_CACHE = {}
+_MENU_HINT_RE = re.compile(r"\s*\(([^()]*(?:Ctrl|Alt|May\u00fas|Shift|Win|click|doble)[^()]*)\)\s*$")
+
+
+def _menu_icon(glyph):
+    """Icono 16x16 (dibujado a 2x para pantallas HiDPI) a partir de un emoji; se dibuja una sola vez."""
+    ic = _MENU_ICON_CACHE.get(glyph)
+    if ic is None:
+        pm = QPixmap(32, 32)
+        pm.setDevicePixelRatio(2.0)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        f = QFont()
+        f.setFamilies(["Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", "Segoe UI Symbol"])
+        f.setPixelSize(13)
+        p.setFont(f)
+        p.setPen(QColor("#d0d4dc"))
+        p.drawText(QRect(0, 0, 16, 16), Qt.AlignCenter, glyph)
+        p.end()
+        ic = QIcon(pm)
+        _MENU_ICON_CACHE[glyph] = ic
+    return ic
+
+
+class _HMenu(QMenu):
+    """QMenu que ademas pinta, sobre cada opcion, un fondo muy tenue y una franja del color de su grupo."""
+
+    def __init__(self, *a):
+        super().__init__(*a)
+        self._tints = []
+        self._dark = True
+
+    def paintEvent(self, ev):
+        super().paintEvent(ev)
+        if not self._tints:
+            return
+        p = QPainter(self)
+        try:
+            for a, col, key in self._tints:
+                r = self.actionGeometry(a)
+                if r.isEmpty() or not r.intersects(ev.rect()):
+                    continue
+                bg = QColor(col)
+                bg.setAlpha(26)                              # [PACK58] solo las opciones clave llevan color
+                p.fillRect(r, bg)
+                p.fillRect(r.left(), r.top(), 3, r.height(), col)
+        finally:
+            p.end()
+
+
+def _menu_header(menu, title, color, dark, neutral=False):
+    """[PACK78] Titulo de seccion CALMADO: una banda del tono del propio menu (apenas mas clara u oscura), con el
+    texto atenuado, en mayusculas y espaciado. Se distingue de una opcion (pequeno, sin resaltado, no se puede pulsar)
+    sin competir con ella. Todas las secciones comparten el mismo tono; solo la de peligro lleva un toque de rojo.
+    QLabel dentro de un QWidgetAction deshabilitado: no se selecciona ni aparece en la lista de atajos."""
+    act = QWidgetAction(menu)
+    lab = QLabel(title.upper())
+    f = lab.font()
+    f.setLetterSpacing(QFont.AbsoluteSpacing, 0.8)
+    lab.setFont(f)
+    pal = menu.palette()
+    back = pal.window().color()
+    txt = QColor("#ececec") if dark else QColor("#1c1c1c")       # el tono del texto sale del fondo, no de la paleta
+
+    def mix(c1, c2, t):
+        return QColor(int(c1.red() * t + c2.red() * (1 - t)), int(c1.green() * t + c2.green() * (1 - t)),
+                      int(c1.blue() * t + c2.blue() * (1 - t)))
+
+    def lum(c):
+        v = [x / 255.0 for x in (c.red(), c.green(), c.blue())]
+        v = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in v]
+        return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+    bg = mix(txt, back, 0.13) if neutral else mix(QColor(color), back, 0.18)
+    t = 0.72
+    while True:        # texto atenuado, pero con contraste legible (>= 4.5) sobre la banda
+        fg = mix(txt, bg, t)
+        hi, lo = max(lum(fg), lum(bg)), min(lum(fg), lum(bg))
+        if (hi + 0.05) / (lo + 0.05) >= 4.5 or t >= 1.0:
+            break
+        t = min(1.0, t + 0.05)
+    lab.setStyleSheet("QLabel{color:%s;background:%s;padding:3px 10px 3px 10px;margin:5px 0px 1px 0px;"
+                      "font-size:7pt;font-weight:bold;}" % (fg.name(), bg.name()))
+    lab.setCursor(Qt.ArrowCursor)
+    act.setDefaultWidget(lab)
+    act.setEnabled(False)
+    return act
+
+
+def _menu_item_look(a, group, titles, tints, key=False):
+    """Atajos de gesto (parentesis finales) a la columna derecha; solo las opciones clave llevan negrita e icono
+    ([PACK78] ya sin franja ni fondo de color)."""
+    try:
+        left, _t, right = a.text().partition("\t")
+        m = _MENU_HINT_RE.search(left)
+        if m:
+            hint = m.group(1).strip()
+            left = left[:m.start()]
+            if len(hint) > 40:
+                a.setToolTip(hint)
+                hint = hint[:39].rstrip() + "\u2026"
+            right = (right + "   " if right else "") + hint
+            a.setText(left + "\t" + right)
+        if key:
+            f = a.font()
+            f.setBold(True)
+            a.setFont(f)
+        if key and not a.isCheckable() and a.icon().isNull():
+            lab = _hk_norm_label(a.text())
+            for pref, glyph in _MENU_ICONS:
+                if lab.startswith(pref):
+                    a.setIcon(_menu_icon(glyph))
+                    break
+    except Exception:
+        pass
+
+
+def _style_menu(menu, groups, rules, decorate=True):
+    """Ordena las opciones por grupos (segun las reglas: grupo y posicion en la lista) y, con decorate, les pone titulo
+    de seccion y el aspecto (ver arriba); sin decorate solo las separa con una linea. Si algo falla, el menu queda
+    tal como estaba."""
+    try:
+        acts = list(menu.actions())
+        items = [a for a in acts if not a.isSeparator() and not isinstance(a, QWidgetAction)]
+        if not items:
+            return
+        rank = {k: i for i, (k, _t, _c) in enumerate(groups)}
+        titles = {k: (t, c.lstrip("~")) for k, t, c in groups}
+        neut = {k for k, t, c in groups if c.startswith("~")}
+        keys = _MENU_KEYS_T if groups is _MENU_GROUPS_T else _MENU_KEYS_W
+        cur, cri, tagged = None, -1, []
+        for n_, a in enumerate(items):
+            lab = _hk_norm_label(a.text())
+            g, ri = None, -1
+            for i_, (pref, k) in enumerate(rules):
+                if lab.startswith(pref):
+                    g, ri = k, i_
+                    break
+            if g is None:
+                g, ri = cur, cri
+            else:
+                cur, cri = g, ri
+            tagged.append((a, g, ri, n_))
+        tagged.sort(key=lambda t: (rank.get(t[1], -1), t[2], t[3]))      # estable: lo que no esta en la lista sigue a su vecino
+        dark = menu.palette().window().color().lightness() < 128
+        for a in acts:
+            menu.removeAction(a)
+        last, first = object(), True
+        for a, g, _ri, _n in tagged:
+            if g != last:
+                last = g
+                if decorate:
+                    if g in titles and titles[g][0]:
+                        menu.addAction(_menu_header(menu, titles[g][0], titles[g][1], dark, g in neut))
+                elif not first:
+                    menu.addSeparator()
+            first = False
+            menu.addAction(a)
+            if decorate:
+                _menu_item_look(a, g, titles, [], any(_hk_norm_label(a.text()).startswith(k_) for k_ in keys))
+        if isinstance(menu, _HMenu):
+            menu._tints = []
+            menu._dark = dark
+        if decorate:
+            def _deep(mn, lvl=0):                            # submenus (a cualquier profundidad): solo atajos a la derecha
+                for sa in mn.actions():
+                    if not sa.isSeparator() and not isinstance(sa, QWidgetAction):
+                        _menu_item_look(sa, None, {}, [])
+                        if sa.menu() is not None and lvl < 6:
+                            _deep(sa.menu(), lvl + 1)
+            for a in items:
+                sm = a.menu()
+                if sm is not None:
+                    _deep(sm)
+    except Exception as e_sm:
+        log_warn("Menu", f"No se pudo aplicar el estilo del menu: {e_sm}")
+
+
+def _hk_norm_seq(text):
+    s = QKeySequence(text or "")
+    return "" if s.isEmpty() else s.toString(QKeySequence.PortableText)
+
+
+def _hk_event_seq(event):
+    from PySide6.QtCore import QKeyCombination
+    key = event.key()
+    if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta, Qt.Key_AltGr, Qt.Key_unknown, 0):
+        return ""
+    mods = event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier | Qt.MetaModifier)
+    return QKeySequence(QKeyCombination(mods, Qt.Key(key))).toString(QKeySequence.PortableText)
+
+
+def _hk_to_win(seq_text):
+    """'Ctrl+Alt+B' -> (modificadores Win32 + MOD_NOREPEAT, codigo de tecla virtual) o None."""
+    ks = QKeySequence(seq_text or "")
+    if ks.isEmpty():
+        return None
+    comb = ks[0]
+    mods, k = comb.keyboardModifiers(), int(comb.key())
+    m = 0x4000 | (1 if mods & Qt.AltModifier else 0) | (2 if mods & Qt.ControlModifier else 0) \
+        | (4 if mods & Qt.ShiftModifier else 0) | (8 if mods & Qt.MetaModifier else 0)
+    special = {Qt.Key_Space: 0x20, Qt.Key_Return: 0x0D, Qt.Key_Enter: 0x0D, Qt.Key_Escape: 0x1B,
+               Qt.Key_Tab: 0x09, Qt.Key_Backspace: 0x08, Qt.Key_Delete: 0x2E, Qt.Key_Insert: 0x2D,
+               Qt.Key_Home: 0x24, Qt.Key_End: 0x23, Qt.Key_PageUp: 0x21, Qt.Key_PageDown: 0x22,
+               Qt.Key_Left: 0x25, Qt.Key_Up: 0x26, Qt.Key_Right: 0x27, Qt.Key_Down: 0x28, Qt.Key_Pause: 0x13}
+    if 0x41 <= k <= 0x5A or 0x30 <= k <= 0x39:
+        return m, k
+    if int(Qt.Key_F1) <= k <= int(Qt.Key_F24):
+        return m, 0x70 + k - int(Qt.Key_F1)
+    for qk, vk in special.items():
+        if int(qk) == k:
+            return m, vk
+    try:
+        vk = ctypes.WinDLL('user32').VkKeyScanW(ord(chr(k))) & 0xFF
+        return (m, vk) if vk not in (0, 0xFF) else None
+    except Exception:
+        return None
+
+
+def _hk_make_win_filter(callback):
+    """Filtro nativo que recibe WM_HOTKEY (solo Windows)."""
+    from PySide6.QtCore import QAbstractNativeEventFilter
+    from ctypes import wintypes
+
+    class _F(QAbstractNativeEventFilter):
+        def nativeEventFilter(self, event_type, message):
+            try:
+                if bytes(event_type) in (b"windows_generic_MSG", b"windows_dispatcher_MSG"):
+                    msg = wintypes.MSG.from_address(int(message))
+                    if msg.message == 0x0312:
+                        callback(int(msg.wParam))
+                        return True, 0
+            except Exception:
+                pass
+            return False, 0
+    return _F()
+
+class _CtrlAltDigitHook:
+    """Gancho de teclado de bajo nivel (solo Windows) para Ctrl+Alt+cifra.
+    Solo actua con el Alt IZQUIERDO: AltGr (= Ctrl+Alt derecho) sigue escribiendo @ # | ~ con normalidad,
+    cosa que RegisterHotKey no puede distinguir."""
+
+    def __init__(self):
+        self.h = None
+        self.table = {}
+        self.cb = None
+        self._swallow = set()
+        self._proc = None
+        self._u = None
+
+    def set_table(self, table, cb):
+        self.table, self.cb = dict(table), cb
+        if self.table and self.h is None:
+            self._install()
+        elif not self.table and self.h is not None:
+            self._uninstall()
+
+    def _down(self, vk):
+        return bool(self._u.GetAsyncKeyState(vk) & 0x8000)
+
+    def _chord(self):
+        return (self._down(0x11) and self._down(0xA4) and not self._down(0xA5)
+                and not self._down(0x10) and not self._down(0x5B) and not self._down(0x5C))
+
+    def decide(self, wp, vk, flags):
+        """True si hay que tragarse la tecla (y avisa al comando)."""
+        if flags & 0x10:                       # inyectada (la nuestra o de otro programa)
+            return False
+        if wp in (0x100, 0x104):               # tecla abajo
+            if vk in self._swallow:
+                return True                    # repeticion automatica
+            cid = self.table.get(vk)
+            if cid and self._chord():
+                self._swallow.add(vk)
+                self.cb(cid)
+                self._cancel_menu()
+                return True
+        elif wp in (0x101, 0x105) and vk in self._swallow:
+            self._swallow.discard(vk)
+            return True
+        return False
+
+    def _cancel_menu(self):
+        # sin esto, soltar Alt activaria la barra de menus de la ventana activa
+        try:
+            self._u.keybd_event(0xE8, 0, 0, 0)
+            self._u.keybd_event(0xE8, 0, 2, 0)
+        except Exception:
+            pass
+
+    def _install(self):
+        try:
+            from ctypes import wintypes
+            u = ctypes.WinDLL("user32", use_last_error=True)
+            k = ctypes.WinDLL("kernel32")
+            LRES = ctypes.c_ssize_t
+            HOOKPROC = ctypes.WINFUNCTYPE(LRES, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+            u.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+            u.SetWindowsHookExW.restype = wintypes.HHOOK
+            u.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+            u.CallNextHookEx.restype = LRES
+            u.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+            u.GetAsyncKeyState.argtypes = [ctypes.c_int]
+            u.GetAsyncKeyState.restype = ctypes.c_short
+            k.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+            k.GetModuleHandleW.restype = wintypes.HMODULE
+            self._u = u
+
+            def proc(code, wp, lp):
+                try:
+                    if code == 0:
+                        vk = ctypes.c_uint32.from_address(lp).value
+                        flags = ctypes.c_uint32.from_address(lp + 8).value
+                        if self.decide(wp, vk, flags):
+                            return 1
+                except Exception:
+                    pass
+                return u.CallNextHookEx(None, code, wp, lp)
+            self._proc = HOOKPROC(proc)
+            self.h = u.SetWindowsHookExW(13, self._proc, k.GetModuleHandleW(None), 0)
+            if not self.h:
+                log_warn("Hotkeys", "No se pudo instalar el gancho de teclado para Ctrl+Alt+cifra.")
+        except Exception as e:
+            self.h = None
+            log_warn("Hotkeys", f"Gancho de teclado no disponible: {e}")
+
+    def _uninstall(self):
+        try:
+            if self.h:
+                self._u.UnhookWindowsHookEx(self.h)
+        except Exception:
+            pass
+        self.h = None
+        self._swallow.clear()
+
+
+class HotkeyManager(QObject):
+    """Atajos y teclas de menu guardados en hotkeys.json. Globales (todo el sistema, Windows: RegisterHotKey)
+    o solo con un widget enfocado. Las teclas de menu son las letras que activan cada opcion del menu abierto."""
+
+    def __init__(self, manager):
+        super().__init__(manager)
+        self.m = manager
+        self.cfg = {"hotkeys": {}, "menu_keys": {}, "tray_gestures": {}}
+        self._shortcuts, self._win_ids, self._filter = [], {}, None
+        self.load()
+        self.apply()
+        self._always_underline()
+
+    @staticmethod
+    def _always_underline():
+        """Subraya siempre la tecla de acceso de los menus (por defecto Windows solo la muestra al pulsar Alt)."""
+        try:
+            from PySide6.QtWidgets import QProxyStyle
+            app = QApplication.instance()
+
+            class _Underline(QProxyStyle):
+                def styleHint(self, hint, option=None, widget=None, returnData=None):
+                    if hint == QStyle.SH_UnderlineShortcut:
+                        return 1
+                    return super().styleHint(hint, option, widget, returnData)
+            app.setStyle(_Underline(app.style().objectName()))
+        except Exception as e:
+            log_warn("Hotkeys", f"No se pudo forzar el subrayado de las teclas de menu: {e}")
+
+    # ---- configuracion --------------------------------------------------
+    def load(self):
+        try:
+            with open(HOTKEYS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data.get("hotkeys"), dict):
+                self.cfg["hotkeys"] = {k: v for k, v in data["hotkeys"].items() if isinstance(v, dict)}
+            if isinstance(data.get("menu_keys"), dict):
+                self.cfg["menu_keys"] = {k: str(v) for k, v in data["menu_keys"].items()}
+            if isinstance(data.get("tray_gestures"), dict):
+                self.cfg["tray_gestures"] = {k: str(v) for k, v in data["tray_gestures"].items()}
+            for _cid in [f"set_save_{_i}" for _i in range(1, 11)]:      # migracion: se guardaron como locales en la version anterior
+                _c = self.cfg["hotkeys"].get(_cid)
+                if _c and not _c.get("global") and _hk_norm_seq(_c.get("key", "")) == _hk_norm_seq(self.command_table()[_cid][2]):
+                    _c["global"] = True
+            self._migrate_labels()
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            log_warn("Hotkeys", f"hotkeys.json ilegible, se usan los valores por defecto: {e}")
+
+    # Nombres de menu renombrados: se traducen las teclas / atajos que el usuario ya tenia asignados.
+    _LABEL_ALIASES = {
+        "Layer 1": "Capa 1", "Layer 2": "Capa 2", "Layer type": "Tipo de capa", "Always on Top": "Siempre encima",
+        "Editar Texto (Dialog)...": "Editar texto en una ventana...",
+        "Deformar imagen (Scaled Contents)": "Estirar imagen para llenar el recuadro",
+        "Editar Geometria (X,Y,W,H)...": "Posici\u00f3n y tama\u00f1o de la capa (X, Y, ancho, alto)...",
+        "Cambiar template para este widget (json)...": "Cambiar el template de este widget...",
+        "Exportar este template (json)...": "Exportar el template de este widget...",
+        "Conjuntos de Widgets": "Importar y exportar",
+        "Agregar conjunto (json)...": "Agregar widgets desde un archivo...",
+        "Sustituir conjunto (json)...": "Reemplazar todos los widgets desde un archivo...",
+        "Exportar (json)...": "Exportar todos los widgets a un archivo...",
+        # [PACK78] vocabulario unico: nombres de opcion renombrados
+        "Deshabilitar este widget": "Ocultar este widget", "Habilitar este widget": "Mostrar este widget",
+        "Editar este widget": "Contenido y capas",
+        "Cambiar la plantilla de este widget...": "Cambiar el template de este widget...",
+        "Exportar la plantilla de este widget...": "Exportar el template de este widget...",
+        "Corona de esta nota (tono, saturaci\u00f3n, brillo, opacidad)...": "Corona de este widget (tono, saturaci\u00f3n, brillo, opacidad)...",
+        "Corona sobre el ancestro al mostrar los cables": "Mostrar la corona sobre el ancestro",   # [PACK79]
+        "Girar toda la nota": "Girar este widget", "Enlazar con otra nota": "Enlazar con otro widget",
+        "Establecer Temporizador...": "Establecer temporizador...", "Predeterminar": "Usar como template predeterminado",
+        "Clonar \u00e1rbol": "Clonar con sus descendientes",
+        "Agregar Nuevo Widget": "Nuevo widget...", "Agregar Nuevo Widget...": "Nuevo widget...",
+        "Ocultar Todos": "Ocultar todos los widgets", "Mostrar Todos": "Mostrar todos los widgets",
+        "Recargar Todos los Widgets": "Recargar todos los widgets", "Nuevo Widget Predeterminado": "Nuevo widget predeterminado",
+        "Expandir Todos": "Desplegar todos los hijos", "Colapsar Todos (solo padres)": "Plegar todos los hijos",
+        "Nuevo desde un tipo en uso": "Nuevo con un aspecto en uso",
+        "Clonar el set actual como perfil nuevo...": "Duplicar el perfil activo como perfil nuevo...",
+        "Guardar perfil actual...": "Guardar perfil activo...",
+        "Guardar el set autom\u00e1ticamente al cambiar de perfil": "Guardar el perfil activo al cambiar de perfil",
+        "Precargar los sets con tecla (cambio instant\u00e1neo)": "Precargar los perfiles con tecla (cambio instant\u00e1neo)",
+        "Tipo de hija al crear con el rat\u00f3n...": "Tipo de hijo al crear con el rat\u00f3n...",
+        "Salir del Gestor": "Salir de WidgetArena", "Eliminar Todos los Widgets...": "Eliminar todos los widgets...",
+        "Plegar N hijo(s)": "Plegar hijos", "Desplegar N hijo(s)": "Desplegar hijos",
+        "Clonar aqu\u00ed el set actual como perfil nuevo...": "Duplicar aqu\u00ed el perfil activo como perfil nuevo...",
+        "Restaurar configuracion previa...": "Restaurar configuraci\u00f3n previa...",
+    }
+
+    # [PACK58] Rutas de menu que cambiaron de sitio (ahora dentro de "Ajustes"): se traducen los atajos guardados.
+    _PATH_MOVES = (("tray/Apariencia", "tray/Ajustes/Apariencia"), ("tray/Importar y exportar", "tray/Ajustes/Importar y exportar"),
+                   ("tray/Integraciones", "tray/Ajustes/Integraciones"), ("tray/Atajos de teclado...", "tray/Ajustes/Atajos de teclado...")) \
+        + (("tray/Nueva nota base (forma y color)...", "tray/Nueva nota base..."),) + _WIDGET_PATH_MOVES
+
+    def _migrate_labels(self):
+        al = self._LABEL_ALIASES
+
+        def fix(path):
+            p_ = "/".join(al.get(s, s) for s in (re.sub(r"^(Capa \d)\s*(?::\s*\[.*\]|\u00b7\s*\w+)$", r"\1", s0) for s0 in path.split("/")))
+            for old_, new_ in self._PATH_MOVES:
+                if p_ == old_ or p_.startswith(old_ + "/"):
+                    return new_ + p_[len(old_):]
+            return p_
+        hk = {}
+        for k, v in self.cfg["hotkeys"].items():
+            if k.startswith(("menu:", "wmenu:")):
+                pre, p = k.split(":", 1)
+                k = pre + ":" + fix(p)
+            hk[k] = v
+        self.cfg["hotkeys"] = hk
+        self.cfg["menu_keys"] = {fix(k): v for k, v in self.cfg["menu_keys"].items()}
+        self.cfg["tray_gestures"] = {k: ("menu:" + fix(v[5:]) if str(v).startswith("menu:") else v) for k, v in self.cfg.get("tray_gestures", {}).items()}
+
+    def save(self):
+        try:
+            tmp = HOTKEYS_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"version": 1, "hotkeys": self.cfg["hotkeys"], "menu_keys": self.cfg["menu_keys"],
+                           "tray_gestures": self.cfg.get("tray_gestures", {})},
+                          f, indent=2, ensure_ascii=False)
+            os.replace(tmp, HOTKEYS_FILE)
+        except Exception as e:
+            log_error("Hotkeys", f"No se pudo guardar hotkeys.json: {e}")
+
+    def tray_command(self, gesture):
+        """Comando asignado a un gesto del icono de bandeja ('' = nada)."""
+        tg = self.cfg.get("tray_gestures", {})
+        return tg[gesture] if gesture in tg else TRAY_GESTURE_DEFAULTS.get(gesture, "")
+
+    def set_tray_command(self, gesture, cmd):
+        self.cfg.setdefault("tray_gestures", {})[gesture] = cmd or ""
+
+    def command_table(self):
+        return {c[0]: c for c in HOTKEY_COMMANDS}
+
+    def binding(self, cmd_id):
+        """(atajo normalizado, es_global) del comando."""
+        c = self.command_table().get(cmd_id)
+        d = self.cfg["hotkeys"].get(cmd_id)
+        if d is None:
+            return (_hk_norm_seq(c[2]), bool(c[3])) if c else ("", False)
+        return _hk_norm_seq(d.get("key", "")), bool(d.get("global", False))
+
+    def set_binding(self, cmd_id, key, is_global):
+        self.cfg["hotkeys"][cmd_id] = {"key": _hk_norm_seq(key), "global": bool(is_global)}
+
+    def all_ids(self):
+        ids = [c[0] for c in HOTKEY_COMMANDS]
+        ids += [k for k in self.cfg["hotkeys"] if k.startswith(("menu:", "wmenu:")) and k not in ids]
+        return ids
+
+    def conflicts(self):
+        seen, out = {}, set()
+        for cid in self.all_ids():
+            key, glob = self.binding(cid)
+            if key:
+                if (key, glob) in seen:
+                    out.update((cid, seen[(key, glob)]))
+                seen[(key, glob)] = cid
+        return out
+
+    # ---- registro de atajos ---------------------------------------------
+    def apply(self):
+        self._unregister_all()
+        glob = [(cid, self.binding(cid)[0]) for cid in self.all_ids() if self.binding(cid)[1] and self.binding(cid)[0]]
+        if sys.platform == "win32":        # Ctrl+Alt+cifra va por gancho (respeta AltGr); el resto por RegisterHotKey
+            if not hasattr(self, "_hook"):
+                self._hook = _CtrlAltDigitHook()
+            hook_tab, rest = {}, []
+            for cid, key in glob:
+                ks = QKeySequence(key)
+                comb = ks[0] if not ks.isEmpty() else None
+                mods = comb.keyboardModifiers() if comb is not None else Qt.NoModifier
+                if comb is not None and (mods & Qt.ControlModifier) and (mods & Qt.AltModifier) \
+                    and not (mods & (Qt.ShiftModifier | Qt.MetaModifier)) and 0x30 <= int(comb.key()) <= 0x39:
+                    hook_tab[int(comb.key())] = cid
+                else:
+                    rest.append((cid, key))
+            all_glob, glob = glob, rest
+            self._hook.set_table(hook_tab, lambda c: QTimer.singleShot(0, lambda: self.run(c)))
+            if hook_tab and not self._hook.h:      # sin gancho: RegisterHotKey normal (bloquearia AltGr, pero funciona)
+                glob = glob + [(c, k) for c, k in all_glob if c in hook_tab.values()]
+        if sys.platform == "win32":
+            try:
+                if self._filter is None:
+                    self._filter = _hk_make_win_filter(self._on_win_hotkey)
+                    QApplication.instance().installNativeEventFilter(self._filter)
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                for n, (cid, key) in enumerate(glob):
+                    conv = _hk_to_win(key)
+                    if conv and user32.RegisterHotKey(None, 0x5100 + n, conv[0], conv[1]):
+                        self._win_ids[0x5100 + n] = cid
+                    else:
+                        log_warn("Hotkeys", f"No se pudo registrar el atajo global {key} para {cid} (en uso o invalido).")
+            except Exception as e:
+                log_warn("Hotkeys", f"Atajos globales no disponibles: {e}")
+        else:
+            from PySide6.QtGui import QShortcut
+            for cid, key in glob:
+                sc = QShortcut(QKeySequence(key), self.m.dialog_parent)
+                sc.setContext(Qt.ApplicationShortcut)
+                sc.activated.connect(lambda c=cid: self.run(c))
+                self._shortcuts.append(sc)
+
+    def _unregister_all(self):
+        if getattr(self, "_hook", None):
+            self._hook.set_table({}, None)
+        if sys.platform == "win32" and self._win_ids:
+            try:
+                user32 = ctypes.WinDLL("user32", use_last_error=True)
+                for hid in self._win_ids:
+                    user32.UnregisterHotKey(None, hid)
+            except Exception:
+                pass
+        self._win_ids = {}
+        for sc in self._shortcuts:
+            sc.setEnabled(False)
+            sc.deleteLater()
+        self._shortcuts = []
+
+    def _on_win_hotkey(self, hid):
+        cid = self._win_ids.get(hid)
+        if cid:
+            QTimer.singleShot(0, lambda: self.run(cid))
+
+    def shutdown(self):
+        self._unregister_all()
+
+    # ---- ejecucion ------------------------------------------------------
+    def handle_local_key(self, event, win):
+        """Teclas sin modo global: solo cuando un widget tiene el foco. True si se ha ejecutado algo."""
+        seq = _hk_event_seq(event)
+        if not seq:
+            return False
+        for cid in self.all_ids():
+            key, glob = self.binding(cid)
+            if key == seq and not glob:
+                return self.run(cid, win)
+        return False
+
+    def run(self, cmd_id, win=None):
+        m = self.m
+        needs = {c[0]: c[4] for c in HOTKEY_COMMANDS}.get(cmd_id, False)
+        if (needs or cmd_id.startswith("wmenu:")) and win is None:      # [PACK105] tecla global: widget bajo el cursor o el ultimo usado
+            win = m.hotkey_target_window()
+            if win is None:
+                m._osd("No hay ning\u00fan widget bajo el cursor ni usado antes")
+                return False
+        table = {
+            "open_browser": m.show_browser, "toggle_all": m.toggle_all_visibility,
+            "add_widget": m.show_template_chooser, "new_default": m.add_new_widget,
+            "toggle_collapse_all": m.toggle_collapse_all, "reload_all": m.reload_all_widgets,
+            "open_hotkeys": m.show_hotkeys, "cycle_sort": m.cycle_sort_mode,
+            "show_all": lambda: m.set_all_visible(True), "hide_all": lambda: m.set_all_visible(False),
+            "collapse_all": lambda: m.toggle_collapse_all(True), "expand_all": lambda: m.toggle_collapse_all(False),
+            "undo_global": m.undo_global, "redo_global": m.redo_global,
+            "toggle_console": m.toggle_console_visibility, "open_gestures": m.show_gesture_guide,
+            "profile_next": lambda: m.cycle_profile(1), "profile_prev": lambda: m.cycle_profile(-1),
+            "clone_set": m.clone_current_set,
+        }
+        if cmd_id in table:
+            QTimer.singleShot(0, table[cmd_id])
+        elif cmd_id == "undo_widget":
+            m.smart_undo(win)
+        elif cmd_id == "redo_widget":
+            m.smart_redo(win)
+        elif cmd_id == "reload_widget":
+            win.load_template_data(win.current_template_data)
+        elif cmd_id.startswith(("set_load_", "set_save_", "set_loadc_")):
+            _n = int(cmd_id.rsplit("_", 1)[1])
+            if cmd_id.startswith("set_save_"):
+                QTimer.singleShot(0, lambda: m.hotkey_save_slot(_n))
+            else:
+                QTimer.singleShot(0, lambda: m.hotkey_load_slot(_n, cmd_id.startswith("set_loadc_")))
+        elif cmd_id.startswith("wmenu:"):
+            QTimer.singleShot(0, lambda: self.trigger_widget_path(cmd_id[6:], win))
+        elif cmd_id.startswith("menu:"):
+            QTimer.singleShot(0, lambda: self.trigger_path(cmd_id[5:]))
+        else:
+            return False
+        return True
+
+    def trigger_path(self, path):
+        """Activa la opcion del menu tray con esa ruta ('tray/Apariencia/Cables ...')."""
+        def walk(menu, prefix):
+            for a in menu.actions():
+                if a.isSeparator() or isinstance(a, QWidgetAction):
+                    continue
+                p = prefix + "/" + _hk_norm_label(a.text())
+                if a.menu() is not None:
+                    r = walk(a.menu(), p)
+                    if r is not None:
+                        return r
+                elif p == path:
+                    return a
+            return None
+        menu = self.m.tray_icon.contextMenu()
+        act = walk(menu, "tray") if menu is not None else None
+        if act is not None and act.isEnabled():
+            act.trigger()
+
+
+    # ---- teclas de acceso de los menus ----------------------------------
+    @staticmethod
+    def _pick_letter(label, used):
+        words = [w for w in label.replace("/", " ").split() if w]
+        cands = [w[0] for w in words] + list(label)
+        for ch in cands:
+            c = ch.lower()
+            if c.isascii() and c.isalnum() and c not in used:
+                return c
+        return ""
+
+    @staticmethod
+    def _with_mnemonic(base, ch):
+        esc = base.replace("&", "&&")
+        if not ch:
+            return esc
+        low, idx = base.lower(), -1
+        for i, c in enumerate(low):
+            if c == ch and (i == 0 or not low[i - 1].isalnum()):
+                idx = i
+                break
+        if idx < 0:
+            idx = low.find(ch)
+        if idx < 0:
+            return esc
+        return (base[:idx].replace("&", "&&") + "&" + base[idx:idx + 1] + base[idx + 1:].replace("&", "&&"))
+
+    @staticmethod
+    def letter_of(text):
+        t = (text or "").split("\t")[0].replace("&&", "")
+        i = t.find("&")
+        return t[i + 1].lower() if 0 <= i < len(t) - 1 else ""
+
+    def decorate(self, menu, prefix):
+        """Asigna a cada opcion una tecla de acceso unica (Qt: con el menu abierto, pulsar la letra la activa;
+        en un submenu la abre) y muestra el atajo de teclado asignado. Las letras elegidas por el usuario
+        (menu_keys del json) tienen prioridad."""
+        try:
+            self._decorate(menu, prefix)
+        except Exception as e:
+            log_warn("Hotkeys", f"No se pudieron asignar teclas de menu: {e}")
+
+    def _decorate(self, menu, prefix):
+        acts = [a for a in menu.actions() if not a.isSeparator() and not isinstance(a, QWidgetAction)]
+        rows = [(a, _hk_norm_label(a.text()), a.text()) for a in acts]
+        used, chosen = set(), {}
+        ov = self.cfg["menu_keys"]
+        for a, label, raw in rows:
+            want = (ov.get(prefix + "/" + label) or "").lower()
+            if want and want.isalnum() and want not in used and want in label.lower():
+                chosen[label] = want
+                used.add(want)
+        for a, label, raw in rows:
+            if label not in chosen:
+                ch = self._pick_letter(label, used)
+                if ch:
+                    chosen[label] = ch
+                    used.add(ch)
+        for a, label, raw in rows:
+            path = prefix + "/" + label
+            _pf = "wmenu:" if path.startswith("widget/") else "menu:"
+            cmd = MENU_PATH_TO_CMD.get(path) or (_pf + path if _pf + path in self.cfg["hotkeys"] else None)
+            base = label if (cmd in {c[0] for c in HOTKEY_COMMANDS}) else raw.split("\t")[0].replace("&&", "\0").replace("&", "").replace("\0", "&")
+            text = self._with_mnemonic(base, chosen.get(label, ""))
+            key = self.binding(cmd)[0] if cmd else ""
+            a.setText(text + ("\t" + key if key else ""))
+            if a.menu() is not None:
+                self._decorate(a.menu(), path)
+
+    def menu_rows(self, menu, prefix, depth=0, out=None):
+        """Filas (ruta, etiqueta, profundidad, es_hoja, letra) de un menu ya decorado."""
+        out = [] if out is None else out
+        for a in menu.actions():
+            if a.isSeparator() or isinstance(a, QWidgetAction):
+                continue
+            label = _hk_norm_label(a.text())
+            path = prefix + "/" + label
+            out.append((path, label, depth, a.menu() is None, self.letter_of(a.text())))
+            if a.menu() is not None:
+                self.menu_rows(a.menu(), path, depth + 1, out)
+        return out
+
+    # ---- perfiles (templates) de atajos ---------------------------------
+    def profile_names(self):
+        try:
+            return sorted((n[:-5] for n in os.listdir(HOTKEY_PROFILES_DIR) if n.lower().endswith(".json")), key=str.lower)
+        except OSError:
+            return []
+
+    @staticmethod
+    def safe_profile_name(name):
+        n = "".join("_" if ch in '<>:"/\\|?*' else ch for ch in (name or "").strip()).strip(". ")
+        return n[:-5] if n.lower().endswith(".json") else (n or None)
+
+    def cfg_snapshot(self):
+        return {"version": 1, "hotkeys": copy.deepcopy(self.cfg["hotkeys"]), "menu_keys": dict(self.cfg["menu_keys"]),
+                "tray_gestures": dict(self.cfg.get("tray_gestures", {}))}
+
+    def set_cfg(self, data):
+        """Sustituye toda la configuracion por 'data' (validada)."""
+        if not isinstance(data, dict):
+            raise ValueError("el esquema debe ser un objeto JSON")
+        hk = {}
+        for k, v in (data.get("hotkeys") if isinstance(data.get("hotkeys"), dict) else {}).items():
+            if isinstance(v, dict):
+                hk[str(k)] = {"key": _hk_norm_seq(str(v.get("key", ""))), "global": bool(v.get("global", False))}
+        mk = data.get("menu_keys") if isinstance(data.get("menu_keys"), dict) else {}
+        tg = data.get("tray_gestures") if isinstance(data.get("tray_gestures"), dict) else {}
+        self.cfg = {"hotkeys": hk, "menu_keys": {str(k): str(v) for k, v in mk.items()},
+                    "tray_gestures": {str(k): str(v) for k, v in tg.items()}}
+
+    def save_profile(self, name):
+        n = self.safe_profile_name(name)
+        if not n:
+            return None
+        os.makedirs(HOTKEY_PROFILES_DIR, exist_ok=True)
+        with open(os.path.join(HOTKEY_PROFILES_DIR, n + ".json"), "w", encoding="utf-8") as f:
+            json.dump(self.cfg_snapshot(), f, indent=2, ensure_ascii=False)
+        return n
+
+    def load_profile(self, name):
+        with open(os.path.join(HOTKEY_PROFILES_DIR, name + ".json"), "r", encoding="utf-8") as f:
+            self.set_cfg(json.load(f))
+        self.save()
+        self.apply()
+
+    def delete_profile(self, name):
+        os.remove(os.path.join(HOTKEY_PROFILES_DIR, name + ".json"))
+
+    def reset_defaults(self):
+        self.cfg = {"hotkeys": {}, "menu_keys": {}, "tray_gestures": {}}
+        self.save()
+        self.apply()
+
+    @staticmethod
+    def _find_action(menu, prefix, path):
+        for a in menu.actions():
+            if a.isSeparator() or isinstance(a, QWidgetAction):
+                continue
+            p = prefix + "/" + _hk_norm_label(a.text())
+            if a.menu() is not None:
+                r = HotkeyManager._find_action(a.menu(), p, path)
+                if r is not None:
+                    return r
+            elif p == path:
+                return a
+        return None
+
+    def trigger_widget_path(self, path, win):
+        """Activa una opcion del menu de clic derecho del widget enfocado."""
+        try:
+            menu = self.m.build_widget_context_menu(win.widget_id, full=True)       # [PACK105] tambien las opciones que hoy no se muestran
+            act = self._find_action(menu, "widget", path)
+            if act is not None and act.isEnabled():
+                act.trigger()
+        except Exception as e:
+            log_warn("Hotkeys", f"No se pudo ejecutar {path}: {e}")
+
+    def set_menu_key(self, path, letter):
+        letter = (letter or "").strip().lower()[:1]
+        if letter:
+            self.cfg["menu_keys"][path] = letter
+        else:
+            self.cfg["menu_keys"].pop(path, None)
+
+
+
+class WidgetBrowserWindow(QMainWindow):
+    """Navegador de widgets: arbol con miniaturas a la izquierda; a la derecha, las opciones del widget
+    elegido, los ajustes globales (los mismos del menu tray) y los atajos de teclado."""
+    THUMB = QSize(96, 64)
+
+    def __init__(self, manager):
+        super().__init__()
+        from PySide6.QtWidgets import QSplitter, QTreeWidget, QTabWidget, QScrollArea
+        self.m = manager
+        self._thumbs, self._queue, self._loading, self._ctx_menu = {}, [], False, None
+        self.setWindowTitle("Navegador de widgets")
+        self.setAttribute(Qt.WA_QuitOnClose, False)
+        self.resize(1080, 680)
+
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Buscar widget...  (Ctrl+F)")
+        self.search.setClearButtonEnabled(True)
+        self.filter = QComboBox()
+        for label, key in (("Todos", "all"), ("Visibles", "on"), ("Ocultos", "off"),
+                           ("Solo ra\u00edces", "roots"), ("Con hijos", "parents")):
+            self.filter.addItem(label, key)
+        row = QHBoxLayout()
+        row.addWidget(self.search, 1)
+        row.addWidget(self.filter)
+        self.sort = QComboBox()
+        self.sort.setToolTip("Criterio de orden de la lista")
+        for _k, _lab in self.m.SORT_MODES:
+            self.sort.addItem("Orden: " + _lab, _k)
+        row.addWidget(self.sort)
+        row.removeWidget(self.search)       # [PACK65] el buscador, en su propia fila (arriba)
+        ll.insertWidget(0, self.search)
+        ll.addLayout(row)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setIconSize(self.THUMB)
+        self.tree.setUniformRowHeights(True)
+        self.tree.setIndentation(22)
+        ll.addWidget(self.tree, 1)
+        brow = QHBoxLayout()
+        for text, fn in (("Nuevo...", lambda: self.m.show_template_chooser()),
+                         ("Miniaturas", self.refresh_thumbnails)):
+            b = QPushButton(text)
+            b.clicked.connect(lambda _c=False, f=fn: f())
+            brow.addWidget(b)
+        ll.addLayout(brow)
+
+        self.tabs = QTabWidget()
+        self.detail = self._scroll_tab("Widget")
+        self.templates = TemplateBrowser(manager)
+        self.templates.on_done = lambda: self.tabs.setCurrentIndex(0)
+        manager.template_browser = self.templates
+        self.tabs.addTab(self.templates, "Templates")
+        self.glob = self._scroll_tab("Ajustes globales")
+        self.keys_tab = QWidget()
+        self.tabs.addTab(self.keys_tab, "Atajos y teclas de men\u00fa")
+        for _i, _t in enumerate(("Widget elegido", "Crear con template", "Ajustes y acciones", "Atajos de teclado")):     # [PACK66]
+            self.tabs.setTabText(_i, _t)
+        for _i in (2, 3):
+            self.tabs.tabBar().setTabTextColor(_i, QColor("#9aa0aa"))       # las pestanas de configuracion, mas discretas
+
+        split = QSplitter()
+        split.addWidget(left)
+        split.addWidget(self.tabs)
+        split.setStretchFactor(0, 2)
+        split.setStretchFactor(1, 3)
+        self.setCentralWidget(split)
+        self.status = self.statusBar()
+
+        self._thumb_timer = QTimer(self)
+        self._thumb_timer.setInterval(5)
+        self._thumb_timer.timeout.connect(self._next_thumb)
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(150)
+        self._refresh_timer.timeout.connect(self.refresh)
+        self.search.textChanged.connect(lambda _t: self.refresh())
+        self.filter.currentIndexChanged.connect(lambda _i: self.refresh())
+        self.sort.activated.connect(lambda _i: self.m.set_sort_mode(self.sort.currentData()))
+        self.tree.currentItemChanged.connect(lambda cur, _prev: self._select(cur))
+        self.tree.itemChanged.connect(self._item_toggled)
+        self.tree.itemActivated.connect(lambda it, _c: self.m._flash_widget(it.data(0, Qt.UserRole)))
+        from PySide6.QtGui import QShortcut
+        QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: (self.search.setFocus(), self.search.selectAll()))
+        self._build_keys_tab()
+        self.refresh()
+
+    def _scroll_tab(self, title):
+        from PySide6.QtWidgets import QScrollArea
+        sa = QScrollArea()
+        sa.setWidgetResizable(True)
+        host = QWidget()
+        QVBoxLayout(host).setAlignment(Qt.AlignTop)
+        sa.setWidget(host)
+        self.tabs.addTab(sa, title)
+        return host
+
+    def schedule_refresh(self):
+        if self.isVisible():
+            self._refresh_timer.start()
+
+    # ---- arbol + miniaturas ---------------------------------------------
+    def selected_id(self):
+        it = self.tree.currentItem()
+        return it.data(0, Qt.UserRole) if it is not None else None
+
+    def _passes(self, wid, st):
+        text = self.search.text().strip().lower()
+        if text and text not in self.m._get_widget_display_name(wid, st).lower():
+            return False
+        mode = self.filter.currentData()
+        on = st.get('enabled', True)
+        return not ((mode == "on" and not on) or (mode == "off" and on)
+                    or (mode == "roots" and st.get('parent_id') in self.m.global_state)
+                    or (mode == "parents" and not self.m.get_children(wid)))
+
+    def refresh(self):
+        from PySide6.QtWidgets import QTreeWidgetItem
+        m = self.m
+        gs = {k: v for k, v in m.global_state.items() if isinstance(v, dict)}
+        focus = getattr(m, '_focus_pending', None)
+        m._focus_pending = None
+        if focus in gs and not self._passes(focus, gs[focus]):     # el widget nuevo no debe quedar oculto por un filtro
+            for w in (self.search, self.filter):
+                w.blockSignals(True)
+            self.search.clear()
+            self.filter.setCurrentIndex(0)
+            for w in (self.search, self.filter):
+                w.blockSignals(False)
+        keep = focus if focus in gs else self.selected_id()
+        i = self.sort.findData(m.get_sort_mode())
+        if i >= 0 and i != self.sort.currentIndex():
+            self.sort.blockSignals(True)
+            self.sort.setCurrentIndex(i)
+            self.sort.blockSignals(False)
+        self._loading = True
+        self.tree.blockSignals(True)    # clear() emite currentItemChanged con items que se estan destruyendo
+        self.tree.clear()
+        flat = bool(self.search.text().strip()) or self.filter.currentData() != "all"
+        items, seen = {}, set()
+
+        def add(wid, parent_item):
+            if wid in seen:
+                return
+            seen.add(wid)
+            st = gs[wid]
+            kids = m.sort_ids(m.get_children(wid))
+            if flat and not self._passes(wid, st):
+                for c in kids:
+                    add(c, parent_item)
+                return
+            it = QTreeWidgetItem(parent_item if parent_item is not None else self.tree)
+            name = m._get_widget_display_name(wid, st)
+            it.setText(0, name + (f"   ({len(kids)})" if kids else ""))
+            it.setData(0, Qt.UserRole, wid)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(0, Qt.Checked if st.get('enabled', True) else Qt.Unchecked)
+            it.setIcon(0, QIcon(self._thumbs[wid]) if wid in self._thumbs else QIcon(self._placeholder()))
+            if not st.get('enabled', True):
+                it.setForeground(0, QBrush(QColor("#888888")))
+            items[wid] = it
+            for c in kids:
+                add(c, None if flat else it)
+        order = m.sort_ids(gs)
+        for wid in order:
+            if flat or gs[wid].get('parent_id') not in gs:
+                add(wid, None)
+        for wid in order:
+            add(wid, None)       # ciclos u huerfanos
+        self.tree.expandAll()
+        self.tree.blockSignals(False)
+        self._loading = False
+        if keep in items:
+            self.tree.setCurrentItem(items[keep])
+            self.tree.scrollToItem(items[keep])
+        elif items:
+            self.tree.setCurrentItem(next(iter(items.values())))
+        else:
+            self._select(None)
+        self._queue = [w for w in items if w not in self._thumbs]
+        if self._queue:
+            self._thumb_timer.start()
+        self.status.showMessage(f"{len(gs)} widgets")
+        self._refresh_global()
+
+    def _placeholder(self):
+        pm = QPixmap(self.THUMB)
+        pm.fill(QColor("#3a3a3e"))
+        return pm
+
+    def _grab_thumb(self, wid):
+        win = self.m.widgets.get(wid)
+        pm = self._placeholder()
+        if win is not None:
+            try:
+                src = win.grab()
+                if not src.isNull():
+                    sc = src.scaled(self.THUMB, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    p = QPainter(pm)
+                    p.drawPixmap((pm.width() - sc.width()) // 2, (pm.height() - sc.height()) // 2, sc)
+                    p.end()
+            except Exception:
+                pass
+        return pm
+
+    def _next_thumb(self):
+        if not self._queue:
+            self._thumb_timer.stop()
+            return
+        wid = self._queue.pop(0)
+        if wid not in self.m.global_state:
+            return
+        self._thumbs[wid] = self._grab_thumb(wid)
+        it = self._find_item(wid)
+        if it is not None:
+            self._loading = True
+            it.setIcon(0, QIcon(self._thumbs[wid]))
+            self._loading = False
+
+    def _find_item(self, wid):
+        stack = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+        while stack:
+            it = stack.pop()
+            if it.data(0, Qt.UserRole) == wid:
+                return it
+            stack.extend(it.child(i) for i in range(it.childCount()))
+        return None
+
+    def refresh_thumbnails(self):
+        self._thumbs.clear()
+        self.refresh()
+
+    def _item_toggled(self, item, _col):
+        if self._loading:
+            return
+        wid = item.data(0, Qt.UserRole)
+        want = item.checkState(0) == Qt.Checked
+        st = self.m.global_state.get(wid)
+        if isinstance(st, dict) and bool(st.get('enabled', True)) != want:    # setIcon tambien emite itemChanged
+            self.m.toggle_widget_enabled(wid, force_state=want)
+
+
+    # ---- panel del widget elegido ---------------------------------------
+    def _swap_box(self, host, attr):
+        old = getattr(self, attr, None)
+        if old is not None:
+            host.layout().removeWidget(old)
+            old.setParent(None)
+            old.deleteLater()
+        box = QWidget()
+        setattr(self, attr, box)
+        host.layout().addWidget(box)
+        return box
+
+    def _select(self, item):
+        if self._loading:
+            return
+        wid = item.data(0, Qt.UserRole) if item is not None else None
+        self._build_detail(wid)
+
+    def _build_detail(self, wid):
+        m = self.m
+        box = self._swap_box(self.detail, "_detail_box")
+        v = QVBoxLayout(box)
+        st = m.global_state.get(wid) if wid else None
+        if not isinstance(st, dict):
+            v.addWidget(QLabel("Elige un widget de la lista."))
+            return
+        win = m.widgets.get(wid)
+        kids = m.get_children(wid)
+        run = lambda f: (lambda _c=False: QTimer.singleShot(0, f))
+
+        def button(lay, text, fn, enabled=True):
+            b = QPushButton(text)
+            b.setEnabled(enabled)
+            b.clicked.connect(run(fn))
+            lay.addWidget(b)
+            return b
+
+        # ---- cabecera: vista previa, nombre e id
+        prev = QLabel()
+        prev.setAlignment(Qt.AlignCenter)
+        prev.setMinimumHeight(130)
+        prev.setStyleSheet("background:#2b2b2f;border-radius:6px;")
+        if win is not None:
+            pm = win.grab()
+            if not pm.isNull():
+                prev.setPixmap(pm.scaled(QSize(380, 200), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        v.addWidget(prev)
+        name = QLineEdit(m._get_widget_display_name(wid, st))
+        name.editingFinished.connect(lambda: self._apply_name(wid, name.text()))
+        head = QFormLayout()
+        head.addRow("Nombre:", name)
+        idl = QLabel(wid)
+        idl.setStyleSheet("color:#888;")
+        head.addRow("Id:", idl)
+        head.addRow("Tipo:", QLabel(_KIND_LABEL[_widget_kind(st)]))
+        v.addLayout(head)
+
+        # ---- template
+        lay = self._gbox(v, "Template")
+        row = QHBoxLayout()
+        cur = QLabel("Actual: " + str(st.get('template_name') or "-"))
+        f = cur.font()
+        f.setBold(True)
+        cur.setFont(f)
+        row.addWidget(cur, 1)
+        button(row, "Cambiar template...", lambda: m.show_template_chooser(apply_to=wid))
+        button(row, "Guardar como template...", lambda: m.save_widget_as_template(wid))
+        button(row, "Editar templates...", lambda: m.show_template_chooser(select=st.get('template_name')))
+        lay.addLayout(row)
+
+        # ---- visibilidad
+        lay = self._gbox(v, "Visibilidad")
+        self._chk(lay, "Visible", st.get('enabled', True), lambda c: m.toggle_widget_enabled(wid, force_state=c))
+        self._chk(lay, "Siempre encima", st.get('always_on_top', True), lambda c: m._toggle_widget_always_on_top(wid, c))
+        row = QHBoxLayout()
+        button(row, "Localizar en pantalla", lambda: (win.raise_() if win else None, m._flash_widget(wid)))
+        row.addStretch(1)
+        lay.addLayout(row)
+
+        # ---- jerarquia
+        lay = self._gbox(v, "Jerarqu\u00eda")
+        combo = QComboBox()
+        combo.addItem("(sin padre)", None)
+        banned = set(m.get_descendants(wid)) | {wid}
+        names = {o: m._get_widget_display_name(o, s_) for o, s_ in m.global_state.items() if isinstance(s_, dict)}
+        for oid in m.sort_ids(names):
+            if oid not in banned:
+                dup = list(names.values()).count(names[oid]) > 1
+                combo.addItem(names[oid] + (f"  [{oid[-6:]}]" if dup else ""), oid)
+        combo.setCurrentIndex(max(0, combo.findData(st.get('parent_id'))))
+        combo.activated.connect(lambda _i: m.unlink_parent(wid) if combo.currentData() is None
+                                else m.set_parent_link(wid, combo.currentData()))
+        pf = QFormLayout()
+        pf.addRow("Padre:", combo)
+        lay.addLayout(pf)
+        c1 = self._chk(lay, "Posici\u00f3n independiente de su padre", st.get('pos_independent', False),
+                       lambda c: m.set_position_independent(wid, c))
+        c1.setEnabled(bool(st.get('parent_id')))
+        c2 = self._chk(lay, f"Hijos plegados ({len(kids)})", st.get('collapsed', False),
+                       lambda c: (c != bool(st.get('collapsed', False))) and m.toggle_collapsed(wid))
+        c2.setEnabled(bool(kids))
+        row = QHBoxLayout()
+        button(row, "Crear hijo", lambda: m.create_child_note(wid))
+        button(row, "Clonar", lambda: m.clone_widget(wid))
+        button(row, "Clonar con sus descendientes", lambda: m.clone_tree(wid), bool(kids))
+        lay.addLayout(row)
+
+        # ---- posicion
+        if win is not None:
+            lay = self._gbox(v, "Posici\u00f3n en pantalla")
+            sx, sy = QSpinBox(), QSpinBox()
+            for sp, val in ((sx, win.x()), (sy, win.y())):
+                sp.setRange(-20000, 20000)
+                sp.setValue(val)
+            sx.valueChanged.connect(lambda x: win.move(x, win.y()))
+            sy.valueChanged.connect(lambda y: win.move(win.x(), y))
+            pr = QHBoxLayout()
+            for text, sp in (("X", sx), ("Y", sy)):
+                pr.addWidget(QLabel(text))
+                pr.addWidget(sp, 1)
+            lay.addLayout(pr)
+
+        # ---- contenido (capas)
+        ctx = m.build_widget_context_menu(wid, from_tray=True)
+        m.hotkeys.decorate(ctx, "widget")
+        self._ctx_menu = ctx
+        lay = self._gbox(v, "Contenido (capas)")
+        row = QHBoxLayout()
+        for a in ctx.actions():
+            sub = a.menu()
+            if sub is not None and _hk_norm_label(a.text()).startswith("Capas"):
+                for la in sub.actions():
+                    if la.menu() is not None:
+                        tb = QToolButton()
+                        tb.setText(_hk_norm_label(la.text()) + "  \u25be")
+                        tb.setPopupMode(QToolButton.InstantPopup)
+                        tb.setMenu(la.menu())
+                        row.addWidget(tb, 1)
+        lay.addLayout(row)
+
+        # ---- mas acciones
+        lay = self._gbox(v, "M\u00e1s acciones")
+        row = QHBoxLayout()
+        button(row, "Temporizador...", lambda: m._set_timer_for_widget(wid))
+        allb = QToolButton()
+        allb.setText("Todas las acciones del widget  \u25be")
+        allb.setPopupMode(QToolButton.InstantPopup)
+        allb.setMenu(ctx)
+        row.addWidget(allb, 1)
+        rm = button(row, "Eliminar...", lambda: m._confirm_remove_widget(wid))
+        rm.setStyleSheet("color:#e05555;")
+        lay.addLayout(row)
+        self._detail_wid = wid
+        v.addStretch(1)
+
+    def _gbox(self, v, title):
+        gb = QGroupBox(title)
+        lay = QVBoxLayout(gb)
+        v.addWidget(gb)
+        return lay
+
+    def _chk(self, lay, text, value, fn):
+        c = QCheckBox(text)
+        c.setChecked(bool(value))
+        c.toggled.connect(lambda checked: QTimer.singleShot(0, lambda: fn(checked)))
+        lay.addWidget(c)
+        return c
+
+    def _check(self, form, text, value, fn):
+        c = QCheckBox(text)
+        c.setChecked(bool(value))
+        c.toggled.connect(lambda checked: QTimer.singleShot(0, lambda: fn(checked)))
+        form.addRow("", c)
+        return c
+
+    def _apply_name(self, wid, text):
+        st = self.m.global_state.get(wid)
+        if isinstance(st, dict) and (text.strip() != (st.get('custom_name') or '').strip()):
+            st['custom_name'] = text.strip()
+            self.m.save_global_state()
+            self.m.build_tray_menu()
+
+    # ---- ajustes globales (los mismos del menu tray) ----------------------
+    def _refresh_global(self):
+        m = self.m
+        box = self._swap_box(self.glob, "_glob_box")
+        v = QVBoxLayout(box)
+        menu = m.tray_icon.contextMenu() if hasattr(m, "tray_icon") else None
+        if menu is None:
+            return
+        groups = {"General": []}
+
+        def leaves(mn, prefix, title, sub=""):       # [PACK69] como mucho dos niveles de grupo
+            for a in mn.actions():
+                if a.isSeparator() or isinstance(a, QWidgetAction):
+                    continue
+                label = _hk_norm_label(a.text())
+                path = prefix + "/" + label
+                if a.menu() is not None:
+                    if title.count(" / ") >= 1:
+                        leaves(a.menu(), path, title, (sub + " \u203a " if sub else "") + a.text().split("\t")[0].replace("&", ""))
+                    else:
+                        leaves(a.menu(), path, title + " / " + label if title != "General" else label, "")
+                else:
+                    groups.setdefault(title, []).append((_hk_norm_label(a.text()), path, (sub + " \u203a " if sub else "") + a.text().split("\t")[0].replace("&", "")))
+        for a in menu.actions():
+            if a.isSeparator() or isinstance(a, QWidgetAction):
+                continue
+            label = _hk_norm_label(a.text())
+            if a.menu() is None:
+                groups["General"].append((label, "tray/" + label, a.text().split("\t")[0].replace("&", "")))
+            elif label not in ("Widgets", "Nuevo con un aspecto en uso"):
+                leaves(a.menu(), "tray/" + label, label)
+        for title, entries in groups.items():
+            if not entries:
+                continue
+            gb = QGroupBox("Acciones r\u00e1pidas" if title == "General" else title)
+            g = QGridLayout(gb)
+            for i, (label, path, shown) in enumerate(entries):
+                b = QPushButton(shown)
+                b.setToolTip(path)
+                b.clicked.connect(lambda _c=False, p=path: QTimer.singleShot(0, lambda: m.hotkeys.trigger_path(p)))
+                g.addWidget(b, i // 2, i % 2)
+            v.addWidget(gb)
+        v.addStretch(1)
+
+
+    # ---- atajos y teclas de menu ------------------------------------------
+    def _build_keys_tab(self):
+        lay = QVBoxLayout(self.keys_tab)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.keys_editor = HotkeyEditor(self.m, lambda msg: self.status.showMessage(msg, 5000))
+        lay.addWidget(self.keys_editor)
+        self._keys_timer = self.keys_editor.timer
+        self.tabs.currentChanged.connect(lambda i: self.keys_editor.rebuild() if self.tabs.widget(i) is self.keys_tab else None)
+
+    def _keys_schedule(self):
+        self._keys_timer.start()
+
+# ======================================================================
+# Templates de widgets: navegador para crear widgets desde un template y para crear / editar templates
+# ======================================================================
+TRAY_GESTURES = [
+    ("click", "Clic"), ("ctrl+click", "Ctrl + clic"), ("alt+click", "Alt + clic"),
+    ("ctrl+alt+click", "Ctrl + Alt + clic"), ("double", "Doble clic"), ("ctrl+double", "Ctrl + doble clic"),
+    ("alt+double", "Alt + doble clic"), ("ctrl+alt+double", "Ctrl + Alt + doble clic"), ("middle", "Clic central"),
+]
+TRAY_GESTURE_DEFAULTS = {"double": "new_default", "ctrl+double": "toggle_collapse_all",
+                         "alt+double": "toggle_all", "ctrl+alt+double": "open_browser", "middle": "open_browser"}
+
+
+_TPL_PREVIEW_CACHE = {}
+
+
+def _tpl_layer_pixmap(ld, num, size):
+    """Pixmap base de una capa tal como la prepara el widget real: imagen con sus efectos (tono, saturacion,
+    brillo, contraste, colorizar) y escalada al marco, o texto HTML con su fuente y color."""
+    kind = ld.get("type", "text" if num == 1 else "png")
+    scaled = ld.get("scaled_contents", num == 2)
+    if kind == "png":
+        pm = StickerWindow._load_image(None, str(ld.get("content", "")), 0, f"plantilla L{num}", num)
+        if pm is None or pm.isNull():
+            return None
+        eff = ld.get("image_effects")
+        if not eff and ld.get("hue_target") is not None:
+            eff = {"hue": ld.get("hue_target"), "saturation": 0, "brightness": 0, "contrast": 0, "colorize": False}
+        if eff:
+            lim = max(size.width(), size.height(), 64)
+            if max(pm.width(), pm.height()) > lim:         # los efectos son por pixel: se aplican sobre una copia reducida
+                pm = pm.scaled(lim, lim, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pm = QPixmap.fromImage(_apply_numpy_effects(pm.toImage(), eff))
+        return pm.scaled(size, Qt.IgnoreAspectRatio if scaled else Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    if kind == "text":
+        out = QPixmap(size)
+        out.fill(Qt.transparent)
+        p = QPainter(out)
+        doc = QTextDocument()
+        doc.setDocumentMargin(0)
+        doc.setTextWidth(size.width())
+        doc.setPageSize(QSizeF(size))
+        doc.setDefaultFont(QFont(ld.get("font_family", "Inter"), int(ld.get("font_size", 16 if num == 1 else 12))))
+        text = str(ld.get("content", ""))
+        if not text.strip().startswith("<"):
+            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+            text = f'<p style="color:{ld.get("color", "white" if num == 1 else "black")};">{text}</p>'
+        doc.setHtml(text)
+        doc.drawContents(p)
+        p.end()
+        return out
+    out = QPixmap(size)                       # capa web: no se renderiza aqui
+    out.fill(QColor("#555555"))
+    p = QPainter(out)
+    p.setPen(QColor("#dddddd"))
+    p.drawText(out.rect(), Qt.AlignCenter, "web")
+    p.end()
+    return out
+
+
+def _tpl_preview(data, size):
+    """Aspecto de un template tal como lo dibuja el widget: AMBAS capas, con sus efectos de imagen, rotacion,
+    escalado, fondo y texto. Se cachea por contenido del template."""
+    import math
+    key = (hashlib.md5(json.dumps(data, sort_keys=True, default=str).encode("utf-8", "replace")).hexdigest(),
+           size.width(), size.height())
+    hit = _TPL_PREVIEW_CACHE.get(key)
+    if hit is not None:
+        return hit
+    pm = QPixmap(size)
+    pm.fill(QColor("#3a3a3e"))
+    try:
+        def geom(ld):
+            g = ld.get("geometry") or {}
+            return float(g.get("x", 0)), float(g.get("y", 0)), max(1, int(g.get("w", 400))), max(1, int(g.get("h", 225)))
+        l1, l2 = data.get("layer1") or {}, data.get("layer2") or {}
+        x2, y2, w2, h2 = geom(l2)
+        x1, y1, w1, h1 = geom(l1)
+        pivot = (x2 + w2 / 2.0, y2 + h2 / 2.0)
+        parts = []
+        for num, ld, (gx, gy, gw, gh) in ((2, l2, (x2, y2, w2, h2)), (1, l1, (x1, y1, w1, h1))):
+            base = _tpl_layer_pixmap(ld, num, QSize(gw, gh))
+            ang = float(ld.get("rotation", 0) or 0)
+            cx, cy = gx + gw / 2.0, gy + gh / 2.0
+            if num == 1:       # la capa 1 gira alrededor del centro de la capa 2
+                a = math.radians(ang)
+                dx, dy = cx - pivot[0], cy - pivot[1]
+                cx, cy = pivot[0] + dx * math.cos(a) - dy * math.sin(a), pivot[1] + dx * math.sin(a) + dy * math.cos(a)
+            if base is not None and ang % 360 != 0:
+                base = base.transformed(QTransform().rotate(ang), Qt.SmoothTransformation)
+            if base is None:
+                base = QPixmap(gw, gh)
+                base.fill(Qt.transparent)
+            r = QRect(int(round(cx - base.width() / 2.0)), int(round(cy - base.height() / 2.0)), base.width(), base.height())
+            parts.append((ld, base, r))
+        total = parts[0][2].united(parts[1][2])
+        sc = min((size.width() - 8) / max(total.width(), 1), (size.height() - 8) / max(total.height(), 1))
+        p = QPainter(pm)
+        try:
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setRenderHint(QPainter.SmoothPixmapTransform)
+            p.translate(4 + (size.width() - 8 - total.width() * sc) / 2, 4 + (size.height() - 8 - total.height() * sc) / 2)
+            p.scale(sc, sc)
+            p.translate(-total.x(), -total.y())
+            for ld, base, r in parts:
+                bg = QColor(str(ld.get("background", "transparent")))
+                if bg.isValid() and bg.alpha() > 0:
+                    p.fillRect(r, bg)
+                p.drawPixmap(r.topLeft(), base)
+        finally:
+            p.end()
+    except Exception as e:
+        log_warn("Templates", f"No se pudo dibujar la vista previa: {e}")
+    if len(_TPL_PREVIEW_CACHE) > 200:
+        _TPL_PREVIEW_CACHE.clear()
+    _TPL_PREVIEW_CACHE[key] = pm
+    return pm
+_TPL_LAYER_FIELDS = (
+    ("type", "Tipo", "type"), ("content", "Contenido (texto HTML, ruta de imagen o URL)", "text"),
+    ("background", "Fondo", "color"), ("font_family", "Fuente", "font"), ("font_size", "Tama\u00f1o de letra", "int"),
+    ("color", "Color del texto", "color"), ("rotation", "Rotaci\u00f3n (grados)", "int"),
+    ("scaled_contents", "Escalar el contenido al marco", "bool"),
+)
+
+class TemplateBrowser(QWidget):
+    """Elegir el template con el que crear un widget y crear / editar / duplicar / importar templates."""
+    THUMB = QSize(120, 90)
+
+    def __init__(self, manager):
+        super().__init__(None)
+        from PySide6.QtWidgets import QListWidget, QPlainTextEdit, QSplitter, QTabWidget
+        self.m = manager
+        self._loading, self._data, self._name, self._f = False, {}, None, {}
+        self._target, self.on_done = None, None
+        self.setWindowTitle("Templates de widgets")
+        self.setAttribute(Qt.WA_QuitOnClose, False)
+        self.resize(940, 620)
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        self.banner = QLabel("")
+        self.banner.setWordWrap(True)
+        self.banner.setStyleSheet("background:#3b4f7a;color:white;padding:6px;border-radius:4px;")
+        self.banner.hide()
+        ll.addWidget(self.banner)
+        self.hint = QLabel("Elige un template (doble clic = crear el widget):")
+        ll.addWidget(self.hint)
+        self.chk_keep = QCheckBox("Al aplicarlo a un widget existente, conservar su contenido")       # [PACK71]
+        self.chk_keep.setChecked(self.m.keep_content_on_apply())
+        self.chk_keep.setToolTip("Cambiar el template solo cambia el aspecto: el texto (con su formato) del widget se mantiene.")
+        self.chk_keep.toggled.connect(lambda on: self.m.set_keep_content_on_apply(on))
+        ll.addWidget(self.chk_keep)
+        self.list = QListWidget()
+        self.list.setIconSize(self.THUMB)
+        self.list.setSpacing(2)
+        ll.addWidget(self.list, 1)
+        self.btn_create = QPushButton("Crear widget con este template")
+        self.btn_create.setStyleSheet("QPushButton{font-weight:bold;padding:6px;background:#2f5f46;border:1px solid #3f7f5f;border-radius:4px;}QPushButton:hover{background:#38724f;}QPushButton:disabled{background:#333;color:#777;border-color:#444;}")
+        ll.addWidget(self.btn_create)
+        row = QHBoxLayout()
+        for text, fn in (("Nuevo", self._new), ("Duplicar", self._duplicate), ("Editar estilo...", self._edit_base)):
+            b = QPushButton(text)
+            b.clicked.connect(lambda _c=False, f=fn: f())
+            row.addWidget(b)
+            if text.startswith("Editar"):
+                self.btn_edit_base = b
+                b.setToolTip("Abre el editor de nota base con el estilo de este template y lo guarda con el mismo nombre")
+        for text, items in (("Gestionar \u25be", (("Renombrar", self._rename), ("Eliminar", self._delete), None,
+                                                              ("Importar...", self._import), ("Exportar...", self._export), None,
+                                                              ("Criterio de aspectos en uso...", self.m.edit_type_criteria))),
+                            ("Con un widget \u25be", (("Guardar un widget como template...", self._from_widget),
+                                                      ("Aplicar a un widget...", self._to_widget)))):
+            mb = QPushButton(text)
+            mn = QMenu(mb)
+            for it_ in items:
+                if it_ is None:
+                    mn.addSeparator()
+                    continue
+                act = mn.addAction(it_[0])
+                act.triggered.connect(lambda _c=False, f=it_[1]: f())
+            mb.setMenu(mn)
+            row.addWidget(mb)
+        ll.addLayout(row)
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        self.preview = QLabel()
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setMinimumHeight(170)
+        self.preview.setStyleSheet("background:#2b2b2f;border-radius:6px;")
+        rl.addWidget(self.preview)
+        self.chk_default = QCheckBox("Este template ser\u00e1 el predeterminado (doble clic en el icono de bandeja)")
+        rl.addWidget(self.chk_default)
+        self.tabs = QTabWidget()
+        self.form_host = QWidget()
+        self.json_edit = QPlainTextEdit()
+        self.json_edit.setStyleSheet("font-family:Consolas,monospace;")
+        self.tabs.addTab(self.form_host, "Formulario")
+        self.tabs.addTab(self.json_edit, "JSON")
+        rl.addWidget(self.tabs, 1)
+        brow = QHBoxLayout()
+        self.btn_save = QPushButton("Guardar cambios del template")
+        self.btn_revert = QPushButton("Descartar cambios")
+        brow.addWidget(self.btn_save)
+        brow.addWidget(self.btn_revert)
+        rl.addLayout(brow)
+        xrow = QHBoxLayout()                 # [PACK96] exportar / copiar el JSON del template seleccionado
+        self.btn_export_json = QPushButton("Exportar a JSON...")
+        self.btn_export_json.setToolTip("Guarda el template seleccionado (tal como est\u00e1 guardado) en un archivo .json")
+        self.btn_copy_json = QPushButton("Copiar JSON")
+        self.btn_copy_json.setToolTip("Copia al portapapeles el JSON del template seleccionado (tal como est\u00e1 guardado)")
+        xrow.addWidget(self.btn_export_json)
+        xrow.addWidget(self.btn_copy_json)
+        rl.addLayout(xrow)
+        self.status = QLabel("")
+        self.status.setStyleSheet("color:#aaa;")
+        rl.addWidget(self.status)
+        split = QSplitter()
+        split.addWidget(left)
+        split.addWidget(right)
+        split.setStretchFactor(0, 2)
+        split.setStretchFactor(1, 3)
+        QVBoxLayout(self).addWidget(split)
+        self._build_form()
+        self.list.currentItemChanged.connect(lambda cur, _p: self._select(cur))
+        self.list.itemDoubleClicked.connect(lambda _it: self._create())
+        self.btn_create.clicked.connect(lambda _c=False: self._create())
+        self.btn_save.clicked.connect(lambda _c=False: self._save())
+        self.btn_revert.clicked.connect(lambda _c=False: self._load(self._name))
+        self.btn_export_json.clicked.connect(lambda _c=False: self._export())
+        self.btn_copy_json.clicked.connect(lambda _c=False: self._copy_json())
+        self.chk_default.toggled.connect(self._default_toggled)
+        self.tabs.currentChanged.connect(self._tab_changed)
+        self.reload()
+
+    # ---- formulario -----------------------------------------------------
+    def _spin(self, lo, hi):
+        s = QSpinBox()
+        s.setRange(lo, hi)
+        return s
+
+    def _color_row(self, edit):
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        b = QPushButton("...")
+        b.setMaximumWidth(34)
+        b.clicked.connect(lambda _c=False: self._pick_color(edit))
+        h.addWidget(edit, 1)
+        h.addWidget(b)
+        return w
+
+    def _pick_color(self, edit):
+        c = QColorDialog.getColor(QColor(edit.text()) if QColor(edit.text()).isValid() else QColor("#ffffff"),
+                                  self, "Color", QColorDialog.ShowAlphaChannel)
+        if c.isValid():
+            edit.setText(c.name() if c.alpha() == 255 else c.name(QColor.HexArgb))
+
+    def _build_form(self):
+        from PySide6.QtWidgets import QPlainTextEdit, QScrollArea
+        host = QWidget()
+        v = QVBoxLayout(host)
+        top = QFormLayout()
+        self._f[("top", "x")], self._f[("top", "y")] = self._spin(-20000, 20000), self._spin(-20000, 20000)
+        top.addRow("Posici\u00f3n inicial X:", self._f[("top", "x")])
+        top.addRow("Posici\u00f3n inicial Y:", self._f[("top", "y")])
+        v.addLayout(top)
+        for layer, title in (("layer1", "Capa 1 (superior)"), ("layer2", "Capa 2 (inferior)")):
+            box = QGroupBox(title)
+            fl = QFormLayout(box)
+            for key, label, kind in _TPL_LAYER_FIELDS:
+                if kind == "type":
+                    w = QComboBox()
+                    for val, lab in (("text", "Texto"), ("png", "Imagen"), ("web", "Web (solo capa 2)")):
+                        w.addItem(lab, val)
+                    fl.addRow(label + ":", w)
+                elif kind == "text":
+                    w = QPlainTextEdit()
+                    w.setMaximumHeight(64)
+                    fl.addRow(label + ":", w)
+                elif kind == "color":
+                    w = QLineEdit()
+                    fl.addRow(label + ":", self._color_row(w))
+                elif kind == "font":
+                    w = QFontComboBox()
+                    fl.addRow(label + ":", w)
+                elif kind == "int":
+                    w = self._spin(-360, 360) if key == "rotation" else self._spin(1, 400)
+                    fl.addRow(label + ":", w)
+                else:
+                    w = QCheckBox(label)
+                    fl.addRow(w)
+                self._f[(layer, key)] = w
+            gw = QWidget()
+            gh = QHBoxLayout(gw)
+            gh.setContentsMargins(0, 0, 0, 0)
+            for k in ("x", "y", "w", "h"):
+                s = self._spin(-20000, 20000) if k in "xy" else self._spin(1, 20000)
+                self._f[(layer, "geometry." + k)] = s
+                gh.addWidget(QLabel(k.upper()))
+                gh.addWidget(s)
+            fl.addRow("Marco:", gw)
+            v.addWidget(box)
+        sa = QScrollArea()
+        sa.setWidgetResizable(True)
+        sa.setWidget(host)
+        QVBoxLayout(self.form_host).addWidget(sa)
+
+    @staticmethod
+    def _wget(w):
+        from PySide6.QtWidgets import QPlainTextEdit
+        if isinstance(w, QFontComboBox):
+            return w.currentFont().family()
+        if isinstance(w, QComboBox):
+            return w.currentData()
+        if isinstance(w, QPlainTextEdit):
+            return w.toPlainText()
+        if isinstance(w, QLineEdit):
+            return w.text()
+        if isinstance(w, QSpinBox):
+            return w.value()
+        return w.isChecked()
+
+    @staticmethod
+    def _wset(w, val):
+        from PySide6.QtWidgets import QPlainTextEdit
+        if isinstance(w, QFontComboBox):
+            w.setCurrentFont(QFont(str(val or "Inter")))
+        elif isinstance(w, QComboBox):
+            w.setCurrentIndex(max(w.findData(val), 0))
+        elif isinstance(w, QPlainTextEdit):
+            w.setPlainText(str(val if val is not None else ""))
+        elif isinstance(w, QLineEdit):
+            w.setText(str(val if val is not None else ""))
+        elif isinstance(w, QSpinBox):
+            try:
+                w.setValue(int(val))
+            except (TypeError, ValueError):
+                w.setValue(w.minimum())
+        else:
+            w.setChecked(bool(val))
+
+    def _fill_form(self, d):
+        for (layer, key), w in self._f.items():
+            if layer == "top":
+                self._wset(w, (d.get("geometry") or {}).get(key, 0))
+            elif key.startswith("geometry."):
+                dflt = {"x": 0, "y": 0, "w": 250, "h": 250}[key[9:]]
+                self._wset(w, ((d.get(layer) or {}).get("geometry") or {}).get(key[9:], dflt))
+            else:
+                dflt = {"type": "text", "font_size": 14, "rotation": 0, "scaled_contents": True,
+                        "background": "transparent", "color": "#000000", "font_family": "Inter"}.get(key, "")
+                self._wset(w, (d.get(layer) or {}).get(key, dflt))
+
+    def _collect_form(self):
+        d = copy.deepcopy(self._data)
+        for (layer, key), w in self._f.items():
+            val = self._wget(w)
+            if layer == "top":
+                d.setdefault("geometry", {})[key] = val
+            elif key.startswith("geometry."):
+                d.setdefault(layer, {}).setdefault("geometry", {})[key[9:]] = val
+            else:
+                d.setdefault(layer, {})[key] = val
+        return d
+
+    def _tab_changed(self, idx):
+        if self._loading or self._name is None:
+            return
+        if idx == 1:        # formulario -> JSON
+            self.json_edit.setPlainText(json.dumps(self._collect_form(), indent=2, ensure_ascii=False))
+        else:               # JSON -> formulario
+            try:
+                d = json.loads(self.json_edit.toPlainText())
+                if not isinstance(d, dict):
+                    raise ValueError("la ra\u00edz debe ser un objeto")
+                self._data = d
+                self._fill_form(d)
+            except Exception as e:
+                self.status.setText(f"JSON inv\u00e1lido: {e}")
+                self.tabs.blockSignals(True)
+                self.tabs.setCurrentIndex(1)
+                self.tabs.blockSignals(False)
+
+    # ---- lista ----------------------------------------------------------
+    def _edit_base(self):
+        name = self._name
+        if name and isinstance(self._data.get('base_note'), dict):
+            self.m.edit_base_note_template(name)
+
+    def _hdr_item(self, text, color, bg=None):
+        from PySide6.QtWidgets import QListWidgetItem
+        hdr = QListWidgetItem(text)
+        hdr.setFlags(Qt.NoItemFlags)
+        if bg is not None:
+            hdr.setBackground(QBrush(bg))
+        hf = hdr.font()
+        hf.setBold(True)
+        hf.setPointSizeF(max(7.0, hf.pointSizeF() - 1))
+        hdr.setFont(hf)
+        hdr.setForeground(QColor(color))
+        hdr.setSizeHint(QSize(10, 24))
+        return hdr
+
+    def _cur_type(self):
+        it = self.list.currentItem()
+        k = it.data(Qt.UserRole + 1) if it is not None else None
+        return self._types.get(k) if k else None
+
+    def _load_type(self, ty):
+        """Un aspecto en uso: solo se puede ver, crear un widget con ese aspecto o guardarlo como template (Duplicar)."""
+        self._loading = True
+        self._name = None
+        st = self.m.state_for_type(ty)
+        self._data = st['template_data']
+        self._fill_form(self._data)
+        self.json_edit.setPlainText(json.dumps(self._data, indent=2, ensure_ascii=False))
+        self.tabs.setCurrentIndex(0)
+        self.chk_default.setChecked(False)
+        self.preview.setPixmap(_tpl_preview(self._data, QSize(360, 190)))
+        for w in (self.btn_save, self.btn_revert, self.chk_default):
+            w.setEnabled(False)
+        self.btn_create.setEnabled(True)
+        for w in (self.btn_export_json, self.btn_copy_json):
+            w.setEnabled(bool(self._data))
+        self.status.setText("Aspecto en uso: %d widget(s). Para guardarlo como template, pulsa Duplicar." % ty['count'])
+        self.btn_edit_base.setEnabled(False)
+        self._loading = False
+
+    def reload(self, select=None):
+        from PySide6.QtWidgets import QListWidgetItem
+        keep = select or self._name
+        dflt = self.m.default_template_name()
+        self._loading = True
+        self.list.blockSignals(True)
+        self.list.clear()
+        target = None
+        types = self.m.widget_types_in_use()       # [PACK67] primero, los TIPOS en uso en este set
+        self._types = {t['key']: t for t in types}
+        used, rest, use = self.m.template_files_grouped()
+        first_type = None
+        bn = dict(self.m.base_note_templates())       # [PACK89] las notas base (del editor de forma) van PRIMERO, con fondo propio
+        order = used + rest
+        BN_BG = QColor(52, 211, 153, 38)
+
+        def add_names(names, bg=None):
+            nonlocal target
+            for name in names:
+                it = QListWidgetItem(name[:-5] + ("   \u2605 predeterminado" if name == dflt else "")
+                                     + ("   \u00b7 \u00d7%d" % use[name] if name in use else ""))
+                it.setData(Qt.UserRole, name)
+                it.setIcon(QIcon(_tpl_preview(self.m.load_template_by_name(name), self.THUMB)))
+                if bg is not None:
+                    it.setBackground(QBrush(bg))
+                self.list.addItem(it)
+                if (select and name == select) or (not types and name == keep) or (target is None and not types and name == dflt):
+                    target = it
+        show_hdr = bool(types or bn)
+        bn_names = [n for n in order if n in bn]
+        if bn_names:
+            self.list.addItem(self._hdr_item("NOTAS BASE (creadas con el editor de nota base)  (%d)" % len(bn_names), "#34d399", BN_BG))
+            add_names(bn_names, BN_BG)
+        if types:
+            self.list.addItem(self._hdr_item("ASPECTOS EN USO EN ESTE PERFIL  (%d)" % len(types), "#8fb8ff"))
+            for t in types[:40]:
+                it = QListWidgetItem("%s\n%d widget%s" % (t['name'], t['count'], "" if t['count'] == 1 else "s"))
+                it.setData(Qt.UserRole + 1, t['key'])
+                it.setToolTip("Widgets con este aspecto:\n" + "\n".join(self.m._get_widget_display_name(w) for w in t['ids'][:15]))
+                it.setIcon(QIcon(_tpl_preview(self.m.state_for_type(t)['template_data'], self.THUMB)))
+                self.list.addItem(it)
+                if first_type is None:
+                    first_type = it
+        rest_names = [n for n in order if n not in bn]
+        if rest_names:
+            if show_hdr:
+                self.list.addItem(self._hdr_item("TEMPLATES GUARDADOS  (%d)" % len(rest_names), "#8a8a90"))
+            add_names(rest_names)
+        self.list.blockSignals(False)
+        self._loading = False
+        if target is None and first_type is not None and not select:
+            target = first_type
+        if target is not None:
+            self.list.setCurrentItem(target)
+        self._select(self.list.currentItem())
+
+    def _cur_name(self):
+        it = self.list.currentItem()
+        return it.data(Qt.UserRole) if it is not None else None
+
+    def _select(self, item):
+        if self._loading:
+            return
+        k_ = item.data(Qt.UserRole + 1) if item is not None else None
+        if k_ and k_ in self._types:
+            self._load_type(self._types[k_])
+            return
+        self._load(item.data(Qt.UserRole) if item is not None else None)
+
+    def _load(self, name):
+        self._loading = True
+        self._name = name
+        self._data = self.m.load_template_by_name(name) if name else {}
+        self._fill_form(self._data)
+        self.json_edit.setPlainText(json.dumps(self._data, indent=2, ensure_ascii=False))
+        self.tabs.setCurrentIndex(0)
+        self.chk_default.setChecked(bool(name) and name == self.m.default_template_name())
+        pm = _tpl_preview(self._data, QSize(360, 190))
+        self.preview.setPixmap(pm)
+        for w in (self.btn_create, self.btn_save, self.btn_revert, self.chk_default):
+            w.setEnabled(bool(name))
+        for w in (self.btn_export_json, self.btn_copy_json):
+            w.setEnabled(bool(name) and bool(self._data))
+        self.status.setText(name or "")
+        self.btn_edit_base.setEnabled(bool(name) and isinstance(self._data.get('base_note'), dict))
+        self._loading = False
+
+    def _default_toggled(self, on):
+        if self._loading or not self._name:
+            return
+        if on:
+            self.m.set_default_template(self._name)
+        elif self._name != "default.json":
+            self.m.set_default_template("default.json")
+        else:
+            self.status.setText("default.json es el predeterminado de reserva: marca otro template para cambiarlo.")
+        self.reload(self._name)
+
+    # ---- acciones -------------------------------------------------------
+    def _create(self):
+        ty = self._cur_type()
+        name = self._cur_name()
+        if not name and not ty:
+            return None
+        if self._target:
+            wid = self._target
+            if ty:
+                self.m.apply_type_to_widget(wid, ty)
+            else:
+                self.m.apply_template_to_widget(wid, name)
+            self.m._focus_pending = wid
+        else:
+            wid = self.m.add_widget_of_type(ty) if ty else self.m.add_new_widget(template_name=name)
+        self.hide()
+        b = getattr(self.m, 'browser', None)
+        if b is not None and b.isVisible():
+            b.raise_()
+            b.activateWindow()
+        return wid
+
+    def _save(self):
+        if not self._name:
+            return
+        try:
+            if self.tabs.currentIndex() == 1:
+                d = json.loads(self.json_edit.toPlainText())
+                if not isinstance(d, dict):
+                    raise ValueError("la ra\u00edz debe ser un objeto")
+            else:
+                d = self._collect_form()
+            self.m.save_template(self._name, d)
+        except Exception as e:
+            self.status.setText(f"No se pudo guardar: {e}")
+            return
+        self.reload(self._name)
+        self.status.setText(f"Guardado: {self._name}. Los widgets ya creados no cambian.")
+
+    def set_target(self, wid):
+        """Modo 'cambiar template de un widget' (wid) o modo 'crear widget' (None)."""
+        self._target = wid if (wid and wid in self.m.global_state) else None
+        if self._target:
+            nm = self.m._get_widget_display_name(self._target)
+            self.banner.setText(f"Cambiando el template de <b>{nm}</b>: elige uno y pulsa Aplicar "
+                                "(se conservan su posici\u00f3n y su jerarqu\u00eda).")
+            self.banner.show()
+            self.hint.setText("Elige el template (doble clic = aplicar):")
+            self.btn_create.setText(f"Aplicar a \u00ab{nm}\u00bb")
+        else:
+            self.banner.hide()
+            self.hint.setText("Elige un template (doble clic = crear el widget):")
+            self.btn_create.setText("Crear widget con este template")
+
+    def hide(self):
+        """Como pestana, 'cerrar' es volver a la pesta\u00f1a de widgets."""
+        self._target = None
+        self.set_target(None)
+        if self.on_done is not None:
+            self.on_done()
+
+    def _ask_name(self, title, text=""):
+        name, ok = QInputDialog.getText(self, title, "Nombre del template:", text=text)
+        n = self.m._tpl_safe_name(name) if ok else None
+        if ok and not n:
+            self.status.setText("Nombre no v\u00e1lido.")
+        return n
+
+    def _unique(self, base):
+        stem, n = base[:-5], 1
+        cand = base
+        while os.path.exists(os.path.join(TEMPLATES_DIR, cand)):
+            n += 1
+            cand = f"{stem}_{n}.json"
+        return cand
+
+    def _new(self):
+        n = self._ask_name("Nuevo template")
+        if n:
+            n = self._unique(n)
+            self.m.save_template(n, self.m.get_default_template_data())
+            self.reload(n)
+
+    def _duplicate(self):
+        ty = self._cur_type()
+        if ty:        # [PACK67] un tipo en uso: se guarda como template
+            n = self._ask_name("Guardar este aspecto como template", ty['name'])
+            if n:
+                n = self._unique(n)
+                self.m.save_template(n, self.m.state_for_type(ty)['template_data'])
+                self.reload(n)
+            return
+        if self._name:
+            n = self._unique(self._name[:-5] + "_copia.json")
+            self.m.save_template(n, self.m.load_template_by_name(self._name))
+            self.reload(n)
+
+    def _rename(self):
+        old = self._name
+        if not old:
+            return
+        if old == "default.json":
+            self.status.setText("default.json no se puede renombrar.")
+            return
+        n = self._ask_name("Renombrar template", old[:-5])
+        if not n or n == old:
+            return
+        if os.path.exists(os.path.join(TEMPLATES_DIR, n)):
+            self.status.setText("Ya existe un template con ese nombre.")
+            return
+        try:
+            os.rename(os.path.join(TEMPLATES_DIR, old), os.path.join(TEMPLATES_DIR, n))
+        except OSError as e:
+            self.status.setText(f"No se pudo renombrar: {e}")
+            return
+        if self.m.default_template_name() == old:
+            self.m.set_default_template(n)
+        for st in self.m.global_state.values():
+            if isinstance(st, dict) and st.get('template_name') == old:
+                st['template_name'] = n
+        self.m.save_global_state(record_history=False)
+        self.m.build_tray_menu()
+        self.reload(n)
+
+    def _delete(self):
+        name = self._name
+        if not name:
+            return
+        if name == "default.json" or name == self.m.default_template_name():
+            self.status.setText("No se puede eliminar el template predeterminado (marca otro como predeterminado antes).")
+            return
+        if QMessageBox.question(self, "Eliminar template", f"Eliminar '{name}'? Los widgets ya creados no se ven afectados.",
+                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            os.remove(os.path.join(TEMPLATES_DIR, name))
+        except OSError as e:
+            self.status.setText(f"No se pudo eliminar: {e}")
+            return
+        self._name = None
+        self.reload()
+
+    def _import(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Importar template", DATA_DIR, "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+            if not isinstance(d, dict):
+                raise ValueError("no es un template (la ra\u00edz debe ser un objeto)")
+        except Exception as e:
+            self.status.setText(f"No se pudo importar: {e}")
+            return
+        n = self._unique(self.m._tpl_safe_name(os.path.basename(path)) or "importado.json")
+        self.m.save_template(n, d)
+        self.reload(n)
+
+    def _export(self):
+        """[PACK96] Guarda en un .json el template seleccionado (o el aspecto en uso seleccionado)."""
+        if not self._data:
+            return
+        base = self._name or "aspecto_en_uso.json"
+        path, _ = QFileDialog.getSaveFileName(self, "Exportar template", os.path.join(DATA_DIR, base), "JSON (*.json)")
+        if path:
+            if not os.path.splitext(path)[1]:
+                path += ".json"
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(self._data, f, indent=4, ensure_ascii=False)
+            except (OSError, TypeError, ValueError) as e:
+                self.status.setText(f"No se pudo exportar: {e}")
+                return
+            self.status.setText(f"Exportado a {path}")
+
+    def _copy_json(self):
+        """[PACK96] Copia al portapapeles el JSON del template seleccionado."""
+        if not self._data:
+            return
+        try:
+            txt = json.dumps(self._data, indent=2, ensure_ascii=False)
+        except (TypeError, ValueError) as e:
+            self.status.setText(f"No se pudo copiar: {e}")
+            return
+        QApplication.clipboard().setText(txt)
+        self.status.setText(f"JSON copiado al portapapeles ({len(txt)} caracteres).")
+        try:
+            self.m._osd("JSON del template copiado")
+        except Exception:
+            pass
+
+    def _pick_widget(self, title):
+        ids = self.m.sort_ids([w for w, s in self.m.global_state.items() if isinstance(s, dict)])
+        if not ids:
+            self.status.setText("No hay widgets.")
+            return None
+        labels = [f"{self.m._get_widget_display_name(w)}  [{w}]" for w in ids]
+        lab, ok = QInputDialog.getItem(self, title, "Widget:", labels, 0, False)
+        return ids[labels.index(lab)] if ok else None
+
+    def _from_widget(self):
+        wid = self._pick_widget("Guardar un widget como template")
+        if not wid:
+            return
+        n = self._ask_name("Guardar como template", self.m._get_widget_display_name(wid))
+        if n:
+            n = n if not os.path.exists(os.path.join(TEMPLATES_DIR, n)) else self._unique(n)
+            self.m.save_template(n, copy.deepcopy(self.m.global_state[wid].get('template_data', {})))
+            self.reload(n)
+
+    def _to_widget(self):
+        if not self._name:
+            return
+        wid = self._pick_widget("Aplicar el template a un widget")
+        if wid:
+            self.m.apply_template_to_widget(wid, self._name)
+            self.status.setText(f"'{self._name}' aplicado a {self.m._get_widget_display_name(wid)}.")
+
+# ======================================================================
+# [PACK92] Mapa completo de un set (notas + cables) y comparacion de dos sets, INTEGRADO en este archivo
+# (antes lo dibujaba widget_arena_preview.py, aparte; ya no hace falta). Economia de recursos: las imagenes de notas
+# se guardan con un limite de memoria, las vistas previas se dibujan ya reducidas y una sola a la vez.
+# ======================================================================
+import math
+from PySide6.QtCore import QPointF, QRectF
+from PySide6.QtGui import QGuiApplication
+
+PREVIEW_MAX_W = 1600                                  # ancho maximo (px) de las vistas previas guardadas
+
+_PV_WORDS = {
+    'content': 'contenido', 'geometry': 'tama\u00f1o', 'w': 'ancho', 'h': 'alto', 'rotation': 'rotaci\u00f3n',
+    'background': 'fondo', 'color': 'color', 'font_size': 'tama\u00f1o de letra', 'font_family': 'fuente', 'type': 'tipo',
+    'image_effects': 'efectos de imagen', 'hue': 'tono', 'saturation': 'saturaci\u00f3n', 'brightness': 'brillo',
+    'contrast': 'contraste', 'colorize': 'colorear', 'scaled_contents': 'escalado', 'hue_target': 'tono',
+    'enabled': 'visible/oculto', 'custom_name': 'nombre', 'template_name': 'template', 'collapsed': 'plegado'}
+
+
+def _pv_notes_of(d):
+    return {k: v for k, v in (d or {}).items() if isinstance(v, dict) and isinstance(v.get('template_data'), dict)}
+
+
+def _pv_read_notes(path, member='data/widget_set.json'):
+    """Notas de un .json (estado / perfil / copia automatica) o de un .zip (copia completa: set activo)."""
+    import zipfile
+    if str(path).lower().endswith('.zip'):
+        with zipfile.ZipFile(path) as z:
+            return _pv_notes_of(json.loads(z.read(member).decode('utf-8')))
+    with open(path, 'r', encoding='utf-8') as f:
+        return _pv_notes_of(json.load(f))
+
+
+def _pv_note_name(wid, st):
+    cn = str((st or {}).get('custom_name') or '').strip()
+    if cn:
+        return cn
+    tn = str((st or {}).get('template_name') or wid)
+    return tn[:-5] if tn.lower().endswith('.json') else tn
+
+
+def _pv_note_pos(st):
+    g = (st.get('template_data') or {}).get('geometry') or {}
+    try:
+        return int(round(float(g.get('x', 0)))), int(round(float(g.get('y', 0))))
+    except (TypeError, ValueError):
+        return 0, 0
+
+class _PvImgCache:
+    """Imagenes de notas ya dibujadas, con un limite de MEMORIA (no de cantidad): lo menos usado se descarta."""
+    def __init__(self, budget):
+        from collections import OrderedDict
+        self.d, self.bytes, self.budget = OrderedDict(), 0, int(budget)
+
+    def get(self, key):
+        v = self.d.get(key)
+        if v is not None:
+            self.d.move_to_end(key)
+        return v
+
+    def put(self, key, val):
+        old = self.d.pop(key, None)
+        if old is not None:
+            self.bytes -= old[0].sizeInBytes()
+        self.d[key] = val
+        self.bytes += val[0].sizeInBytes()
+        while self.bytes > self.budget and len(self.d) > 1:
+            _k, ov = self.d.popitem(last=False)
+            self.bytes -= ov[0].sizeInBytes()
+
+    def clear(self):
+        self.d.clear()
+        self.bytes = 0
+
+
+_PV_CACHE = _PvImgCache(32 * 1024 * 1024)
+
+def _pv_note_image(data):
+    """(QImage, esquina en coordenadas de la ventana): las dos capas con efectos, giro, fondo y texto. Reutiliza
+    _tpl_layer_pixmap (el mismo dibujo que las miniaturas de templates) y guarda el resultado por contenido."""
+    import math
+    key = hashlib.md5(json.dumps(data, sort_keys=True, default=str).encode('utf-8', 'replace')).hexdigest()
+    hit = _PV_CACHE.get(key)
+    if hit is not None:
+        return hit
+    try:
+        def geom(ld):
+            g = ld.get('geometry') or {}
+            return float(g.get('x', 0)), float(g.get('y', 0)), max(1, int(g.get('w', 400))), max(1, int(g.get('h', 225)))
+        l1, l2 = data.get('layer1') or {}, data.get('layer2') or {}
+        x2, y2, w2, h2 = geom(l2)
+        x1, y1, w1, h1 = geom(l1)
+        pivot = (x2 + w2 / 2.0, y2 + h2 / 2.0)
+        parts = []
+        for num, ld, (gx, gy, gw, gh) in ((2, l2, (x2, y2, w2, h2)), (1, l1, (x1, y1, w1, h1))):
+            base = _tpl_layer_pixmap(ld, num, QSize(gw, gh))
+            if base is None or base.isNull():
+                base = QPixmap(QSize(gw, gh))
+                base.fill(QColor(120, 60, 60, 120))
+            ang = float(ld.get('rotation', 0) or 0)
+            cx, cy = gx + gw / 2.0, gy + gh / 2.0
+            if num == 1:                      # la capa 1 gira alrededor del centro de la capa 2
+                a = math.radians(ang)
+                dx, dy = cx - pivot[0], cy - pivot[1]
+                cx, cy = pivot[0] + dx * math.cos(a) - dy * math.sin(a), pivot[1] + dx * math.sin(a) + dy * math.cos(a)
+            if ang % 360 != 0:
+                base = base.transformed(QTransform().rotate(ang), Qt.SmoothTransformation)
+            parts.append((ld, base, QRect(int(round(cx - base.width() / 2.0)), int(round(cy - base.height() / 2.0)),
+                                          base.width(), base.height())))
+
+        total = parts[0][2].united(parts[1][2])
+        img = QImage(max(1, total.width()), max(1, total.height()), QImage.Format_ARGB32_Premultiplied)
+        img.fill(Qt.transparent)
+        p = QPainter(img)
+        try:
+            p.setRenderHint(QPainter.SmoothPixmapTransform)
+            p.translate(-total.x(), -total.y())
+            for ld, base, r in parts:
+                bg = QColor(str(ld.get('background', 'transparent')))
+                if bg.isValid() and bg.alpha() > 0:
+                    p.fillRect(r, bg)
+                p.drawPixmap(r.topLeft(), base)
+        finally:
+            p.end()
+        res = (img, QPoint(total.x(), total.y()))
+    except Exception as e:
+        log_warn("Preview", "no se pudo dibujar una nota: %s" % e)
+        img = QImage(60, 40, QImage.Format_ARGB32_Premultiplied)
+
+        img.fill(QColor('#664444'))
+        res = (img, QPoint(0, 0))
+    _PV_CACHE.put(key, res)
+    return res
+
+
+def _flat(v, path, out):
+    if isinstance(v, dict):
+        for k, x in v.items():
+            _flat(x, path + (str(k),), out)
+    elif isinstance(v, list):
+        out[path] = json.dumps(v, sort_keys=True, default=str)
+    else:
+        out[path] = v
+
+
+def _strip(st):
+    """Estado sin lo que no es 'contenido' de la nota: posicion de la ventana y enlace (se comparan aparte)."""
+    st = copy.deepcopy(st)
+    g = (st.get('template_data') or {}).get('geometry')
+    if isinstance(g, dict):
+        g.pop('x', None)
+        g.pop('y', None)
+    st.pop('parent_id', None)
+    return st
+
+
+def content_changes(a, b):
+    """Que cambia entre dos notas (salvo posicion y enlace): textos cortos, sin repetir."""
+    fa, fb = {}, {}
+    _flat(_strip(a), (), fa)
+    _flat(_strip(b), (), fb)
+    labels = []
+    for path in list(fa.keys()) + [k for k in fb if k not in fa]:
+        if fa.get(path, '\u0000') == fb.get(path, '\u0000'):
+            continue
+        parts = [p for p in path if p != 'template_data']
+        layer = next((p for p in parts if p in ('layer1', 'layer2')), None)
+        words = [_PV_WORDS.get(p, p) for p in parts if p not in ('layer1', 'layer2')]
+        text = ' '.join(dict.fromkeys(words)) or 'datos'
+        if layer:
+            text = 'capa %s: %s' % (layer[-1], text)
+        if text not in labels:
+            labels.append(text)
+    return labels
+
+
+def match_notes(A, B):
+    """Empareja las notas de A (referencia) con las de B: primero por id; las sueltas, por contenido igual y posicion cercana."""
+    pairs = [(k, k) for k in B if k in A]
+    only_a = [k for k in A if k not in B]
+    only_b = []
+    sig = lambda st: hashlib.md5(json.dumps(_strip(st).get('template_data'), sort_keys=True, default=str).encode('utf-8', 'replace')).hexdigest()
+    sa = {k: sig(A[k]) for k in only_a}
+    for kb in [k for k in B if k not in A]:
+        sb = sig(B[kb])
+        cands = [ka for ka in only_a if sa[ka] == sb]
+        if cands:
+            bx, by = _pv_note_pos(B[kb])
+            ka = min(cands, key=lambda k: abs(_pv_note_pos(A[k])[0] - bx) + abs(_pv_note_pos(A[k])[1] - by))
+            pairs.append((ka, kb))
+            only_a.remove(ka)
+        else:
+            only_b.append(kb)
+    return pairs, only_a, only_b
+
+
+class SetCompare:
+    """Dos sets (A = referencia, B = el que se muestra) sobre el mismo mapa del escritorio, con cables y diferencias.
+    image('B') = B solo; 'A' = referencia sola; 'D' = superpuestos con marcas; 'X' = diferencia de pixeles."""
+
+    def __init__(self, A, B, names=None):
+        self.has_ref = A is not None
+        self.A, self.B = A or {}, B or {}
+        self.name_of = names or _pv_note_name
+        self.imgA = {k: _pv_note_image(v['template_data']) for k, v in self.A.items()}
+        self.imgB = {k: _pv_note_image(v['template_data']) for k, v in self.B.items()}
+        self.rA = {k: self._rect(self.A[k], self.imgA[k]) for k in self.A}
+        self.rB = {k: self._rect(self.B[k], self.imgB[k]) for k in self.B}
+        scr = QGuiApplication.screens()
+        self.screens = [s.geometry() for s in scr] or [QRect(0, 0, 1920, 1080)]
+        self.screen = QRect(self.screens[0])
+        for s_ in self.screens[1:]:
+            self.screen = self.screen.united(s_)
+        box = QRect(self.screen)
+        lim = self.screen.adjusted(-6000, -4000, 6000, 4000)           # una nota perdida muy lejos no agranda el mapa sin fin
+        for r in list(self.rA.values()) + list(self.rB.values()):
+            box = box.united(r.intersected(lim))
+        box = box.adjusted(-60, -60, 60, 60)
+
+        self.origin = box.topLeft()
+        self.W, self.H = max(900, box.width()), max(500, box.height())
+        self.ents, self.n_same = [], 0
+        self.edgesA, self.edgesB = {}, {}
+        self.link_add, self.link_del = set(), set()
+        self._cache = {}
+        self._compare()
+
+    @staticmethod
+    def _rect(st, im):
+        x, y = _pv_note_pos(st)
+        return QRect(x + im[1].x(), y + im[1].y(), im[0].width(), im[0].height())
+
+    def _compare(self):
+        for c, st in self.B.items():
+            if st.get('parent_id') in self.B:
+                self.edgesB[(st['parent_id'], c)] = (st['parent_id'], c)
+        if not self.has_ref:
+            return
+        pairs, only_a, only_b = match_notes(self.A, self.B)
+        ab = dict(pairs)
+        kA = lambda k: ab.get(k, 'A:' + k)
+        for c, st in self.A.items():
+            if st.get('parent_id') in self.A:
+                self.edgesA[(kA(st['parent_id']), kA(c))] = (st['parent_id'], c)       # claves en el espacio de ids de B
+        self.link_add = set(self.edgesB) - set(self.edgesA)
+        self.link_del = set(self.edgesA) - set(self.edgesB)
+        by_b = {}
+        for ka, kb in pairs:
+            ax, ay = _pv_note_pos(self.A[ka])
+            bx, by_ = _pv_note_pos(self.B[kb])
+            ch = content_changes(self.A[ka], self.B[kb])
+            e = {'kind': 'mod', 'a': ka, 'b': kb, 'moved': (ax, ay) != (bx, by_), 'dx': bx - ax, 'dy': by_ - ay,
+                 'changes': ch, 'links': [], 'name': self.name_of(kb, self.B[kb])}
+            by_b[kb] = e
+
+        for ka in only_a:
+            self.ents.append({'kind': 'del', 'a': ka, 'b': None, 'name': self.name_of(ka, self.A[ka]), 'links': []})
+        for kb in only_b:
+            self.ents.append({'kind': 'add', 'a': None, 'b': kb, 'name': self.name_of(kb, self.B[kb]), 'links': []})
+        # cambios de conexion de notas que existen en las dos versiones
+        nm = lambda k: self.name_of(k, self.B[k]) if k in self.B else self.name_of(k[2:], self.A[k[2:]])
+        kids = {}
+        for (p, c) in self.link_add:
+            kids.setdefault(c, [[], []])[1].append(p)
+        for (p, c) in self.link_del:
+            kids.setdefault(c, [[], []])[0].append(p)
+        for c, (old, new) in kids.items():
+            if c not in by_b:
+                continue                         # nota nueva o quitada: su enlace ya va implicito
+            if old and new:
+                txt = "enlace: de %s a %s" % (', '.join(nm(p) for p in old), ', '.join(nm(p) for p in new))
+            elif new:
+                txt = "enlace nuevo con %s" % ', '.join(nm(p) for p in new)
+            else:
+                txt = "enlace quitado (era %s)" % ', '.join(nm(p) for p in old)
+            by_b[c]['links'].append(txt)
+
+        for kb, e in by_b.items():
+            if not e['moved'] and not e['changes'] and not e['links']:
+                self.n_same += 1
+            else:
+                self.ents.append(e)
+        for e in self.ents:
+            e['rects'] = ([self.rA[e['a']]] if e.get('a') in self.rA else []) + ([self.rB[e['b']]] if e.get('b') in self.rB else [])
+        order = {'add': 0, 'del': 1, 'mod': 2}
+        self.ents.sort(key=lambda e: (order[e['kind']], 0 if (e.get('changes') or e.get('links')) else 1, e['name'].lower()))
+
+    def describe(self, e):
+        if e['kind'] == 'add':
+            return "+ %s \u00b7 a\u00f1adido" % e['name']
+        if e['kind'] == 'del':
+            return "\u2212 %s \u00b7 quitado" % e['name']
+        bits = []
+        if e['moved']:
+            bits.append("movido (%+d, %+d) px" % (e['dx'], e['dy']))
+        if e['changes']:
+            bits.append("cambiado: " + ', '.join(e['changes'][:4]) + ('\u2026' if len(e['changes']) > 4 else ''))
+        bits += e['links']
+        return "%s %s \u00b7 %s" % ("\u2194" if e['moved'] and not e['changes'] else "\u270e", e['name'], '; '.join(bits))
+
+    def summary(self):
+        if not self.has_ref:
+            return "%d widgets \u00b7 %d enlaces" % (len(self.B), len(self.edgesB))
+        c = lambda f: sum(1 for e in self.ents if f(e))
+        return ("%d movidos \u00b7 %d cambiados \u00b7 %d a\u00f1adidos \u00b7 %d quitados \u00b7 %d enlaces distintos \u00b7 %d iguales" % (
+            c(lambda e: e['kind'] == 'mod' and e['moved']), c(lambda e: e['kind'] == 'mod' and e['changes']),
+            c(lambda e: e['kind'] == 'add'), c(lambda e: e['kind'] == 'del'), len(self.link_add) + len(self.link_del), self.n_same))
+
+    def focus_rect(self, ent):
+        r = QRect()
+        for x in ent.get('rects') or []:
+            r = r.united(x) if not r.isNull() else QRect(x)
+        return QRectF(r.adjusted(-40, -40, 40, 40).translated(-self.origin))
+
+    # ---- dibujo
+    def _canvas(self, scale=1.0):
+        img = QImage(max(1, int(round(self.W * scale))), max(1, int(round(self.H * scale))), QImage.Format_ARGB32_Premultiplied)
+        img.fill(QColor('#26262b'))
+        p = QPainter(img)
+        p.scale(scale, scale)
+        p.setPen(QPen(QColor('#303038'), 1))
+        ox, oy = self.origin.x(), self.origin.y()
+        gx = (-ox) % 100
+        while gx < self.W:
+            p.drawLine(int(gx), 0, int(gx), self.H)
+            gx += 100
+        gy = (-oy) % 100
+        while gy < self.H:
+            p.drawLine(0, int(gy), self.W, int(gy))
+            gy += 100
+        pen = QPen(QColor('#5a5a68'), 2, Qt.DashLine)
+        for i, sg in enumerate(self.screens):
+            p.setPen(pen)
+            p.drawRect(sg.translated(-self.origin))
+            p.setPen(QColor('#7c7c8c'))
+            p.drawText(sg.translated(-self.origin).topLeft() + QPoint(8, 18), "pantalla %d" % (i + 1))
+
+        return img, p
+
+    def _draw_set(self, p, notes, imgs, rects, opacity=1.0):
+        for k, st in notes.items():
+            p.setOpacity(opacity * (1.0 if st.get('enabled', True) else 0.35))
+            p.drawImage(rects[k].topLeft() - self.origin, imgs[k][0])
+        p.setOpacity(1.0)
+
+    def _cable(self, p, ra, rb, pen):
+        a, b = QPointF(ra.center() - self.origin), QPointF(rb.center() - self.origin)
+        path = QPainterPath(a)
+        mx = (a.x() + b.x()) / 2.0
+        path.cubicTo(QPointF(mx, a.y()), QPointF(mx, b.y()), b)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+        p.setBrush(pen.color())
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(b, pen.widthF() * 1.4, pen.widthF() * 1.4)
+
+    def image(self, which, scale=1.0):
+        if not self.has_ref and which in ('A', 'D', 'X'):
+            which = 'B'
+        if which == 'X':
+            scale = 1.0
+        ck = (which, round(float(scale), 3))
+        if ck in self._cache:
+            return self._cache[ck]
+        if which == 'X':
+            def flat(notes, imgs, rects):
+                im = QImage(self.W, self.H, QImage.Format_ARGB32_Premultiplied)
+                im.fill(QColor('#000000'))
+                q = QPainter(im)
+                q.setRenderHint(QPainter.SmoothPixmapTransform)
+                self._draw_set(q, notes, imgs, rects)
+                q.end()
+                return im
+            ia = flat(self.A, self.imgA, self.rA)
+            q = QPainter(ia)
+            q.setCompositionMode(QPainter.CompositionMode_Difference)
+            q.drawImage(0, 0, flat(self.B, self.imgB, self.rB))
+            q.end()
+            self._cache[ck] = ia
+            return ia
+
+        img, p = self._canvas(scale)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        lw = max(2.0, self.W / 450.0)
+        cab = QPen(QColor(108, 184, 255, 170), lw * 0.8)
+        if which == 'A':
+            self._draw_set(p, self.A, self.imgA, self.rA)
+            for (pa, ca) in self.edgesA.values():
+                self._cable(p, self.rA[pa], self.rA[ca], cab)
+        elif which == 'D':
+            for e in self.ents:
+                if e['kind'] == 'del' or (e['kind'] == 'mod' and e['moved']):
+                    p.setOpacity(0.55 if e['kind'] == 'del' else 0.30)
+                    p.drawImage(self.rA[e['a']].topLeft() - self.origin, self.imgA[e['a']][0])
+            p.setOpacity(1.0)
+            self._draw_set(p, self.B, self.imgB, self.rB)
+            for key, (pb, cb) in self.edgesB.items():
+                if key in self.link_add:
+                    self._cable(p, self.rB[pb], self.rB[cb], QPen(QColor('#45d483'), lw * 1.6))
+                else:
+                    self._cable(p, self.rB[pb], self.rB[cb], cab)
+            for key in self.link_del:
+                pa, ca = self.edgesA[key]
+                self._cable(p, self.rA[pa], self.rA[ca], QPen(QColor('#ff5a5a'), lw * 1.2, Qt.DashLine))
+            for e in self.ents:
+                if e['kind'] == 'del':
+                    r = self.rA[e['a']].translated(-self.origin)
+                    p.setPen(QPen(QColor('#ff5a5a'), lw, Qt.DashLine))
+                    p.setBrush(Qt.NoBrush)
+                    p.drawRect(r)
+                    p.drawLine(r.topLeft(), r.bottomRight())
+                    p.drawLine(r.topRight(), r.bottomLeft())
+                elif e['kind'] == 'add':
+                    p.setPen(QPen(QColor('#45d483'), lw * 1.5))
+                    p.setBrush(Qt.NoBrush)
+                    p.drawRect(self.rB[e['b']].translated(-self.origin))
+                else:
+                    rb = self.rB[e['b']].translated(-self.origin)
+                    if e['moved']:
+                        ra = self.rA[e['a']].translated(-self.origin)
+                        p.setPen(QPen(QColor('#9a9aa8'), lw, Qt.DashLine))
+                        p.setBrush(Qt.NoBrush)
+                        p.drawRect(ra)
+                        a, b = QPointF(ra.center()), QPointF(rb.center())
+                        p.setPen(QPen(QColor('#ff9f1c'), lw))
+                        p.drawLine(a, b)
+                        ang = math.atan2(b.y() - a.y(), b.x() - a.x())
+                        for s in (-0.5, 0.5):
+                            p.drawLine(b, QPointF(b.x() - lw * 6 * math.cos(ang + s), b.y() - lw * 6 * math.sin(ang + s)))
+                        p.setPen(QPen(QColor('#ff9f1c'), lw * 1.5))
+                        p.drawRect(rb)
+                    if e['changes']:
+                        p.setPen(QPen(QColor('#ffe14d'), lw, Qt.DashLine))
+                        p.setBrush(Qt.NoBrush)
+                        p.drawRect(rb.adjusted(int(lw * 2), int(lw * 2), -int(lw * 2), -int(lw * 2)))
+        else:
+            self._draw_set(p, self.B, self.imgB, self.rB)
+            for (pb, cb) in self.edgesB.values():
+                self._cable(p, self.rB[pb], self.rB[cb], cab)
+
+        p.end()
+        self._cache[ck] = img
+        return img
+
+
+
+def pv_store_image(img, out_path, max_w=PREVIEW_MAX_W):
+    """Guarda una imagen como vista previa (PNG, como mucho max_w de ancho) sin dejar archivos a medias."""
+    if img.width() > max_w:
+        img = img.scaledToWidth(max_w, Qt.SmoothTransformation)
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    tmp = out_path + '.tmp.png'
+    ok = img.save(tmp, 'PNG')
+    if ok:
+        os.replace(tmp, out_path)
+    return ok
+
+
+def pv_save_preview(notes, out_path, max_w=PREVIEW_MAX_W):
+    """Dibuja el mapa de un set y lo guarda. Se dibuja directamente a tamano reducido (no hace falta el lienzo grande)."""
+    cmpr = SetCompare(None, notes)
+    return pv_store_image(cmpr.image('B', min(1.0, float(max_w) / max(1, cmpr.W))), out_path, max_w)
+
+
+class _PvNS:
+    SetCompare = SetCompare
+
+
+def _previews_cli(argv):
+    """python widget_arena.py --previews [--all]: dibuja las vistas previas que faltan (o todas) de las copias de seguridad y sale.
+    Sirve para rellenar de golpe las de copias antiguas; la aplicacion normal las hace sola, una a una."""
+    app = QApplication.instance() or QApplication(argv[:1])
+    todo = []
+    for d, pref, suf in ((FULL_BACKUP_DIR, 'widget_arena_completo.', '.zip'), (BACKUP_DIR, 'widget_set.', '.bak.json')):
+        try:
+            todo += [os.path.join(d, f) for f in sorted(os.listdir(d)) if f.startswith(pref) and f.endswith(suf)]
+        except OSError:
+            pass
+    done = fail = skip = 0
+    for p in todo:
+        out = os.path.join(PREVIEW_DIR, os.path.basename(p) + '.png')
+        if os.path.isfile(out) and '--all' not in argv:
+            skip += 1
+            continue
+        try:
+            if pv_save_preview(_pv_read_notes(p), out):
+                done += 1
+            else:
+                fail += 1
+        except Exception as e:
+            fail += 1
+            print("WARN [Preview]: %s: %s" % (os.path.basename(p), e))
+
+        _PV_CACHE.clear() if _PV_CACHE.bytes > _PV_CACHE.budget // 2 else None
+    print("Vistas previas: %d dibujadas, %d ya estaban, %d con error (de %d copias)" % (done, skip, fail, len(todo)))
+    return 0 if not fail else 1
+
+
+class BackupRestoreDialog(QDialog):
+    """[PACK71] Recuperar copias de seguridad (zip completas y copias automaticas): set activo, perfiles y templates."""
+
+    def __init__(self, manager, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        self.m = manager
+        self._cache = {}
+        self._cmp = None
+        self.setWindowTitle("Restaurar copia de seguridad")
+        self.resize(1180, 760)                         # [PACK106] antes 1500 px: tres columnas
+        root = QHBoxLayout(self)
+        left = QVBoxLayout()
+        root.addLayout(left, 2)
+        left.addWidget(QLabel("Copias disponibles (la m\u00e1s reciente arriba):"))
+        self.lst = QListWidget()
+        self.lst.setIconSize(QSize(96, 54))
+        left.addWidget(self.lst, 1)
+        bo = QPushButton("Abrir la carpeta de copias")
+        bo.clicked.connect(lambda _c=False: manager.open_backup_folder())
+        left.addWidget(bo)
+        self.btn_gen = QPushButton("Generar las vistas previas que faltan")
+        self.btn_gen.setToolTip("Dibuja el mapa de las copias que todavia no tienen miniatura (una a una, sin bloquear la ventana).\n"
+                                "Tambien se dibuja sola la de la copia que seleccionas.")
+        self.btn_gen.clicked.connect(lambda _c=False: self._gen_missing())
+        left.addWidget(self.btn_gen)
+        right = QVBoxLayout()
+        root.addLayout(right, 7)
+        from PySide6.QtWidgets import QTabWidget
+        self.tabs = QTabWidget()                       # [PACK106] sub-pestanas; el boton de restaurar queda siempre visible debajo
+        right.addWidget(self.tabs, 1)
+        pg_r = QWidget()
+        rp = QVBoxLayout(pg_r)
+        self.tabs.addTab(pg_r, "Qu\u00e9 restaurar")
+        self.info = QLabel("")
+        self.info.setWordWrap(True)
+        rp.addWidget(self.info)
+        self.chk_active = QCheckBox("")
+        rp.addWidget(self.chk_active)
+        rp.addWidget(QLabel("Perfiles guardados en la copia (se restauran sin pisar los que ya existen):"))
+        self.lst_prof = QListWidget()
+        rp.addWidget(self.lst_prof, 1)
+        self.chk_tpl = QCheckBox("")
+        rp.addWidget(self.chk_tpl)
+        self.btn = QPushButton("Restaurar lo marcado")
+        self.btn.setStyleSheet("QPushButton{font-weight:bold;padding:6px;}")
+        right.addWidget(self.btn)
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet("color:#aaa;")
+        right.addWidget(self.status)
+        # [PACK87] vista previa del mapa completo y comparacion con otra version
+        pg_m = QWidget()
+        mid = QVBoxLayout(pg_m)
+        self.tabs.addTab(pg_m, "Mapa y comparaci\u00f3n")
+        mid.addWidget(QLabel("Mapa del escritorio (rueda: zoom \u00b7 arrastrar: mover \u00b7 doble clic: todo):"))
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("Ver:"))
+        self.cb_src = QComboBox()
+        row1.addWidget(self.cb_src, 1)
+        row1.addWidget(QLabel("Comparar con:"))
+        self.cb_ref = QComboBox()
+        row1.addWidget(self.cb_ref, 2)
+        mid.addLayout(row1)
+        row2 = QHBoxLayout()
+        self.cb_view = QComboBox()
+        for t in ("Superpuesto con diferencias", "Solo esta versi\u00f3n", "Solo la referencia", "Diferencia de p\u00edxeles"):
+            self.cb_view.addItem(t)
+        row2.addWidget(self.cb_view, 1)
+        self.chk_blink = QCheckBox("Parpadear entre las dos")
+        row2.addWidget(self.chk_blink)
+        self.lbl_show = QLabel("")
+        self.lbl_show.setMinimumWidth(110)
+        row2.addWidget(self.lbl_show)
+        mid.addLayout(row2)
+        self.pv = BaseNotePreview()
+        self.pv.setMinimumSize(460, 330)
+        self.pv.set_background(1, '#1b1b1f')
+        mid.addWidget(self.pv, 3)
+        self.lbl_sum = QLabel("")
+        self.lbl_sum.setWordWrap(True)
+        self.lbl_sum.setStyleSheet("font-weight:bold;")
+        mid.addWidget(self.lbl_sum)
+        lg = QLabel('<span style="color:#ff9f1c">\u25a0 movido</span> &nbsp; <span style="color:#ffe14d">\u25a0 contenido cambiado</span> &nbsp; '
+                    '<span style="color:#45d483">\u25a0 a\u00f1adido / enlace nuevo</span> &nbsp; <span style="color:#ff5a5a">\u25a0 quitado / enlace quitado</span> &nbsp; '
+                    '<span style="color:#6cb8ff">\u25a0 enlaces</span>')
+        mid.addWidget(lg)
+        self.lst_diff = QListWidget()
+        self.lst_diff.setToolTip("Pulsa un cambio para acercar el mapa a ese widget")
+        mid.addWidget(self.lst_diff, 2)
+        self.tm = QTimer(self)
+        self.tm.setInterval(700)
+        self._blink = False
+        self.tm.timeout.connect(self._blink_tick)
+        self.finished.connect(lambda _r=0: self.tm.stop())
+        self.finished.connect(lambda _r=0: self._release())
+        self.cb_src.currentIndexChanged.connect(lambda _i: self._refresh_cmp(True))
+        self.cb_ref.currentIndexChanged.connect(lambda _i: self._refresh_cmp(True))
+        self.cb_view.currentIndexChanged.connect(lambda _i: self._show_view())
+        self.chk_blink.toggled.connect(self._blink_toggled)
+        self.lst_diff.currentRowChanged.connect(self._diff_clicked)
+        self.lst_prof.currentRowChanged.connect(self._prof_clicked)
+        self.items = manager.list_backups()
+
+        for b in self.items:
+            self.lst.addItem(QListWidgetItem(self._thumb(b['path']), b['label']))
+        self.lst.currentRowChanged.connect(self._select)
+        self.btn.clicked.connect(lambda _c=False: self._restore())
+        if self.items:
+            self.lst.setCurrentRow(0)
+        else:
+            self.info.setText("Todav\u00eda no hay copias de seguridad.")
+            self._select(-1)
+
+    def _release(self):
+        """[PACK92] Al cerrar: se sueltan los mapas dibujados y las copias leidas (la memoria vuelve a lo normal)."""
+        self._gen_todo = []
+        self._cmp = None
+        self._cache.clear()
+        _PV_CACHE.clear()
+
+    def _item_icon(self, path):
+        for i, b in enumerate(self.items):
+            if b['path'] == path and i < self.lst.count():
+                self.lst.item(i).setIcon(self._thumb(path))
+                break
+
+    def _gen_missing(self):
+        todo = [b['path'] for b in self.items if b['kind'] != 'Archivo' and not os.path.isfile(self._preview_file(b['path']))]
+        if not todo:
+            self.status.setText("Todas las copias ya tienen vista previa.")
+            return
+        self._gen_todo, self._gen_total = todo, len(todo)
+        self.btn_gen.setEnabled(False)
+        QTimer.singleShot(0, self._gen_step)
+
+    def _gen_step(self):
+        todo = getattr(self, '_gen_todo', None)
+        if not todo or not self.isVisible():
+            self.btn_gen.setEnabled(True)
+            if not todo and getattr(self, '_gen_total', 0):
+                self.status.setText("Vistas previas generadas: %d." % self._gen_total)
+                self._gen_total = 0
+            return
+        p = todo.pop(0)
+        try:
+            notes = self.m.read_backup(p)['notes'] or {}
+            pv_save_preview(notes, self._preview_file(p))
+            self._item_icon(p)
+        except Exception as e:
+            log_warn("Copias", f"No se pudo dibujar la vista previa de {os.path.basename(p)}: {e}")
+        self.status.setText("Generando vistas previas... faltan %d de %d" % (len(todo), self._gen_total))
+        QTimer.singleShot(40, self._gen_step)
+
+    def add_backup(self, path):
+        """Anade al principio una copia elegida desde un archivo (.zip o .json)."""
+        self.items.insert(0, {'path': path, 'kind': 'Archivo', 'label': 'Archivo \u00b7 ' + os.path.basename(path)})
+        self.lst.insertItem(0, self.items[0]['label'])
+        self._cache.pop(path, None)
+        self.lst.setCurrentRow(0)
+        self._select(0)
+
+    def _data(self):
+        r = self.lst.currentRow()
+        if not (0 <= r < len(self.items)):
+            return None
+        return self._data_for(self.items[r]['path'])
+
+    def _data_for(self, p):
+        if p not in self._cache:
+            self._cache[p] = self.m.read_backup(p)
+        return self._cache[p]
+
+    @staticmethod
+    def _preview_file(path):
+        return os.path.join(PREVIEW_DIR, os.path.basename(path) + '.png')
+
+    _THUMBS = {}
+
+    @classmethod
+    def _thumb(cls, path):
+        """Miniatura de la lista; se recuerda por (archivo, fecha) para no volver a decodificar el PNG grande cada vez."""
+        p = cls._preview_file(path)
+        try:
+            key = (p, os.path.getmtime(p))
+        except OSError:
+            return QIcon()
+        ic = cls._THUMBS.get(key)
+        if ic is None:
+            pm = QPixmap(p)
+            ic = QIcon(pm.scaled(96, 54, Qt.KeepAspectRatio, Qt.SmoothTransformation)) if not pm.isNull() else QIcon()
+            if len(cls._THUMBS) > 150:
+                cls._THUMBS.pop(next(iter(cls._THUMBS)))
+            cls._THUMBS[key] = ic
+        return ic
+
+    # ---- [PACK87] vista previa y comparacion (desde el pack 92 las dibuja este mismo archivo)
+    def _pvmod(self):
+        return _PvNS
+
+    def _fill_combos(self, d):
+        """Lista lo que se puede ver (activo y perfiles de la copia) y con que comparar."""
+        keep_ref = self.cb_ref.currentData() if self.cb_ref.count() else 'cur'
+        for cb in (self.cb_src, self.cb_ref):
+            cb.blockSignals(True)
+            cb.clear()
+        self.cb_src.addItem("Perfil activo de la copia (%d widgets)" % len(d['notes'] or {}), None)
+        for name, prof in sorted(d['profiles'].items(), key=lambda kv: kv[0].lower()):
+            self.cb_src.addItem("Perfil: %s (%d)" % (name, len(self.m._only_notes(prof))), name)
+        self.cb_ref.addItem("Sin comparar", None)
+        self.cb_ref.addItem("Mis widgets actuales", 'cur')
+        cur = self.lst.currentRow()
+        for i, b in enumerate(self.items[:40]):
+            if i != cur:
+                self.cb_ref.addItem("Copia: " + b['label'], 'bk:' + b['path'])
+        try:
+            profs = sorted(os.path.splitext(f)[0] for f in os.listdir(PROFILES_DIR) if f.lower().endswith('.json'))
+        except OSError:
+            profs = []
+
+        for name in profs[:40]:
+            self.cb_ref.addItem("Mi perfil guardado: " + name, 'prof:' + name)
+        i = self.cb_ref.findData(keep_ref)
+        self.cb_ref.setCurrentIndex(i if i >= 0 else 1)
+        for cb in (self.cb_src, self.cb_ref):
+            cb.blockSignals(False)
+
+    def _src_notes(self):
+        d = self._data()
+        if d is None:
+            return None
+        key = self.cb_src.currentData()
+        return d['notes'] if key is None else self.m._only_notes(d['profiles'].get(key))
+
+    def _ref_notes(self):
+        k = self.cb_ref.currentData()
+        if not k:
+            return None
+        if k == 'cur':
+            self.m._sync_windows_to_state()
+            return self.m._history_snapshot()
+        if k.startswith('bk:'):
+            return self._data_for(k[3:])['notes'] or {}
+        try:
+            with open(self.m._profile_path(k[5:]), 'r', encoding='utf-8') as f:
+                return self.m._only_notes(json.load(f))
+        except Exception:
+            return {}
+
+    def _refresh_cmp(self, reset=True):
+        self.tm.stop()
+        self.chk_blink.blockSignals(True)
+        self.chk_blink.setChecked(False)
+        self.chk_blink.blockSignals(False)
+        self.lbl_show.setText("")
+        self.lst_diff.clear()
+        self._cmp = None
+        B = self._src_notes()
+        has_ref = self.cb_ref.currentData() is not None
+        for w in (self.cb_view, self.chk_blink):
+            w.setEnabled(has_ref)
+        if B is None:
+            blank = QImage(8, 8, QImage.Format_ARGB32)
+            blank.fill(Qt.transparent)
+            self.pv.set_image(blank)
+            self.lbl_sum.setText("")
+            return
+
+        d = self._data()
+        png = self._preview_file(self.items[self.lst.currentRow()]['path'])
+        if not has_ref and self.cb_src.currentData() is None and os.path.isfile(png):      # vista guardada: instantanea
+            img = QImage(png)
+            if not img.isNull():
+                self.pv.set_image(img)
+                self.lbl_sum.setText("%d widgets (vista guardada con la copia)" % len(B))
+                if self.lst.item(self.lst.currentRow()) is not None and self.lst.item(self.lst.currentRow()).icon().isNull():
+                    self._item_icon(self.items[self.lst.currentRow()]['path'])       # [PACK92] la miniatura aparece en cuanto existe
+                if reset:
+                    self.pv.reset_view(False)
+                return
+        mod = self._pvmod()
+        if mod is None:
+            self.lbl_sum.setText("Falta widget_arena_preview.py junto a widget_arena.py: sin \u00e9l no se puede dibujar el mapa.")
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            A = self._ref_notes() if has_ref else None
+            self._cmp = mod.SetCompare(A, B, lambda wid, st: self.m._get_widget_display_name(wid, st))
+        except Exception as e:
+            log_warn("Copias", f"No se pudo dibujar la comparaci\u00f3n: {e}")
+            self.lbl_sum.setText("No se pudo dibujar la comparaci\u00f3n: %s" % e)
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not has_ref and self.cb_src.currentData() is None and not os.path.isfile(png):      # [PACK92] la que faltaba se guarda ya dibujada
+            try:
+                if pv_store_image(self._cmp.image('B'), png):
+                    self._item_icon(self.items[self.lst.currentRow()]['path'])
+            except Exception as e:
+                log_warn("Copias", f"No se pudo guardar la vista previa: {e}")
+
+        self.lbl_sum.setText(self._cmp.summary())
+        for i, e in enumerate(self._cmp.ents):
+            self.lst_diff.addItem(self._cmp.describe(e))
+        self._show_view()
+        if reset:
+            self.pv.reset_view(False)
+
+    def _view_key(self):
+        return ('D', 'B', 'A', 'X')[max(0, self.cb_view.currentIndex())] if (self._cmp and self._cmp.has_ref) else 'B'
+
+    def _show_view(self):
+        if self._cmp is not None:
+            self.pv.set_image(self._cmp.image(self._view_key()))
+
+    def _blink_toggled(self, on):
+        self.cb_view.setEnabled(not on)
+        if on and self._cmp is not None and self._cmp.has_ref:
+            self._blink = False
+            self._blink_tick()
+            self.tm.start()
+        else:
+            self.tm.stop()
+            self.lbl_show.setText("")
+            self._show_view()
+
+    def _blink_tick(self):
+        if self._cmp is None:
+            return
+        self._blink = not self._blink
+        self.lbl_show.setText("\u25cf referencia" if self._blink else "\u25cf esta versi\u00f3n")
+        self.lbl_show.setStyleSheet("color:%s;font-weight:bold;" % ("#ff9f1c" if self._blink else "#6cb8ff"))
+        self.pv.set_image(self._cmp.image('A' if self._blink else 'B'))
+
+    def _diff_clicked(self, row):
+        if self._cmp is not None and 0 <= row < len(self._cmp.ents):
+            self.pv.focus_rect(self._cmp.focus_rect(self._cmp.ents[row]))
+
+    def _prof_clicked(self, row):
+        it = self.lst_prof.item(row) if row >= 0 else None
+        if it is not None:
+            i = self.cb_src.findData(it.data(Qt.UserRole))
+            if i >= 0:
+                self.cb_src.setCurrentIndex(i)
+
+    def _select(self, _row):
+        from PySide6.QtWidgets import QListWidgetItem
+        d = self._data()
+        self.lst_prof.clear()
+        ok = d is not None
+        for w in (self.chk_active, self.chk_tpl, self.btn):
+            w.setEnabled(ok)
+        if not ok:
+            self.chk_active.setText("")
+            self.chk_tpl.setText("")
+            self.cb_src.clear()
+            self.lst_diff.clear()
+            self.lbl_sum.setText("")
+            return
+        n_cur = sum(1 for k, v in self.m.global_state.items() if isinstance(v, dict) and isinstance(v.get('template_data'), dict))
+        notes = d['notes']
+        self.chk_active.setText("Perfil activo: sustituir mis %d widgets actuales por los %d de la copia" % (n_cur, len(notes or {})))
+        self.chk_active.setEnabled(bool(notes))
+        self.chk_active.setChecked(False)
+        have = {os.path.splitext(f)[0] for f in os.listdir(PROFILES_DIR)} if os.path.isdir(PROFILES_DIR) else set()
+        for name, prof in sorted(d['profiles'].items(), key=lambda kv: kv[0].lower()):
+            n = sum(1 for v in prof.values() if isinstance(v, dict) and isinstance(v.get('template_data'), dict))
+            it = QListWidgetItem("%s   \u00b7 %d widgets%s" % (name, n, "   (ya existe: se guardar\u00e1 con otro nombre)" if name in have else ""))
+            it.setData(Qt.UserRole, name)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Unchecked if name in have else Qt.Checked)
+            self.lst_prof.addItem(it)
+
+        miss = [t for t in d['templates'] if not os.path.exists(os.path.join(TEMPLATES_DIR, t))]
+        self.chk_tpl.setText("Templates que faltan (%d)" % len(miss))
+        self.chk_tpl.setEnabled(bool(miss))
+        self.chk_tpl.setChecked(bool(miss))
+        self.info.setText(self.items[self.lst.currentRow()]['label'] + "\nAntes de restaurar el perfil activo se hace una copia completa de lo actual, y el cambio se puede deshacer con Ctrl+Alt+Z.")
+        self.status.setText("")
+        self._fill_combos(d)
+        self._refresh_cmp(True)
+
+    def _restore(self):
+        d = self._data()
+        if d is None:
+            return
+        names = [self.lst_prof.item(i).data(Qt.UserRole) for i in range(self.lst_prof.count())
+                 if self.lst_prof.item(i).checkState() == Qt.Checked]
+        act = self.chk_active.isChecked()
+        tpl = self.chk_tpl.isChecked()
+        if not (act or names or tpl):
+            self.status.setText("No hay nada marcado.")
+            return
+        if act and QMessageBox.question(self, "Restaurar perfil activo", "Se sustituir\u00e1n los widgets actuales por los de la copia. \u00bfContinuar?",
+                                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.status.setText(self.m.restore_backup(d, act, names, tpl))
+        self._select(self.lst.currentRow())
+
+class DataHubWindow(QDialog):
+    """[PACK72] Centro de guardar y cargar: un mapa de TODO lo que se guarda (sets, templates, configuracion, archivos,
+    copias, deshacer): que es, donde vive y como guardarlo, cargarlo o recuperarlo. Acepta archivos arrastrados."""
+
+    def __init__(self, manager):
+        super().__init__(None)
+        from PySide6.QtWidgets import QListWidget
+        self.m = manager
+        self.setWindowTitle("Guardar y cargar")
+        self.setAttribute(Qt.WA_QuitOnClose, False)
+        self.setAcceptDrops(True)
+        self.resize(940, 600)
+        root = QVBoxLayout(self)
+        head = QHBoxLayout()
+        tl = QVBoxLayout()
+        t1 = QLabel("Guardar y cargar")
+        t1.setStyleSheet("font-size:18px;font-weight:bold;")
+        t2 = QLabel("Todo lo que la aplicaci\u00f3n guarda, y d\u00f3nde vive cada cosa. Elige a la izquierda lo que buscas.\n"
+                    "Tambi\u00e9n puedes arrastrar aqu\u00ed cualquier archivo (perfil, template, configuraci\u00f3n o copia .zip) y se detecta solo.")
+        t2.setWordWrap(True)
+        t2.setStyleSheet("color:#9aa0aa;")
+        tl.addWidget(t1)
+
+        tl.addWidget(t2)
+        head.addLayout(tl, 1)
+        for text, fn, tip in (("Guardar todo ahora", self._save_all, "Guarda el perfil activo, la configuraci\u00f3n, el historial y hace una copia completa"),
+                              ("Cargar un archivo...", lambda: self.m.load_anything_dialog(), "Elige un archivo: se detecta si es un perfil, un template, una configuraci\u00f3n o una copia")):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.setStyleSheet("QPushButton{font-weight:bold;padding:8px 14px;}")
+            b.clicked.connect(lambda _c=False, f=fn: (f(), self.refresh()))
+            head.addWidget(b)
+        root.addLayout(head)
+        body = QHBoxLayout()
+        root.addLayout(body, 1)
+        self.nav = QListWidget()
+        self.nav.setFixedWidth(270)
+        self.nav.setSpacing(2)
+        body.addWidget(self.nav)
+        self.panel = QWidget()
+        self.pl = QVBoxLayout(self.panel)
+
+        body.addWidget(self.panel, 1)
+        self.status = QLabel("")
+        self.status.setStyleSheet("color:#9aa0aa;")
+        root.addWidget(self.status)
+        self._sections = [
+            ("sets", "Mis perfiles", "Perfiles de widgets que alternas (Alt+1\u2026)", self._sec_sets),
+            ("templates", "Templates y estilos de nota base", "Aspectos guardados y notas base editables", self._sec_templates),
+            ("config", "Configuraci\u00f3n y atajos", "Ajustes, cables, tonos y teclas", self._sec_config),
+            ("files", "Archivos (exportar / importar)", "Para llevar o compartir widgets", self._sec_files),
+            ("backups", "Copias de seguridad", "Se hacen solas; aqu\u00ed se recuperan", self._sec_backups),
+            ("undo", "Deshacer (historial)", "Ctrl+Alt+Z / Ctrl+Alt+Y, tambi\u00e9n entre sesiones", self._sec_undo),
+        ]
+        from PySide6.QtWidgets import QListWidgetItem
+        for key, title, sub, _f in self._sections:
+            it = QListWidgetItem(title + "\n" + sub)
+            it.setData(Qt.UserRole, key)
+            it.setSizeHint(QSize(240, 48))
+            self.nav.addItem(it)
+
+        self.nav.currentRowChanged.connect(lambda _r: self.refresh())
+        self.nav.setCurrentRow(0)
+
+    # ---- utilidades
+    @staticmethod
+    def _count(d, suffix='.json', skip_underscore=True):
+        try:
+            return len([f for f in os.listdir(d) if f.lower().endswith(suffix) and not (skip_underscore and f.startswith('_'))])
+        except OSError:
+            return 0
+
+    def select(self, key):
+        for i, s in enumerate(self._sections):
+            if s[0] == key:
+                self.nav.setCurrentRow(i)
+
+    def _save_all(self):
+        self.status.setText(self.m.save_everything_now())
+
+    def _clear(self):
+        while self.pl.count():
+            it = self.pl.takeAt(0)
+            if it.widget() is not None:
+                it.widget().deleteLater()
+
+    def refresh(self):
+        i = self.nav.currentRow()
+        if not (0 <= i < len(self._sections)):
+            return
+        key, title, sub, fn = self._sections[i]
+        desc, where, info, actions = fn()
+        self._clear()
+        t = QLabel(title)
+        t.setStyleSheet("font-size:16px;font-weight:bold;")
+        self.pl.addWidget(t)
+        d = QLabel(desc)
+        d.setWordWrap(True)
+        self.pl.addWidget(d)
+        if where:
+            w = QLabel("D\u00f3nde est\u00e1:  " + where)
+            w.setWordWrap(True)
+            w.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            w.setStyleSheet("color:#8fb8ff;")
+            self.pl.addWidget(w)
+
+        if info:
+            il = QLabel("\n".join(info))
+            il.setWordWrap(True)
+            il.setStyleSheet("background:#2b2b2f;border-radius:6px;padding:8px;")
+            self.pl.addWidget(il)
+        for a in actions:
+            label, target, tip = a
+            b = QPushButton(label)
+            b.setStyleSheet("QPushButton{text-align:left;padding:7px 10px;}")
+            b.setToolTip(tip or "")
+            if isinstance(target, list):
+                mn = QMenu(b)
+                for nm, cb in target:
+                    act = mn.addAction(nm)
+                    act.triggered.connect(lambda _c=False, f=cb: (f(), self.refresh()))
+                if not target:
+                    b.setEnabled(False)
+                b.setMenu(mn)
+            else:
+                b.clicked.connect(lambda _c=False, f=target: (f(), self.refresh()))
+            self.pl.addWidget(b)
+
+        self.pl.addStretch(1)
+
+    def _folder(self, path):
+        return ("Abrir la carpeta", lambda: self.m.open_folder(path), path)
+
+    # ---- secciones: (descripcion, ubicacion, lineas de informacion, acciones)
+    def _sec_sets(self):
+        m = self.m
+        names = [os.path.splitext(os.path.basename(p))[0] for p in m._list_profiles()]
+        cur = m.current_profile_name
+        info = ["Perfil activo: " + (("\u00ab%s\u00bb" % cur) if cur else "(sin guardar como perfil todav\u00eda)"),
+                "%d perfiles guardados%s" % (len(names), (": " + ", ".join(names[:8]) + ("\u2026" if len(names) > 8 else "")) if names else "")]
+        return ("Un perfil es una foto completa de tus widgets (posiciones, enlaces, contenido). Puedes tener varios y cambiar de uno a otro al instante. "
+                "El perfil activo se guarda solo al cambiar o al salir.",
+                PROFILES_DIR, info,
+                [("Guardar el perfil activo...", m._save_profile_dialog, "Si el nombre existe, lo actualiza"),
+                 ("Duplicar el perfil activo como perfil nuevo...", lambda: m.clone_current_set(), "Nunca sobrescribe otro perfil"),
+                 ("Cargar un perfil  \u25be", [(n, (lambda n=n: m._load_profile_dialog(n))) for n in names], "El perfil activo se aparta y se guarda"),
+                 ("Recuperar perfiles de una copia de seguridad...", lambda: m.show_backup_restore(), "Los perfiles borrados vuelven sin pisar los existentes"),
+                 self._folder(PROFILES_DIR)])
+
+    def _sec_templates(self):
+        m = self.m
+        n_all = self._count(TEMPLATES_DIR)
+        n_base = len(m.base_note_templates())
+        return ("Un template es el aspecto de un widget (capas, fondo, tama\u00f1o). Las notas base creadas con el editor de nota base se guardan como templates "
+                "editables, en su propia lista.",
+                TEMPLATES_DIR, ["%d templates guardados, %d de ellos son notas base editables" % (n_all, n_base)],
+                [("Ver, elegir, crear y editar templates...", lambda: m.show_template_chooser(), "Primero salen los aspectos en uso y las notas base"),
+                 ("Nueva nota base...", lambda: m.show_base_note_dialog(), "Puedes guardar el resultado como estilo"),
+                 ("Guardar un widget existente como template...", lambda: (m.show_template_chooser(), m.browser.templates._from_widget()), None),
+                 ("Importar un template desde un archivo...", lambda: (m.show_template_chooser(), m.browser.templates._import()), None),
+                 self._folder(TEMPLATES_DIR)])
+
+    def _sec_config(self):
+        m = self.m
+        cd = os.path.join(ROOT_DATA_DIR, "config_backups")
+        n = self._count(cd, skip_underscore=False)
+        return ("La configuraci\u00f3n son los ajustes generales (cables, jerarqu\u00eda, tonos, men\u00fas\u2026) y los atajos de teclado. No incluye los widgets.",
+                cd, ["%d copias de la configuraci\u00f3n guardadas (se hace una antes de cada cambio grande)" % n,
+                     "Los esquemas de atajos viven en: " + HOTKEY_PROFILES_DIR],
+                [("Guardar una copia de la configuraci\u00f3n ahora", lambda: m._osd("Configuraci\u00f3n guardada" if m._backup_config() else "No se pudo guardar"), None),
+                 ("Restaurar una configuraci\u00f3n previa...", m.restore_config_backup, None),
+                 ("Abrir el editor de atajos de teclado", m.show_hotkeys, None),
+                 self._folder(cd)])
+
+    def _sec_files(self):
+        m = self.m
+        return ("Para llevar tus widgets a otro PC o compartirlas: se exportan a un archivo .json y se importan agreg\u00e1ndolas o reemplazando todo.",
+                DATA_DIR, ["Archivo de trabajo actual: " + GLOBAL_STATE_FILE],
+                [("Exportar el perfil activo a un archivo...", m.export_state, "Puede incluir la configuraci\u00f3n"),
+                 ("Agregar widgets desde un archivo...", lambda: m.import_state(replace=False), None),
+                 ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None),
+                 ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Perfil, template, configuraci\u00f3n o copia .zip"),
+                 self._folder(DATA_DIR)])
+
+    def _sec_backups(self):
+        m = self.m
+        bl = m.list_backups()
+        full = [b for b in bl if b['kind'] == 'Completa']
+        auto = [b for b in bl if b['kind'] != 'Completa']
+        info = ["%d copias completas (todos los perfiles y templates)%s" % (len(full), ("; la \u00faltima: " + full[0]['label'].split('\u00b7')[1].strip()) if full else ""),
+                "%d copias autom\u00e1ticas del perfil activo%s" % (len(auto), ("; la \u00faltima: " + auto[0]['label'].split('\u00b7')[1].strip()) if auto else "")]
+        return ("Las copias se hacen solas mientras trabajas. Desde aqu\u00ed recuperas el perfil activo, perfiles borrados o templates. "
+                "Antes de restaurar el perfil activo se guarda una copia de lo actual y se puede deshacer.",
+                FULL_BACKUP_DIR + "   (y " + BACKUP_DIR + ")", info,
+                [("Restaurar una copia de seguridad...", lambda: m.show_backup_restore(), None),
+                 ("Hacer una copia completa ahora", m._full_backup_now, None),
+                 self._folder(FULL_BACKUP_DIR)])
+
+    def _sec_undo(self):
+        m = self.m
+        h = getattr(m, '_global_history', [])
+        return ("Ctrl+Alt+Z deshace y Ctrl+Alt+Y rehace los cambios en los widgets (crear, borrar, editar, mover\u2026). Ctrl+Z deshace primero los del widget enfocado. "
+                "El historial de cada perfil se guarda en disco y sigue ah\u00ed al reiniciar.",
+                m._undo_file(), ["Este perfil: %d pasos (est\u00e1s en el %d)" % (len(h), getattr(m, '_global_history_idx', 0) + 1)],
+                [("Deshacer", m.undo_global, None), ("Rehacer", m.redo_global, None),
+                 ("Olvidar el historial guardado de este perfil", m.clear_saved_history, "Libera espacio; los widgets no cambian")])
+
+    # ---- arrastrar y soltar
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        e.acceptProposedAction()
+        QTimer.singleShot(0, lambda: ([self.m.load_anything(p) for p in paths], self.refresh()))
+
+HOTKEY_GROUPS = {
+    "open_browser": "Aplicaci\u00f3n", "open_hotkeys": "Aplicaci\u00f3n", "toggle_console": "Aplicaci\u00f3n",
+    "toggle_all": "Visibilidad y plegado", "show_all": "Visibilidad y plegado", "hide_all": "Visibilidad y plegado",
+    "toggle_collapse_all": "Visibilidad y plegado", "collapse_all": "Visibilidad y plegado",
+    "expand_all": "Visibilidad y plegado", "add_widget": "Crear y ordenar", "new_default": "Crear y ordenar",
+    "cycle_sort": "Crear y ordenar", "reload_all": "Edici\u00f3n y recarga", "undo_global": "Edici\u00f3n y recarga",
+    "redo_global": "Edici\u00f3n y recarga", "undo_widget": "Con un widget enfocado",
+    "redo_widget": "Con un widget enfocado", "reload_widget": "Con un widget enfocado", "open_gestures": "Aplicaci\u00f3n",
+    **{f"set_{_k}_{_n}": "Perfiles y ranuras" for _k in ("load", "save", "loadc") for _n in range(1, 11)},
+    "profile_next": "Perfiles y ranuras", "profile_prev": "Perfiles y ranuras", "clone_set": "Perfiles y ranuras",
+}
+
+
+class HotkeyEditor(QWidget):
+    """Editor jerarquico de atajos: comandos por categorias, menu del tray, menu de cada widget y gestos
+    del icono de bandeja. Con busqueda, aviso de conflictos y perfiles (templates) de atajos."""
+    COLS = ("Funci\u00f3n", "Atajo", "Global", "Tecla de men\u00fa", "")
+
+    def __init__(self, manager, say=None):
+        super().__init__()
+        from PySide6.QtWidgets import QTreeWidget
+        self.m, self.say, self._building, self._rows = manager, say or (lambda s: None), False, {}
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(400)
+        self.timer.timeout.connect(self.commit)
+        v = QVBoxLayout(self)
+        self.info = QLabel("Cada funci\u00f3n puede tener un atajo. <b>Global</b>: funciona aunque otra aplicaci\u00f3n tenga el "
+                           "foco; si no, solo con un widget enfocado. La <b>tecla de men\u00fa</b> es la letra que activa la "
+                           "opci\u00f3n con el men\u00fa abierto. Se guarda solo en <b>hotkeys.json</b>.")
+        self.info.setWordWrap(True)
+        v.addWidget(self.info)
+        prow = QHBoxLayout()
+        prow.addWidget(QLabel("Perfil:"))
+        self.profiles = QComboBox()
+        self.profiles.setMinimumWidth(150)
+        prow.addWidget(self.profiles)
+        for text, fn in (("Cargar", self._p_load), ("Guardar como...", self._p_save), ("Eliminar", self._p_delete),
+                         ("Importar...", self._p_import), ("Exportar...", self._p_export),
+                         ("Restaurar valores por defecto", self._p_reset)):
+            b = QPushButton(text)
+            b.clicked.connect(lambda _c=False, f=fn: f())
+            prow.addWidget(b)
+        prow.addStretch(1)
+        v.addLayout(prow)
+        srow = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Buscar funci\u00f3n o atajo...")
+        self.search.setClearButtonEnabled(True)
+        srow.addWidget(self.search, 1)
+        for text, fn in (("Expandir todo", lambda: self.tree.expandAll()), ("Contraer todo", lambda: self.tree.collapseAll())):
+            b = QPushButton(text)
+            b.clicked.connect(lambda _c=False, f=fn: f())
+            srow.addWidget(b)
+        v.addLayout(srow)
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(5)
+        self.tree.setHeaderLabels(list(self.COLS))
+        self.tree.setIndentation(18)
+        hd = self.tree.header()
+        hd.setStretchLastSection(False)
+        for c, w in ((0, 330), (1, 200), (2, 55), (3, 100), (4, 34)):
+            self.tree.setColumnWidth(c, w)
+        v.addWidget(self.tree, 1)
+        self.conf = QLabel("")
+        v.addWidget(self.conf)
+        self.search.textChanged.connect(self._filter)
+        self.rebuild()
+    # ---- construccion del arbol ------------------------------------------
+    def _group(self, parent, text):
+        from PySide6.QtWidgets import QTreeWidgetItem
+        it = QTreeWidgetItem(parent if parent is not None else self.tree)
+        it.setText(0, text)
+        f = it.font(0)
+        f.setBold(True)
+        it.setFont(0, f)
+        it.setExpanded(True)
+        return it
+
+    def _leaf(self, parent, label, cid, keys_ok, path=None, letter="", local_only=False, gesture=None):
+        from PySide6.QtWidgets import QTreeWidgetItem, QKeySequenceEdit
+        hk, t = self.m.hotkeys, self.tree
+        it = QTreeWidgetItem(parent if parent is not None else t)
+        it.setText(0, label)
+        if gesture is not None:
+            cb = QComboBox()
+            cb.addItem("(nada)", "")
+            for c in HOTKEY_COMMANDS:
+                if not c[4]:
+                    cb.addItem(c[1], c[0])
+            cb.setCurrentIndex(max(cb.findData(hk.tray_command(gesture)), 0))
+            cb.view().setMinimumWidth(380)
+            cb.currentIndexChanged.connect(lambda _i, g=gesture, w=cb: self._on_gesture(g, w.currentData()))
+            t.setItemWidget(it, 1, cb)
+            return it
+        if cid:
+            it.setData(0, Qt.UserRole, cid)
+        ke = cbg = le = None
+        if keys_ok and cid:
+            key, glob = hk.binding(cid)
+            ke = QKeySequenceEdit(QKeySequence(key))
+            ke.setMaximumSequenceLength(1)
+            cbg = QCheckBox()
+            needs = local_only                      # [PACK105] las teclas de widget tambien pueden ser globales
+            cbg.setChecked(glob and not needs)
+            cbg.setEnabled(not needs)
+            cbg.setStyleSheet("margin-left:18px;")
+            t.setItemWidget(it, 1, ke)
+            t.setItemWidget(it, 2, cbg)
+            ke.keySequenceChanged.connect(lambda *_a, c=cid: self._on_key(c))
+            cbg.toggled.connect(lambda *_a, c=cid: self._on_key(c))
+            clr = QToolButton()
+            clr.setText("\u2715")
+            clr.setToolTip("Quitar el atajo")
+            clr.clicked.connect(lambda _c=False, k=ke: k.clear())
+            t.setItemWidget(it, 4, clr)
+            self._rows[cid] = (it, ke, cbg)
+        if path is not None:
+            le = QLineEdit(letter)
+            le.setMaxLength(1)
+            le.setAlignment(Qt.AlignCenter)
+            le.editingFinished.connect(lambda p=path, e=le: self._on_letter(p, e.text()))
+            t.setItemWidget(it, 3, le)
+        return it
+
+    def _menu_tree(self, root, menu, prefix, widget_menu):
+        hk = self.m.hotkeys
+        stack = [(-1, root)]
+        for path, label, depth, leaf, letter in hk.menu_rows(menu, prefix):
+            if path.startswith(("tray/Widgets", "tray/Nuevo desde un tipo")):
+                continue
+            while stack and stack[-1][0] >= depth:
+                stack.pop()
+            parent = stack[-1][1]
+            if not leaf:
+                it = self._leaf(parent, label, None, False, path=path, letter=letter)
+                f = it.font(0)
+                f.setBold(True)
+                it.setFont(0, f)
+                it.setExpanded(False)
+                stack.append((depth, it))
+            elif widget_menu:
+                self._leaf(parent, label, "wmenu:" + path, True, path=path, letter=letter)
+            else:
+                cid = MENU_PATH_TO_CMD.get(path) or ("menu:" + path)
+                self._leaf(parent, label, cid, path not in MENU_PATH_TO_CMD, path=path, letter=letter)
+
+    def rebuild(self):
+        m = self.m
+        self._building = True
+        self.tree.blockSignals(True)
+        self.tree.clear()
+        self._rows = {}
+        g_cmd = self._group(None, "Comandos")
+        cats = {}
+        for cid, label, _k, _g, _n in HOTKEY_COMMANDS:
+            cat = HOTKEY_GROUPS.get(cid, "General")
+            if cat not in cats:
+                cats[cat] = self._group(g_cmd, cat)
+            self._leaf(cats[cat], label, cid, True)
+        g_tray = self._group(None, "Men\u00fa del icono de bandeja (tray)")
+        menu = m.tray_icon.contextMenu()
+        if menu is not None:
+            self._menu_tree(g_tray, menu, "tray", False)
+        g_w = self._group(None, "Men\u00fa de cada widget (clic derecho): con tecla local act\u00faan sobre el widget enfocado; con tecla global, sobre el que est\u00e9 bajo el cursor o el \u00faltimo usado")
+        wid = next((w for w, s in m.global_state.items() if isinstance(s, dict)), None)
+        if wid:
+            self._menu_tree(g_w, m.build_widget_context_menu(wid, full=True), "widget", True)
+        else:
+            self._leaf(g_w, "(crea un widget para ver su men\u00fa)", None, False)
+        g_g = self._group(None, "Gestos del icono de bandeja (se lee Ctrl / Alt al hacer clic)")
+        for g, glabel in TRAY_GESTURES:
+            self._leaf(g_g, glabel, None, False, gesture=g)
+        self.tree.blockSignals(False)
+        self._building = False
+        self._refresh_profiles()
+        self._mark_conflicts()
+        self._filter(self.search.text())
+
+    def _refresh_profiles(self, select=None):
+        cur = select or self.profiles.currentText()
+        self.profiles.blockSignals(True)
+        self.profiles.clear()
+        self.profiles.addItems(self.m.hotkeys.profile_names())
+        i = self.profiles.findText(cur)
+        if i >= 0:
+            self.profiles.setCurrentIndex(i)
+        self.profiles.blockSignals(False)
+
+    def _filter(self, text):
+        text = (text or "").strip().lower()
+
+        def walk(it):
+            n = it.childCount()
+            own = (not text) or text in it.text(0).lower() or any(
+                text in (self.m.hotkeys.binding(cid)[0] or "").lower()
+                for cid in [it.data(0, Qt.UserRole)] if cid)
+            any_child = False
+            for i in range(n):
+                any_child = walk(it.child(i)) or any_child
+            show = own or any_child
+            it.setHidden(not show)
+            if text and any_child:
+                it.setExpanded(True)
+            return show
+        for i in range(self.tree.topLevelItemCount()):
+            walk(self.tree.topLevelItem(i))
+    # ---- cambios ----------------------------------------------------------
+    def _on_key(self, cid):
+        if self._building or cid not in self._rows:
+            return
+        _it, ke, cbg = self._rows[cid]
+        hk = self.m.hotkeys
+        key = ke.keySequence().toString(QKeySequence.PortableText)
+        if cid.startswith(("menu:", "wmenu:")) and not key:
+            hk.cfg["hotkeys"].pop(cid, None)
+        else:
+            hk.set_binding(cid, key, cbg.isChecked())
+        self._mark_conflicts()
+        self.timer.start()
+
+    def _on_letter(self, path, text):
+        text = text.strip().lower()[:1]
+        if text and text not in path.rsplit("/", 1)[1].lower():
+            self.say(f"La tecla '{text}' debe aparecer en el texto de la opci\u00f3n.")
+            self.rebuild()
+            return
+        self.m.hotkeys.set_menu_key(path, text)
+        self.timer.start()
+
+    def _on_gesture(self, gesture, cmd):
+        if not self._building:
+            self.m.hotkeys.set_tray_command(gesture, cmd or "")
+            self.timer.start()
+
+    def commit(self):
+        hk = self.m.hotkeys
+        hk.save()
+        hk.apply()
+        self.m.build_tray_menu()
+        self._mark_conflicts()
+        self.say("Atajos guardados.")
+
+    def hideEvent(self, event):
+        # Un cambio de atajo se confirma 400 ms despues; si se cierra antes, no se perdia.
+        if self.timer.isActive():
+            self.timer.stop()
+            self.commit()
+        super().hideEvent(event)
+
+    def _mark_conflicts(self):
+        bad = self.m.hotkeys.conflicts()
+        for cid, (it, _ke, _cb) in self._rows.items():
+            if cid in bad:
+                it.setForeground(0, QBrush(QColor("#e05555")))
+            else:
+                it.setData(0, Qt.ForegroundRole, None)
+        self.conf.setText(f"<span style='color:#e05555'>Conflicto: {len(bad)} funciones comparten atajo (en rojo).</span>"
+                          if bad else "Sin conflictos.")
+
+    # ---- perfiles ---------------------------------------------------------
+    def _p_load(self):
+        name = self.profiles.currentText()
+        if not name:
+            return
+        try:
+            self.m.hotkeys.load_profile(name)
+        except Exception as e:
+            self.say(f"No se pudo cargar el perfil: {e}")
+            return
+        self.m.build_tray_menu()
+        self.rebuild()
+        self.say(f"Perfil '{name}' cargado.")
+
+    def _p_save(self):
+        name, ok = QInputDialog.getText(self, "Guardar esquema de atajos", "Nombre del perfil:", text=self.profiles.currentText())
+        if not ok:
+            return
+        n = self.m.hotkeys.safe_profile_name(name)
+        if not n:
+            self.say("Nombre no v\u00e1lido.")
+            return
+        if n in self.m.hotkeys.profile_names() and QMessageBox.question(
+                self, "Sobrescribir", f"El perfil '{n}' ya existe. \u00bfSobrescribirlo?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.m.hotkeys.save_profile(n)
+        self._refresh_profiles(n)
+        self.say(f"Perfil '{n}' guardado.")
+
+    def _p_delete(self):
+        name = self.profiles.currentText()
+        if name and QMessageBox.question(self, "Eliminar perfil", f"\u00bfEliminar el perfil '{name}'?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes:
+            try:
+                self.m.hotkeys.delete_profile(name)
+            except OSError as e:
+                self.say(f"No se pudo eliminar: {e}")
+            self._refresh_profiles()
+
+    def _p_import(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Importar esquema de atajos", DATA_DIR, "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError("no es un esquema de atajos")
+            n = self.m.hotkeys.safe_profile_name(os.path.splitext(os.path.basename(path))[0]) or "importado"
+            os.makedirs(HOTKEY_PROFILES_DIR, exist_ok=True)
+            with open(os.path.join(HOTKEY_PROFILES_DIR, n + ".json"), "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self.say(f"No se pudo importar: {e}")
+            return
+        self._refresh_profiles(n)
+        self.say(f"Perfil '{n}' importado (usa Cargar para aplicarlo).")
+
+    def _p_export(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Exportar atajos actuales", os.path.join(DATA_DIR, "mis_atajos.json"), "JSON (*.json)")
+        if path:
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(self.m.hotkeys.cfg_snapshot(), f, indent=2, ensure_ascii=False)
+            except OSError as e:
+                self.say(f"No se pudo exportar: {e}")
+
+    def _p_reset(self):
+        if QMessageBox.question(self, "Restaurar", "\u00bfRestaurar todos los atajos, teclas de men\u00fa y gestos a sus valores por defecto?",
+                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.m.hotkeys.reset_defaults()
+        self.m.build_tray_menu()
+        self.rebuild()
+        self.say("Valores por defecto restaurados.")
+
+# --- Clase del Gestor Principal de Widgets ---
+
+def _paint_cable_sample(p, m, vlen, p0, p1, col_a, col_b, fx=None, rpath=None):
+    """Cable de muestra (miniaturas del dialogo de cables) con los ajustes ACTUALES: misma logica que
+    ConnectorOverlay.draw_edge pero para una longitud virtual 'vlen'. Si cambia draw_edge, cambiar aqui tambien."""
+    from PySide6.QtCore import QPointF
+    path = QPainterPath()
+    path.moveTo(p0)
+    path = rpath if rpath is not None else _cable_path(p0, p1, m.cable_curve(vlen), fx)
+    op_mul, w_main = m.cable_length_style(vlen)
+    w_end, w_ctr = m.cable_width_profile(vlen)
+    ca = _cable_color(col_a, CABLE_STYLE['alpha'] * op_mul)
+    cb = _cable_color(col_b, CABLE_STYLE['alpha'] * op_mul)
+    blend = _cable_blend if CABLE_STYLE['blend_hsv'] else _cable_blend_rgb
+    lo = max(0.0, min(0.499, m.get_cable_param('_cable_grad_start') / 100.0))
+    hi = 1.0 - lo
+    if hi - lo < 1e-4:
+        lo, hi = max(0.0, lo - 5e-5), min(1.0, lo + 5e-5)
+    om = m.cable_opacity_profile(vlen)
+    os_ = max(0.0, min(0.499, m.get_cable_param('_cable_ograd_start') / 100.0))
+
+    def stop(s):
+        c = ca if s <= lo else (cb if s >= hi else blend(ca, cb, (s - lo) / (hi - lo)))
+        d = min(s, 1.0 - s)
+        if om < 0.999 and os_ < 0.495 and d > os_:
+            u = (d - os_) / (0.5 - os_)
+            c = QColor(c)
+            c.setAlpha(int(round(c.alpha() * (1.0 + (om - 1.0) * (u * u * (3.0 - 2.0 * u))))))
+        return c
+    grad = QLinearGradient(QPointF(p0), QPointF(p1))
+    for s in sorted({0.0, 1.0, lo, hi} | {i / 12.0 for i in range(13)}):
+        grad.setColorAt(s, stop(s))
+    brush = QBrush(grad)
+    gl = m.get_cable_param('_cable_glow')
+    if gl > 0:
+        base = p.opacity()
+        gs = m.get_cable_param('_cable_glow_size')
+        p.setOpacity(base * min(1.0, gl / 100.0 * 0.2))
+        for gi in (3.0, 1.5):
+            if abs(w_end - w_ctr) >= 0.08:            # [PACK89] el resplandor sigue el afinado del cable
+                _cable_draw_tapered(p, path, brush, max(0.3, w_end) + gs * 2.0 * gi / 3.0, max(0.3, w_ctr) + gs * 2.0 * gi / 3.0,
+                                    m.get_cable_param('_cable_wgrad_start') / 100.0, False)
+                continue
+            pen = QPen(brush, max(0.3, w_end) + gs * 2.0 * gi / 3.0, Qt.SolidLine)
+            pen.setCapStyle(Qt.RoundCap)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(path)
+        p.setOpacity(base)
+    if abs(w_end - w_ctr) >= 0.08:
+        _cable_draw_tapered(p, path, brush, max(0.3, w_end), max(0.3, w_ctr),
+                            m.get_cable_param('_cable_wgrad_start') / 100.0, False)
+    else:
+        pen = QPen(brush, max(0.3, w_main), Qt.SolidLine)
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+
+
+class CableSampleView(QWidget):
+    """Miniatura en vivo (a la derecha de cada ajuste) de lo que cambia ese ajuste de los cables.
+    kind: 'hover', 'short'/'long' (corto arriba, largo abajo; se marca el que cambia), 'grad', 'glow'
+    o una curva 'op_near'/'op_far'/'w_near'/'w_far' (opacidad o grosor segun la longitud)."""
+    COL_A, COL_B = '#ffb347', '#4dd0e1'
+
+    def __init__(self, manager, kind, parent=None):
+        super().__init__(parent)
+        self.m = manager
+        self.kind = kind
+        self.setFixedSize(220, 84 if kind in ('fx', 'rope') else 56)         # [PACK99] la miniatura de los efectos es mas alta
+        self._ropes = {}                                           # [PACK100] la miniatura de la cuerda esta viva
+        self._rope_timer = None
+        if kind == 'rope':
+            self._rope_timer = QTimer(self)
+            self._rope_timer.setInterval(33)
+            self._rope_timer.timeout.connect(self.update)
+
+    def showEvent(self, e):
+        if self._rope_timer is not None:
+            self._rope_timer.start()
+        super().showEvent(e)
+
+    def hideEvent(self, e):
+        if self._rope_timer is not None:
+            self._rope_timer.stop()
+        super().hideEvent(e)
+
+    def paintEvent(self, _e):
+        from PySide6.QtCore import QPointF
+        m, k, w, h = self.m, self.kind, self.width(), self.height()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor('#11141c'))
+        p.setPen(QColor('#2a3042'))
+        p.drawRoundedRect(0, 0, w - 1, h - 1, 5, 5)
+        if k in ('op_near', 'op_far', 'w_near', 'w_far', 'c_near', 'c_far'):
+            self._plot(p, w, h)
+            p.end()
+            return
+        if k == 'fx':
+            self._fx_sample(p, w, h)
+            p.end()
+            return
+        if k == 'rope':
+            self._rope_sample(p, w, h)
+            p.end()
+            return
+        far = max(m.get_cable_param('_cable_op_far'), m.get_cable_param('_cable_w_far')) * 1.5
+        hf = m.get_cable_hover_opacity() if getattr(m, '_cable_sample_hover', True) else 1.0   # contexto de la muestra
+        if k in ('short', 'long'):
+            for vlen, name, cy in ((0.0, 'short', 16), (far, 'long', h - 16)):
+                p.setOpacity((1.0 if name == k else 0.35) * hf)
+                self._cable(p, vlen, QPointF(18, cy + 5), QPointF(w - 18, cy - 5))
+                if name == k:
+                    p.fillRect(3, cy - 7, 3, 14, QColor('#ffb347'))
+            p.setOpacity(1.0)
+        else:
+            if k == 'hover':
+                p.setOpacity(m.get_cable_hover_opacity())
+            if k != 'hover':
+                p.setOpacity(hf)
+            _a, _b = (0.86, 0.14) if k == 'curve' else (0.68, 0.32)
+            if k == 'crown':
+                self._crown_sample(p)
+            elif k == 'dash':
+                self._dash_sample(p, QPointF(18, h * _a), QPointF(w - 18, h * _b))
+            else:
+                self._cable(p, 0.0, QPointF(18, h * _a), QPointF(w - 18, h * _b))
+            p.setOpacity(1.0)
+            if k == 'glow' and m.get_cable_param('_cable_glow') <= 0:
+                p.setPen(QColor('#8b93a8'))
+                p.drawText(self.rect(), Qt.AlignHCenter | Qt.AlignBottom, "sin resplandor")
+        p.end()
+
+    def _cable(self, p, vlen, a, b, fx=None, rpath=None):
+        _paint_cable_sample(p, self.m, vlen, a, b, self.COL_A, self.COL_B, fx, rpath)
+        for pt, col in ((a, self.COL_A), (b, self.COL_B)):
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(col))
+            p.drawEllipse(pt, 3.5, 3.5)
+
+
+    def _rope_sample(self, p, w, h):
+        """[PACK100] Un cable cercano (izquierda) y uno lejano (derecha), cada uno a escala de su distancia real, con su fisica."""
+        from PySide6.QtCore import QPointF
+        m = self.m
+        near = max(m.get_cable_param('_rope_near'), 60.0)
+        far = max(m.get_cable_param('_rope_far'), near + 50.0)
+        hf = m.get_cable_hover_opacity() if getattr(m, '_cable_sample_hover', True) else 1.0
+        p.setOpacity(hf)
+        chord = 92.0
+        f = p.font()
+        f.setPixelSize(9)
+        p.setFont(f)
+        now = time.monotonic()
+        for idx, (x0, vlen, name) in enumerate(((10.0, near, "cercano"), (118.0, far, "lejano"))):
+            sc = chord / vlen
+            a, b = QPointF(x0, 14.0), QPointF(x0 + chord, 14.0)
+            P = m.cable_rope_params(vlen)
+            rp = None
+            if P is not None:
+                rope = self._ropes.get(idx)
+                if rope is None:
+                    rope = self._ropes[idx] = _CableRope(idx + 11)
+                rope.step(now, a.x(), a.y(), b.x(), b.y(), (P[0] * sc, P[1], P[2], P[3], P[4], sc, 14, P[7], P[8]))
+                rp = rope.path()
+            self._cable(p, vlen, a, b, None, rp)
+            p.setOpacity(1.0)
+            p.setPen(QColor('#8b93a8'))
+            p.drawText(QRect(int(x0), h - 12, int(chord), 11), Qt.AlignHCenter, "%s (%d px)" % (name, int(vlen)))
+            p.setOpacity(hf)
+        p.setOpacity(1.0)
+        if m.cable_rope_params(0.0) is None:
+            p.setPen(QColor('#8b93a8'))
+            p.drawText(QRect(0, 34, w, 20), Qt.AlignHCenter, "cuerda apagada (cantidad 0 %)")
+
+    def _fx_sample(self, p, w, h):
+        """[PACK99] Un cable cercano (izquierda) y uno lejano (derecha), cada uno a escala de su distancia real."""
+        from PySide6.QtCore import QPointF
+        m = self.m
+        near = max(m.get_cable_param('_cable_fx_near'), 60.0)
+        far = max(m.get_cable_param('_cable_fx_far'), near + 50.0)
+        hf = m.get_cable_hover_opacity() if getattr(m, '_cable_sample_hover', True) else 1.0
+        p.setOpacity(hf)
+        chord = 92.0
+        f = p.font()
+        f.setPixelSize(9)
+        p.setFont(f)
+        for x0, vlen, name in ((10.0, near, "cercano"), (118.0, far, "lejano")):
+            fx = m.cable_fx(vlen, chord / vlen)
+            a, b = QPointF(x0, 26.0), QPointF(x0 + chord, 18.0)
+            self._cable(p, vlen, a, b, fx)
+            p.setOpacity(1.0)
+            p.setPen(QColor('#8b93a8'))
+            p.drawText(QRect(int(x0), h - 12, int(chord), 11), Qt.AlignHCenter, "%s (%d px)" % (name, int(vlen)))
+            p.setOpacity(hf)
+        p.setOpacity(1.0)
+        if m.cable_fx(0.0) is None:
+            p.setPen(QColor('#8b93a8'))
+            p.drawText(QRect(0, 34, w, 20), Qt.AlignHCenter, "efectos apagados (cantidad 0 %)")
+
+    def _crown_sample(self, p):
+        from PySide6.QtCore import QPointF
+        m, w, h = self.m, self.width(), self.height()
+        hf = m.get_cable_hover_opacity() if getattr(m, '_cable_sample_hover', True) else 1.0
+        mode = int(m.get_cable_param('_crown_opacity_mode'))
+        p.setOpacity(1.0)
+        p.setPen(QPen(QColor('#394056'), 1.5))
+        p.drawLine(QPointF(12, h - 10), QPointF(w - 12, h - 10))      # borde superior del papel (muestra)
+        p.setOpacity(hf if mode == 0 else (m.get_cable_hover_opacity() if mode == 1
+                                           else (1.0 if mode == 2 else m.get_cable_param('_crown_opacity') / 100.0)))
+        _crown_paint(p, m, _cable_color(self.COL_A, CABLE_STYLE['alpha'] * m.cable_length_style(0.0)[0]), w / 2.0, h - 10, 0.0)
+        p.setOpacity(1.0)
+
+    def _dash_sample(self, p, a, b):
+        from PySide6.QtCore import QPointF
+        m = self.m
+        path = _cable_path(a, b, m.cable_curve(0.0))
+        grad = QLinearGradient(QPointF(a), QPointF(b))
+        grad.setColorAt(0.0, _cable_color(self.COL_A, CABLE_STYLE['alpha']))
+        grad.setColorAt(1.0, _cable_color(self.COL_B, CABLE_STYLE['alpha']))
+        wd = max(0.3, m.get_cable_param('_cable_width_max') * CABLE_STYLE['dim_width'] / CABLE_STYLE['width'])
+        p.setPen(_cable_dotted_pen(QBrush(grad), wd, m.get_cable_param('_cable_dash_len'), m.get_cable_param('_cable_dash_gap')))
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+        for pt, col in ((a, self.COL_A), (b, self.COL_B)):
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(col))
+            p.drawEllipse(pt, 3.5, 3.5)
+
+    def _plot(self, p, w, h):
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QPolygonF
+        m, op = self.m, self.kind.startswith('op')
+        pre = self.kind.split('_')[0]               # 'op' opacidad, 'w' grosor, 'c' curvatura
+        near = m.get_cable_param('_cable_%s_near' % pre)
+        far = max(m.get_cable_param('_cable_%s_far' % pre), near + 50.0)
+        xmax = max(far * 1.3, 600.0)
+        L, R, T, B = 8, w - 8, 7, h - 13
+        top = 1.0 if op else (max(1.0, m.get_cable_param('_cable_cfar_pct') / 100.0) if pre == 'c' else m.get_cable_param('_cable_width_max') * 1.1)
+        pts = [QPointF(L + (R - L) * i / 48.0,
+                       B - (B - T) * min(1.0, (m.cable_curve_factor(xmax * i / 48.0) if pre == 'c'
+                                               else m.cable_length_style(xmax * i / 48.0)[0 if op else 1]) / top))
+               for i in range(49)]
+        active = near if self.kind.endswith('near') else far
+        for val in (near, far):
+            x = L + (R - L) * val / xmax
+            p.setPen(QPen(QColor('#ffb347') if val == active else QColor('#394056'), 1.5 if val == active else 1, Qt.DashLine))
+            p.drawLine(QPointF(x, T), QPointF(x, B))
+        p.setPen(QPen(QColor('#4dd0e1'), 2))
+        p.setBrush(Qt.NoBrush)
+        p.drawPolyline(QPolygonF(pts))
+        p.setPen(QColor('#8b93a8'))
+        f = p.font()
+        f.setPixelSize(9)
+        p.setFont(f)
+        p.drawText(QRect(L, B + 1, R - L, 11), Qt.AlignLeft, "0")
+        p.drawText(QRect(L, B + 1, R - L, 11), Qt.AlignRight, f"{int(xmax)} px")
+        p.drawText(QRect(L, B + 1, R - L, 11), Qt.AlignHCenter, f"{int(active)} px")
+
+
+class _CableCombo(QComboBox):
+    """Desplegable con la interfaz minima de un spinbox (setValue / value / valueChanged) para el dialogo de cables."""
+    valueChanged = Signal(int)
+
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        self.addItems(list(items))
+        self.currentIndexChanged.connect(self.valueChanged)
+
+    def setValue(self, v):
+        self.setCurrentIndex(int(v))
+
+    def value(self):
+        return self.currentIndex()
+
+    def setSuffix(self, _s):
+        pass
+
+
+# (pestana, [(grupo, [(clave, etiqueta, tipo, sufijo, miniatura)], nota)])
+CABLE_DIALOG_SPEC = [
+    ("Hover", [("Al pasar el rat\u00f3n sobre un widget", [
+        ('_cable_hover_opacity', "Opacidad de los cables al pasar el rat\u00f3n (se multiplica por las dem\u00e1s opacidades)", 'i', " %", 'hover'),
+        ('_cable_hover_delay', "Espera antes de empezar a mostrar los cables (0 = al instante)", 'i', " ms", None),
+        ('_cable_fade_in', "Duraci\u00f3n del fundido de entrada (0 = aparecen de golpe)", 'i', " ms", None),
+        ('_cable_fade_out', "Duraci\u00f3n del fundido de salida (0 = desaparecen de golpe)", 'i', " ms", None)], None)]),
+    ("Opacidad", [
+        ("Cu\u00e1ndo un cable cuenta como corto o largo (para la opacidad)", [
+            ('_cable_op_near', "Es 'corto' hasta esta longitud", 'i', " px", 'op_near'),
+            ('_cable_op_far', "Es 'largo' desde esta longitud", 'i', " px", 'op_far')],
+         "Entre las dos longitudes la opacidad cambia suavemente."),
+        ("Opacidad seg\u00fan la longitud del cable", [
+            ('_cable_opacity_max', "Opacidad de un cable corto", 'i', " %", 'short'),
+            ('_cable_opacity_min', "Opacidad de un cable largo", 'i', " %", 'long')], None),
+        ("Opacidad a lo largo del recorrido (cables largos)", [
+            ('_cable_ograd_start', "Opacidad plena junto a cada widget (tramo por extremo, m\u00e1x. 50 %)", 'i', " %", 'long'),
+            ('_cable_octr_pct', "Opacidad en el centro, respecto a la de los extremos", 'i', " %", 'long')],
+         "El tramo se cuenta desde cada extremo (padre e hijo), por eso el m\u00e1ximo es 50 %. Con 100 % en el centro no hay cambio.")]),
+    ("Grosor", [
+        ("Cu\u00e1ndo un cable cuenta como corto o largo (para el grosor)", [
+            ('_cable_w_near', "Es 'corto' hasta esta longitud", 'i', " px", 'w_near'),
+            ('_cable_w_far', "Es 'largo' desde esta longitud", 'i', " px", 'w_far')], None),
+        ("Grosor seg\u00fan la longitud del cable", [
+            ('_cable_width_max', "Grosor de un cable corto (y de los extremos de uno largo)", 'f', " px", 'short'),
+            ('_cable_wctr_pct', "Grosor en el centro de un cable largo (% del de uno corto)", 'i', " %", 'long'),
+            ('_cable_wgrad_start', "Grosor pleno junto a cada widget (tramo por extremo, m\u00e1x. 50 %)", 'i', " %", 'long')], None)]),
+    ("Forma", [("@sub", "Curvatura", [
+        ("Curvatura de los cables", [
+            ('_cable_curve', "Curvatura (0 % = recta, 100 % = curva en S, hasta 400 %)", 'i', " %", 'curve')],
+         "Afecta a todos los cables, a su resplandor y a las muestras de este dialogo."),
+        ("Curvatura seg\u00fan la longitud del cable", [
+            ('_cable_c_near', "Es 'corto' hasta esta longitud (curvatura plena)", 'i', " px", 'c_near'),
+            ('_cable_c_far', "Es 'largo' desde esta longitud", 'i', " px", 'c_far'),
+            ('_cable_cfar_pct', "Curvatura de un cable largo (% de la de uno corto; 100 = no mengua)", 'i', " %", 'long')],
+         "Cuanto m\u00e1s largo es el cable, m\u00e1s se endereza; entre las dos longitudes el cambio es suave."),
+    ]), ("@sub", "Cuerda (f\u00edsica)", [
+        ("Cuerda: el cable pesa, se estira como una goma y se mueve (f\u00edsica)", [
+            ('_rope_amount', "Cantidad de cuerda (0 % = cable de siempre, sin f\u00edsica)", 'i', " %", 'rope'),
+            ('_rope_sag_px', "Ca\u00edda en un cable cercano (cuerda que sobra entre los widgets)", 'i', " px", 'rope'),
+            ('_rope_weight', "Peso (m\u00e1s peso = vuelve antes a su sitio y se columpia m\u00e1s al mover un widget)", 'i', " %", 'rope'),
+            ('_rope_stiff', "Rigidez (0 % = cuerda blanda, 100 % = alambre: sale recto del widget y se mueve poco)", 'i', " %", 'rope'),
+            ('_rope_elastic', "Elasticidad (0 % = cuerda, 100 % = goma que rebota)", 'i', " %", 'rope'),
+            ('_rope_damp', "Amortiguaci\u00f3n (m\u00e1s = se queda quieta antes)", 'i', " %", 'rope'),
+            ('_rope_life', "Vida: balanceo suave permanente (0 % = solo se mueve si mueves los widgets)", 'i', " %", 'rope'),
+            ('_rope_inertia', "Reacci\u00f3n al mover un widget (0 % = no se columpia)", 'i', " %", 'rope')],
+         "Con la cuerda activa, la forma del cable la decide la f\u00edsica: cuelga entre los bordes de los dos widgets (m\u00e1s cuanto m\u00e1s cerca est\u00e1n) y se balancea sola. "
+         "Mientras haya cables a la vista se repintan continuamente (en un PC lento los fotogramas bajan solos; con vida 0 % y los widgets quietos no se repinta nada). Con 0 % vuelven la curvatura en S y los efectos de abajo."),
+        ("Cuerda: proximidad (cu\u00e1ndo un cable cuenta como cercano o lejano)", [
+            ('_rope_near', "Es 'cercano' hasta esta distancia entre widgets (ca\u00edda plena)", 'i', " px", 'rope'),
+            ('_rope_far', "Es 'lejano' desde esta distancia", 'i', " px", 'rope'),
+            ('_rope_far_pct', "Ca\u00edda que conserva un cable lejano (% de la de uno cercano)", 'i', " %", 'rope')],
+         "Entre las dos distancias el cambio es suave. Un cable lejano siempre conserva una ca\u00edda m\u00ednima (el 3 % de su longitud) para que no quede r\u00edgido."),
+    ]), ("@sub", "Peso y resorte", [
+        ("Efecto peso (solo con la cuerda apagada): el cable cuelga en forma de U", [
+            ('_cable_fx_weight', "Cantidad (0 % = sin efecto)", 'i', " %", 'fx'),
+            ('_cable_fx_weight_px', "Ca\u00edda m\u00e1xima en un cable muy cercano", 'i', " px", 'fx')],
+         "Cuelga hacia abajo entre los dos widgets, m\u00e1s cuanto m\u00e1s cerca estan, sin depender de c\u00f3mo est\u00e9n alineados (se suma a la curvatura en S; ponla a 0 % para usar solo estos efectos). Con los widgets en vertical exacto no hay un 'abajo' perpendicular y el peso se desvanece: ah\u00ed se nota el resorte."),
+        ("Efecto resorte: el cable ondula como una sinusoide", [
+            ('_cable_fx_spring', "Cantidad (0 % = sin efecto)", 'i', " %", 'fx'),
+            ('_cable_fx_spring_px', "Amplitud m\u00e1xima de la onda en un cable cercano", 'i', " px", 'fx'),
+            ('_cable_fx_f_near', "Ondas completas en un cable cercano", 'f', "", 'fx'),
+            ('_cable_fx_f_far', "Ondas completas en un cable lejano (la frecuencia cambia entre los dos)", 'f', "", 'fx')],
+         "La onda es perpendicular a la recta que une los widgets, as\u00ed que se ve con cualquier alineaci\u00f3n."),
+        ("Proximidad: cu\u00e1ndo un cable cuenta como cercano o lejano (para estos efectos)", [
+            ('_cable_fx_near', "Es 'cercano' hasta esta distancia entre widgets (efectos plenos)", 'i', " px", 'fx'),
+            ('_cable_fx_far', "Es 'lejano' desde esta distancia", 'i', " px", 'fx'),
+            ('_cable_fx_far_pct', "Efecto que conserva un cable lejano (% del de uno cercano; 0 = recto)", 'i', " %", 'fx')],
+         "Entre las dos distancias el cambio es suave. La miniatura muestra un cable cercano (izquierda) y uno lejano (derecha), a escala."),
+    ]), ("@sub", "Punteados y rendimiento", [
+        ("Cables punteados (los que van hacia los hijos)", [
+            ('_cable_dash_len', "Longitud de cada trazo", 'f', " px", 'dash'),
+            ('_cable_dash_gap', "Hueco entre trazos", 'f', " px", 'dash')],
+         "En p\u00edxeles: no cambian al variar el grosor del cable. Menos hueco = m\u00e1s frecuencia; hueco muy corto lo hace casi continuo."),
+        ("Rendimiento: cu\u00e1nto gasta el dibujo de los cables", [
+            ('_cable_quality', "Calidad de dibujo", 'c', ("Autom\u00e1tica (baja sola si hay muchos cables o el PC va justo)", "M\u00e1xima (siempre todos los detalles)", "Ligera (sin resplandor ni grosor variable; cuerdas quietas)", "M\u00ednima (ademas sin suavizado de bordes: para PCs modestos)"), None),
+            ('_rope_fps', "Fotogramas por segundo m\u00e1ximos de la animaci\u00f3n de las cuerdas", 'i', " fps", None)],
+         "En un PC justo, 'Ligera' es lo m\u00e1s r\u00e1pido. En 'Autom\u00e1tica' la animaci\u00f3n tambi\u00e9n se pausa mientras hay un men\u00fa abierto y se limita sola seg\u00fan lo que tarda en pintar."),
+    ])]),
+    ("Color y brillo", [
+        ("Degradado de color entre padre e hijo", [
+            ('_cable_grad_start', "Color puro junto a cada widget (tramo por extremo, m\u00e1x. 50 %)", 'i', " %", 'grad')],
+         "El degradado ocupa el tramo central que queda: 100 - 2 x este valor."),
+        ("Resplandor (glow)", [
+            ('_cable_glow', "Intensidad del resplandor (0 = sin resplandor)", 'i', " %", 'glow'),
+            ('_cable_glow_size', "Alcance del resplandor a cada lado del cable", 'i', " px", 'glow')],
+         "Se pinta con 2 trazos suaves bajo el cable (barato); con 0 % no se dibuja nada.")]),
+]
+
+# (pestana, [(grupo, [(clave, etiqueta, tipo, sufijo, miniatura)], nota)])  -- [PACK79] la corona tiene su propio dialogo
+CROWN_DIALOG_SPEC = [
+    ("Forma y posici\u00f3n", [
+        ("Tama\u00f1o y trazo de la corona", [
+            ('_crown_size', "Tama\u00f1o de la corona", 'i', " %", 'crown'),
+            ('_crown_width_pct', "Grosor de l\u00ednea (% del grosor de un cable corto)", 'i', " %", 'crown')],
+         "El grosor se mide respecto al de un cable corto, as\u00ed que sigue a la configuraci\u00f3n de Cables."),
+        ("Posici\u00f3n respecto al papel del ancestro", [
+            ('_crown_dx', "Desplazamiento horizontal (+ hacia la derecha del papel)", 'i', " px", 'crown'),
+            ('_crown_dy', "Desplazamiento vertical (+ hacia arriba)", 'i', " px", 'crown')],
+         "La corona sigue la rotaci\u00f3n del widget y la inclinaci\u00f3n propia de su imagen (\"upright_angle\" en el JSON; clic derecho en el widget \u2192 Orientaci\u00f3n de la imagen...).")]),
+    ("Opacidad", [
+        ("Nivel de opacidad de la corona", [
+            ('_crown_opacity_mode', "Nivel de opacidad", 'c', ("Autom\u00e1tico: como los cables en cada momento", "Siempre como los cables en hover (tenue)", "Siempre como en arrastre / control de plegar (plena)", "Personalizado"), 'crown'),
+            ('_crown_opacity', "Opacidad personalizada (solo en modo Personalizado)", 'i', " %", 'crown')],
+         "El color de cada corona se cambia por widget: clic derecho \u2192 Corona de este widget (tono, saturaci\u00f3n, brillo, opacidad)...")]),
+]
+
+
+def _rounded_rect_path(x, y, w, h, radii):
+    """Rectangulo con radio propio en cada esquina: radii = (sup.izq., sup.der., inf.der., inf.izq.)."""
+    from PySide6.QtCore import QRectF
+    tl, tr, br, bl = [max(0.0, min(float(r), w / 2.0, h / 2.0)) for r in radii]
+    path = QPainterPath()
+    path.moveTo(x + tl, y)
+    path.lineTo(x + w - tr, y)
+    if tr:
+        path.arcTo(QRectF(x + w - 2 * tr, y, 2 * tr, 2 * tr), 90, -90)
+    path.lineTo(x + w, y + h - br)
+    if br:
+        path.arcTo(QRectF(x + w - 2 * br, y + h - 2 * br, 2 * br, 2 * br), 0, -90)
+    path.lineTo(x + bl, y + h)
+    if bl:
+        path.arcTo(QRectF(x, y + h - 2 * bl, 2 * bl, 2 * bl), 270, -90)
+    path.lineTo(x, y + tl)
+    if tl:
+        path.arcTo(QRectF(x, y, 2 * tl, 2 * tl), 180, -90)
+    path.closeSubpath()
+    return path
+
+
+BASE_NOTE_DEFAULTS = {
+    'w': 250, 'h': 250, 'color': '#fef08a', 'grad': False, 'color2': '#f9c74f', 'grad_angle': 90,
+    'radius': 14, 'corners': [True, True, True, True],
+    'border': 0, 'border_color': '#b08900',
+    'shadow': 8, 'shadow_op': 45, 'shadow_dx': 0, 'shadow_dy': 3, 'shadow_color': '#000000',
+    'strip': 0, 'strip_op': 30, 'strip_y': 0,
+    'fold': False, 'fold_style': 0, 'fold_corner': 2, 'fold_size': 60, 'fold_tip': 100,
+    'fold_c1': 40, 'fold_c2': 40, 'fold_c3': -60, 'fold_round': 45,
+    'fold_auto': True, 'fold_color': '#e0a800',
+    'fold_shadow': 45, 'fold_shadow_size': 10,
+    'fold_p1': 50, 'fold_p2': 50, 'fold_p3': 50,          # [PACK73] donde (a lo largo de cada curva) se curva mas
+    'lift_shade': 0, 'lift_white': False, 'lift_size': 14, 'lift_front': True,      # sombra / brillo de la esquina levantada
+    'fold_shadow_dx': 0, 'fold_shadow_dy': 0, 'lift_dx': 0, 'lift_dy': 0, 'tip_dx': 0, 'tip_dy': 0,      # desplazamientos X / Y (+ derecha, + abajo)
+    'tip_shade': 0, 'tip_white': True, 'tip_size': 14, 'tip_over': True,            # sombra / brillo de la punta redondeada
+    'grad_kind': 0, 'grad_size': 100, 'grad_cx': 0, 'grad_cy': 0, 'grad_bias': 50, 'grad_spread': 0,       # [PACK80] forma del degradado
+    'lifts': [],                                                    # [PACK80] (solo para convertir notas del pack 80)
+    'cx': [],                                                       # [PACK81] 4 ajustes de esquina: modo, forma y luces (vacio = nota antigua)
+    'text': 'Nota', 'text_color': '#1f2737', 'font_size': 22,
+}
+
+
+def _fold_color(p):
+    """Color del reverso del papel doblado: el del papel, mas oscuro y anaranjado (o el elegido)."""
+    if not p.get('fold_auto', True):
+        return QColor(p.get('fold_color', '#e0a800'))
+    c = QColor(p['color'])
+    if p.get('grad'):
+        c2 = QColor(p.get('color2', p['color']))
+        c = QColor((c.red() + c2.red()) // 2, (c.green() + c2.green()) // 2, (c.blue() + c2.blue()) // 2)
+    h, s, v, _a = c.getHsv()
+    return QColor.fromHsv(max(0, h - 6) if h >= 0 else 0, min(255, int(s * 1.2 + 30)), int(v * 0.84))
+
+
+def _fold_shapes(p, w, h, pad):
+    """Pico doblado de una esquina. Devuelve (shape_fn, solapa, centro_del_doblez, punta, direccion).
+    Estilo 0 (doblez completo): 3 curvas independientes (dos del pico + la del doblez); la solapa es el reverso visible.
+    Estilo 1 (esquina levantada): 2 curvas que se juntan en la punta, sin solapa. Curvas con signo: + = convexa, - = concava.
+    Coordenadas locales (u, v) desde la esquina hacia dentro."""
+    from PySide6.QtCore import QPointF
+    import math
+    corner = int(p.get('fold_corner', 2)) % 4
+    s = float(max(8, min(int(p.get('fold_size', 60)), int(min(w, h) * 0.9))))
+    style = 1 if int(p.get('fold_style', 0)) == 1 else 0
+    cv = lambda k, d: max(-100, min(100, int(p.get(k, d)))) / 100.0
+    c1, c2, c3 = cv('fold_c1', 40), cv('fold_c2', 40), cv('fold_c3', -60)
+    tipf = max(0, min(100, int(p.get('fold_tip', 100 if style == 0 else 0)))) / 100.0
+    if 'fold_rlen' in p:                              # [PACK84] longitud del redondeo (0..100) y curva (-100..100, negativo = hacia dentro) por separado
+        rl = max(0, min(100, int(p['fold_rlen'])))
+        dep = max(-100, min(100, int(p.get('fold_round', 100)))) / 100.0
+    else:                                             # llamadas antiguas: un solo valor con signo
+        rnd = max(-100, min(100, int(p.get('fold_round', 45))))
+        rl, dep = abs(rnd), (1.0 if rnd >= 0 else -1.0)
+    rho = rl / 100.0 * 0.45
+    jn1 = max(20, min(80, int(p.get('fold_j1', 50)))) / 100.0
+    jn2 = max(20, min(80, int(p.get('fold_j2', 50)))) / 100.0
+    X = pad if corner in (0, 3) else pad + w
+    Y = pad if corner in (0, 1) else pad + h
+    sx = 1.0 if corner in (0, 3) else -1.0
+    sy = 1.0 if corner in (0, 1) else -1.0
+
+    def P(u, v):
+        return QPointF(X + sx * u, Y + sy * v)
+
+    def lerp(a, b, t):
+        return QPointF(a.x() + (b.x() - a.x()) * t, a.y() + (b.y() - a.y()) * t)
+
+    def qpt(p0, c, p1, t):
+        return lerp(lerp(p0, c, t), lerp(c, p1, t), t)
+
+    def bow(p0, p1, amount, away, pos=0.5):
+        """Punto de control de una curva: el medio de la cuerda desplazado por su normal (+ = alejandose de 'away').
+        pos (0..1) es donde, a lo largo de la cuerda, la curva se separa mas de ella (0.5 = en el medio)."""
+        a = 2.0 * pos - 0.5
+        mx, my = (p0.x() + p1.x()) / 2.0, (p0.y() + p1.y()) / 2.0
+        dx, dy = p1.x() - p0.x(), p1.y() - p0.y()
+        L = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / L, dx / L
+        if (mx - away.x()) * nx + (my - away.y()) * ny < 0:
+            nx, ny = -nx, -ny
+        return QPointF(p0.x() + dx * a + nx * amount * L * 0.5, p0.y() + dy * a + ny * amount * L * 0.5)
+
+    pp = lambda k: max(0.25, min(0.75, int(p.get(k, 50)) / 100.0))
+    A, B, T, FAR = P(0, s), P(s, 0), P(s * tipf, s * tipf), P(s, s)
+    G = QPointF((A.x() + B.x() + T.x()) / 3.0, (A.y() + B.y() + T.y()) / 3.0)
+    mid = lerp(A, B, 0.5)
+    cut = QPainterPath()                        # lo que se quita del papel: la esquina, hasta las curvas elegidas
+    if style == 1:
+        q1, q2 = bow(A, T, c1, G, pp('fold_p1')), bow(T, B, c2, G, pp('fold_p2'))
+        cut.moveTo(A)
+        cut.quadTo(q1, T)
+        cut.quadTo(q2, B)
+
+        cut.lineTo(P(s, -6))
+        cut.lineTo(P(-6, -6))
+        cut.lineTo(P(-6, s))
+        cut.closeSubpath()
+        return (lambda body: body.subtracted(cut)), None, mid, T, (sx, sy)
+    q1, q2, q3 = bow(A, T, c1, G, pp('fold_p1')), bow(T, B, c2, G, pp('fold_p2')), bow(B, A, c3, FAR, pp('fold_p3'))
+    cut.moveTo(P(-6, -6))
+    cut.lineTo(P(s, -6))
+    cut.lineTo(B)
+    cut.quadTo(q3, A)
+    cut.lineTo(P(-6, s))
+    cut.closeSubpath()
+    flap = QPainterPath()
+    flap.moveTo(A)
+    ks = [max(-100, min(100, int(p.get(k, 0)))) / 100.0 for k in ('fold_k1', 'fold_k2', 'fold_k3', 'fold_k4')]
+    TC = T                                      # control de la curva que termina la punta
+    Pa = qpt(A, q1, T, 1.0 - rho)             # puntos donde empieza y termina el redondeo de la punta
+    Pb = qpt(T, q2, B, rho)
+    t1 = max(0.1, min(0.9 - rho, (1.0 - rho) * jn1))        # [PACK84] donde se unen las curvas 1 y 2 (a lo largo del lado 1)
+    t2 = max(rho + 0.1, min(0.9, rho + (1.0 - rho) * jn2))  # y las curvas 3 y 4 (a lo largo del lado 2)
+
+    def sub(p0, c, p1, t0, t1_, k):             # tramo t0..t1_ de una curva, con ajuste extra k de curvatura
+        S, E = qpt(p0, c, p1, t0), qpt(p0, c, p1, t1_)
+        w0, w1, w2 = (1 - t0) * (1 - t1_), t0 * (1 - t1_) + t1_ * (1 - t0), t0 * t1_
+        ctrl = QPointF(w0 * p0.x() + w1 * c.x() + w2 * p1.x(), w0 * p0.y() + w1 * c.y() + w2 * p1.y())
+        if k:
+            ex, ey = E.x() - S.x(), E.y() - S.y()
+            Lc = math.hypot(ex, ey) or 1.0
+            nx, ny = -ey / Lc, ex / Lc
+            if ((S.x() + E.x()) / 2.0 - G.x()) * nx + ((S.y() + E.y()) / 2.0 - G.y()) * ny < 0:
+                nx, ny = -nx, -ny
+            ctrl = QPointF(ctrl.x() + nx * k * Lc * 0.5, ctrl.y() + ny * k * Lc * 0.5)
+        return ctrl, E
+
+    def frac(J, ca, cb):                        # donde cae J entre los controles ca y cb (sin ajustes: J esta en ese segmento)
+        dx, dy = cb.x() - ca.x(), cb.y() - ca.y()
+        L2 = dx * dx + dy * dy
+        if L2 < 1e-9:
+            return 0.5
+        return max(0.05, min(0.95, ((J.x() - ca.x()) * dx + (J.y() - ca.y()) * dy) / L2))
+    ra, Ja0 = sub(A, q1, T, 0.0, t1, 0.0)       # [PACK84] la union depende de LAS DOS curvas: queda entre sus controles, con la proporcion de la curva base
+    rb, _e = sub(A, q1, T, t1, 1.0 - rho, 0.0)
+    fa = frac(Ja0, ra, rb)
+    ca0, _e = sub(A, q1, T, 0.0, t1, ks[0])
+    ca1, Pa = sub(A, q1, T, t1, 1.0 - rho, ks[1])
+    Ja = QPointF(ca0.x() + (ca1.x() - ca0.x()) * fa, ca0.y() + (ca1.y() - ca0.y()) * fa)
+    rc, Jb0 = sub(T, q2, B, rho, t2, 0.0)
+    rd_, _e = sub(T, q2, B, t2, 1.0, 0.0)
+    fb = frac(Jb0, rc, rd_)
+    cb0, _e = sub(T, q2, B, rho, t2, ks[2])
+    cb1, _e = sub(T, q2, B, t2, 1.0, ks[3])
+    Jb = QPointF(cb0.x() + (cb1.x() - cb0.x()) * fb, cb0.y() + (cb1.y() - cb0.y()) * fb)
+    Mc = lerp(Pa, Pb, 0.5)
+    if dep < 0:                                 # hacia dentro: se refleja la punta respecto a la cuerda; la profundidad lo escala
+        Tref = QPointF(1.5 * (Pa.x() + Pb.x()) - 2.0 * T.x(), 1.5 * (Pa.y() + Pb.y()) - 2.0 * T.y())
+        TC = lerp(Mc, Tref, -dep)
+    else:                                       # hacia fuera: sigue las tangentes de las dos curvas (continuidad); 0 = recta
+        Ttan = T
+        if rho > 0:
+            dA, dB = (Pa.x() - ca1.x(), Pa.y() - ca1.y()), (cb0.x() - Pb.x(), cb0.y() - Pb.y())
+            det = dA[0] * dB[1] - dA[1] * dB[0]
+            nA, nB = math.hypot(*dA), math.hypot(*dB)
+            if nA > 1e-6 and nB > 1e-6 and abs(det) > 1e-3 * nA * nB:
+                rx, ry = Pb.x() - Pa.x(), Pb.y() - Pa.y()
+                a, b = (rx * dB[1] - ry * dB[0]) / det, (dA[0] * ry - dA[1] * rx) / det
+                if 0.0 < a < 10.0 and 0.0 < b < 10.0:
+                    Ttan = QPointF(Pa.x() + a * dA[0], Pa.y() + a * dA[1])
+        TC = lerp(Mc, Ttan, dep)
+    flap.quadTo(ca0, Ja)
+    flap.quadTo(ca1, Pa)
+    flap.quadTo(TC, Pb)
+    flap.quadTo(cb0, Jb)
+    flap.quadTo(cb1, B)
+    flap.quadTo(q3, A)
+
+    flap.closeSubpath()
+    return (lambda body: body.subtracted(cut)), flap, mid, T, (sx, sy)
+
+
+def _soft_shadow(size, path, blur, color, op):
+    """Sombra difuminada de una forma: mascara -> desenfoque (3 pasadas de caja ~ gaussiana) -> color con opacidad."""
+    W, H = size.width(), size.height()
+    m = QImage(W, H, QImage.Format_ARGB32_Premultiplied)
+    m.fill(Qt.transparent)
+    mp = QPainter(m)
+    mp.setRenderHint(QPainter.Antialiasing)
+    mp.setPen(Qt.NoPen)
+    mp.setBrush(QColor(255, 255, 255, 255))
+    mp.drawPath(path)
+    mp.end()
+    arr = np.frombuffer(m.constBits(), dtype=np.uint8).reshape((H, m.bytesPerLine() // 4, 4))[:, :W, 3].astype(np.float32)
+    r = max(1, int(round(blur * 0.33)))
+    k = 2 * r + 1
+    for _ in range(3):
+        for ax in (0, 1):
+            c = np.cumsum(np.pad(arr, [(r + 1, r) if i == ax else (0, 0) for i in (0, 1)], mode='constant'), axis=ax)
+            arr = (c[k:] - c[:-k]) / k if ax == 0 else (c[:, k:] - c[:, :-k]) / k
+
+    a = np.clip(arr * op, 0, 255)
+    out = np.zeros((H, W, 4), dtype=np.uint8)
+    out[:, :, 0] = (color.blue() * a / 255.0).astype(np.uint8)
+    out[:, :, 1] = (color.green() * a / 255.0).astype(np.uint8)
+    out[:, :, 2] = (color.red() * a / 255.0).astype(np.uint8)
+    out[:, :, 3] = a.astype(np.uint8)
+    res = QImage(out.data, W, H, W * 4, QImage.Format_ARGB32_Premultiplied).copy()
+    return res
+
+
+def _shade_layer(size, path, blur, white, strength):
+    """[PACK73] Sombra (negra) o brillo (blanco) difuminado de una forma; strength 0..300 (por encima de 100 se refuerza)."""
+    return _soft_shadow(size, path, max(1, int(blur)), QColor(255, 255, 255) if white else QColor(0, 0, 0),
+                        max(0.0, min(3.0, strength / 100.0)))
+
+
+def _tip_blob(p, flap, ftip, fdir, size_px, shift):
+    """Mancha circular en la punta (redondeada) de la solapa, algo desplazada hacia dentro del papel."""
+    from PySide6.QtCore import QPointF
+    rr = abs(max(-100, min(100, int(p.get('fold_round', 45))))) / 100.0 * 0.45
+    c = flap.boundingRect().center()
+    cx = ftip.x() + (c.x() - ftip.x()) * rr * 0.9 + fdir[0] * shift + int(p.get('tip_dx', 0))
+    cy = ftip.y() + (c.y() - ftip.y()) * rr * 0.9 + fdir[1] * shift + int(p.get('tip_dy', 0))
+    r = max(3.0, size_px * 0.6)
+    path = QPainterPath()
+    path.addEllipse(QPointF(cx, cy), r, r)
+    return path
+
+
+# [PACK80] esquinas levantadas (hasta 4, cada una con sus ajustes) y degradados con forma
+LIFT_DEFAULTS = {'on': False, 'size': 90, 'tip': 0, 'c1': -45, 'p1': 50, 'c2': -45, 'p2': 50,
+                 'sh': 40, 'sh_size': 16, 'sh_dx': 0, 'sh_dy': 0,          # sombra (negra) del borde levantado
+                 'hi': 0, 'hi_size': 16, 'hi_dx': 0, 'hi_dy': 0,           # brillo (blanco) del borde levantado
+                 'front': True, 'cast': 0}                                 # capa de las luces / separacion de la sombra de la nota
+
+
+def _norm_lifts(p):
+    """Lista de 4 ajustes de esquina levantada (0 sup.izq., 1 sup.der., 2 inf.der., 3 inf.izq.).
+    Si la nota es antigua (una sola esquina: fold_* y lift_*), se convierte a esta forma."""
+    def clean(src):
+        d = dict(LIFT_DEFAULTS)
+        for k, dv in LIFT_DEFAULTS.items():
+            if k in src:
+                try:
+                    d[k] = bool(src[k]) if isinstance(dv, bool) else int(src[k])
+                except (ValueError, TypeError):
+                    pass
+        return d
+    src = p.get('lifts')
+    if isinstance(src, list) and len(src) == 4 and all(isinstance(x, dict) for x in src):
+        return [clean(x) for x in src]
+    out = [dict(LIFT_DEFAULTS) for _ in range(4)]
+    if p.get('fold') and int(p.get('fold_style', 0)) == 1:
+        white = bool(p.get('lift_white', False))
+
+        k = int(p.get('lift_shade', 0))
+        out[int(p.get('fold_corner', 2)) % 4] = clean({
+            'on': True, 'size': p.get('fold_size', 60), 'tip': p.get('fold_tip', 0),
+            'c1': p.get('fold_c1', 40), 'p1': p.get('fold_p1', 50), 'c2': p.get('fold_c2', 40), 'p2': p.get('fold_p2', 50),
+            'sh': 0 if white else k, 'hi': k if white else 0,
+            'sh_size': p.get('lift_size', 14), 'hi_size': p.get('lift_size', 14),
+            'sh_dx': p.get('lift_dx', 0), 'sh_dy': p.get('lift_dy', 0), 'hi_dx': p.get('lift_dx', 0), 'hi_dy': p.get('lift_dy', 0),
+            'front': p.get('lift_front', True), 'cast': 0})
+    return out
+
+
+def _lifts_with(spec):
+    """Lista de 4 ajustes con los de 'spec' ({esquina: {clave: valor}}) activados; el resto, apagados."""
+    out = [dict(LIFT_DEFAULTS) for _ in range(4)]
+    for i, d in spec.items():
+        out[i].update(d)
+        out[i]['on'] = True
+    return out
+
+
+# [PACK81] cada esquina decide que hace: 0 nada, 1 doblez completo (con solapa), 2 esquina levantada
+CX_DEFAULTS = {
+    'mode': 0, 'size': 60, 'tip': 100,
+    'c1': 40, 'p1': 50, 'c2': 40, 'p2': 50, 'c3': -60, 'p3': 50, 'rlen': 45, 'round': 100,      # curvas del pico (lados 1 y 2) y del doblez; punta: longitud del redondeo y curva (-100..100)
+    'k1': 0, 'k2': 0, 'k3': 0, 'k4': 0, 'j1': 50, 'j2': 50,                         # ajuste extra de cada uno de los 4 tramos del pico y donde se unen (curvas 1-2 y 3-4)
+    'rev_auto': True, 'rev_color': '#e0a800',
+    'fa_k': 0, 'fa_a': 45, 'fa_s': 10, 'fa_dx': 0, 'fa_dy': 0,                       # doblez: luz que la solapa proyecta sobre el papel
+    'fb_k': 1, 'fb_a': 0, 'fb_s': 14, 'fb_dx': 0, 'fb_dy': 0, 'fb_over': True,       # doblez: luz de la punta redondeada
+    'la_k': 0, 'la_a': 40, 'la_s': 16, 'la_dx': 0, 'la_dy': 0,                       # levantada: luz 1 del borde (k: 0 sombra, 1 brillo)
+    'lb_k': 1, 'lb_a': 0, 'lb_s': 16, 'lb_dx': 0, 'lb_dy': 0,                        # levantada: luz 2 del borde
+    'front': True, 'cast': 0,                                                        # capa de las luces / separacion de la sombra de la nota
+}
+
+
+def _cx_new(corner, mode=0):
+    """Ajustes por defecto de una esquina. La luz viene de arriba a la izquierda: en la esquina inferior derecha
+    las luces empiezan al reves (brillo y sombra en vez de sombra y brillo)."""
+    d = dict(CX_DEFAULTS)
+    d['mode'] = int(mode)
+    if int(mode) == 2:
+        d.update(size=90, tip=0, c1=-45, c2=-45)
+    if int(corner) == 2:
+        d['fa_k'], d['fb_k'], d['la_k'], d['lb_k'] = 1, 0, 1, 0
+    return d
+
+
+def _cx_clean(i, x):
+    try:
+        m = max(0, min(2, int(x.get('mode', 0))))
+    except (ValueError, TypeError):
+        m = 0
+    d = _cx_new(i, m)
+    if 'rlen' not in x and 'round' in x:             # [PACK84] antes un solo valor con signo: longitud = su valor absoluto, curva = su signo
+        try:
+            r0 = int(x['round'])
+            x = dict(x, rlen=abs(r0), round=100 if r0 >= 0 else -100)
+        except (ValueError, TypeError):
+            pass
+    for k, dv in CX_DEFAULTS.items():
+        if k in x and k != 'mode':
+            try:
+                d[k] = bool(x[k]) if isinstance(dv, bool) else (str(x[k]) if isinstance(dv, str) else int(x[k]))
+            except (ValueError, TypeError):
+                pass
+    return d
+
+
+def _cx_with(spec):
+    """Lista de 4 esquinas con los ajustes de 'spec' ({esquina: {clave: valor}}); el resto, sin efecto."""
+    out = [_cx_new(i, 0) for i in range(4)]
+    for i, d in spec.items():
+        out[i] = _cx_clean(i, d)
+    return out
+
+
+def _norm_cx(p):
+    """Lista de 4 ajustes de esquina (0 sup.izq., 1 sup.der., 2 inf.der., 3 inf.izq.). Las notas anteriores
+    (una sola esquina doblada, o esquinas levantadas del pack 80) se convierten a esta forma."""
+    src = p.get('cx')
+    if isinstance(src, list) and len(src) == 4 and all(isinstance(x, dict) for x in src):
+        return [_cx_clean(i, x) for i, x in enumerate(src)]
+    out = [_cx_new(i, 0) for i in range(4)]
+    if not p.get('fold'):
+        return out
+    if int(p.get('fold_style', 0)) == 1:
+        for i, L in enumerate(_norm_lifts(p)):
+            if L['on']:
+                out[i] = _cx_clean(i, {'mode': 2, 'size': L['size'], 'tip': L['tip'], 'c1': L['c1'], 'p1': L['p1'], 'c2': L['c2'], 'p2': L['p2'],
+                                       'la_k': 0, 'la_a': L['sh'], 'la_s': L['sh_size'], 'la_dx': L['sh_dx'], 'la_dy': L['sh_dy'],
+                                       'lb_k': 1, 'lb_a': L['hi'], 'lb_s': L['hi_size'], 'lb_dx': L['hi_dx'], 'lb_dy': L['hi_dy'],
+                                       'front': L['front'], 'cast': L['cast']})
+        return out
+    i = int(p.get('fold_corner', 2)) % 4
+
+    out[i] = _cx_clean(i, {'mode': 1, 'size': p.get('fold_size', 60), 'tip': p.get('fold_tip', 100),
+                           'c1': p.get('fold_c1', 40), 'p1': p.get('fold_p1', 50), 'c2': p.get('fold_c2', 40), 'p2': p.get('fold_p2', 50),
+                           'c3': p.get('fold_c3', -60), 'p3': p.get('fold_p3', 50), 'round': p.get('fold_round', 45),
+                           'rev_auto': p.get('fold_auto', True), 'rev_color': p.get('fold_color', '#e0a800'),
+                           'fa_k': 0, 'fa_a': p.get('fold_shadow', 45), 'fa_s': p.get('fold_shadow_size', 10),
+                           'fa_dx': p.get('fold_shadow_dx', 0), 'fa_dy': p.get('fold_shadow_dy', 0),
+                           'fb_k': 1 if p.get('tip_white', True) else 0, 'fb_a': p.get('tip_shade', 0), 'fb_s': p.get('tip_size', 14),
+                           'fb_dx': p.get('tip_dx', 0), 'fb_dy': p.get('tip_dy', 0), 'fb_over': p.get('tip_over', True)})
+    return out
+
+
+def _cx_shape(i, c):
+    """Parametros de forma de una esquina, con los nombres que entiende _fold_shapes."""
+    return {'fold_corner': i, 'fold_style': 1 if c['mode'] == 2 else 0, 'fold_size': c['size'], 'fold_tip': c['tip'],
+            'fold_c1': c['c1'], 'fold_c2': c['c2'], 'fold_c3': c['c3'], 'fold_p1': c['p1'], 'fold_p2': c['p2'], 'fold_p3': c['p3'],
+            'fold_round': c['round'], 'fold_rlen': c['rlen'], 'fold_j1': c['j1'], 'fold_j2': c['j2'],
+            'fold_k1': c['k1'], 'fold_k2': c['k2'], 'fold_k3': c['k3'], 'fold_k4': c['k4']}
+
+def _grad_brush(p, w, h, pad):
+    """Pincel del fondo: color liso o degradado (0 lineal, 1 radial, 2 conico, 3 espejo) con direccion, tamano,
+    centro, balance entre los dos colores y comportamiento fuera de su tamano (rellenar, reflejar, repetir)."""
+    import math
+    from PySide6.QtGui import QConicalGradient, QRadialGradient, QGradient
+    if not p.get('grad'):
+        return QBrush(QColor(p['color']))
+    kind = max(0, min(3, int(p.get('grad_kind', 0))))
+    ang_deg = float(p.get('grad_angle', 90))
+    ang = math.radians(ang_deg)
+    ux, uy = math.cos(ang), math.sin(ang)
+    size = max(5, min(400, int(p.get('grad_size', 100)))) / 100.0
+    cx = pad + w / 2.0 + max(-100, min(100, int(p.get('grad_cx', 0)))) / 100.0 * w / 2.0
+    cy = pad + h / 2.0 + max(-100, min(100, int(p.get('grad_cy', 0)))) / 100.0 * h / 2.0
+    bias = max(5, min(95, int(p.get('grad_bias', 50)))) / 100.0
+    c1, c2 = QColor(p['color']), QColor(p.get('color2', p['color']))
+    spread = {1: QGradient.ReflectSpread, 2: QGradient.RepeatSpread}.get(int(p.get('grad_spread', 0)), QGradient.PadSpread)
+    half = max(1.0, (abs(ux) * w + abs(uy) * h) / 2.0 * size)
+
+    if kind == 2:
+        g = QConicalGradient(cx, cy, -ang_deg)
+        g.setColorAt(0.0, c1)
+        g.setColorAt(bias, c2)
+        g.setColorAt(1.0, c1)
+        return QBrush(g)
+    if kind == 1:
+        g = QRadialGradient(cx, cy, max(1.0, math.hypot(w, h) / 2.0 * size))
+    elif kind == 3:
+        g = QLinearGradient(cx, cy, cx + ux * half, cy + uy * half)
+        spread = QGradient.ReflectSpread
+    else:
+        g = QLinearGradient(cx - ux * half, cy - uy * half, cx + ux * half, cy + uy * half)
+    g.setSpread(spread)
+    g.setColorAt(0.0, c1)
+    if bias != 0.5:
+        g.setColorAt(bias, QColor.fromRgbF((c1.redF() + c2.redF()) / 2.0, (c1.greenF() + c2.greenF()) / 2.0,
+                                           (c1.blueF() + c2.blueF()) / 2.0, (c1.alphaF() + c2.alphaF()) / 2.0))
+
+    g.setColorAt(1.0, c2)
+    return QBrush(g)
+
+
+def render_base_note(p, with_text=False):
+    """Imagen (QImage ARGB) de una nota base: esquinas, borde, degradado, franja adhesiva, esquinas dobladas o
+    levantadas (cada esquina con su modo, su forma y sus luces) y sombra. Tiene un margen transparente para la sombra;
+    la mascara de la ventana sigue la forma real."""
+    from PySide6.QtCore import QRectF
+    import math
+    w, h = max(20, int(p['w'])), max(20, int(p['h']))
+    sh, dx, dy = max(0, int(p.get('shadow', 0))), int(p.get('shadow_dx', 0)), int(p.get('shadow_dy', 0))
+    pad = (sh + max(abs(dx), abs(dy)) + 2) if sh > 0 else (max(abs(dx), abs(dy)) + 2)
+    cxs = [(i, c) for i, c in enumerate(_norm_cx(p)) if c['mode']] if p.get('fold') else []
+    for _i, c in cxs:
+        if c['mode'] == 2:               # margen: luces detras de la nota y sombra proyectada por la esquina
+            for k in ('la', 'lb'):
+                if int(c[k + '_a']) > 0 and not c['front']:
+                    pad = max(pad, int(c[k + '_s']) + 2 + max(abs(int(c[k + '_dx'])), abs(int(c[k + '_dy']))))
+            if int(c['cast']) > 0 and sh > 0:
+                pad = max(pad, sh + int(c['cast']) + max(abs(dx), abs(dy)) + 2)
+    img = QImage(w + 2 * pad, h + 2 * pad, QImage.Format_ARGB32_Premultiplied)
+    img.fill(Qt.transparent)
+    q = QPainter(img)
+    q.setRenderHint(QPainter.Antialiasing)
+    r = float(p['radius'])
+    radii = [r if c else 0.0 for c in p['corners']]
+    body = _rounded_rect_path(pad, pad, w, h, radii)
+    whole = _rounded_rect_path(0, 0, img.width(), img.height(), (0, 0, 0, 0))
+    flaps = []                           # esquinas dobladas: (solapa, centro del doblez, punta, direccion, ajustes)
+    pieces = []                          # esquinas levantadas: (trozo que se levanta, ajustes)
+    for i, c in cxs:
+        shape_fn, flap, fmid, ftip, fdir = _fold_shapes(_cx_shape(i, c), w, h, pad)
+        before = body
+        body = shape_fn(body).intersected(whole)
+        if c['mode'] == 2:
+            pieces.append((before.subtracted(body), c))
+        else:
+            flaps.append((flap, fmid, ftip, fdir, c))
+    outline = body
+    if sh > 0:
+        op = max(0, min(100, int(p.get('shadow_op', 40)))) / 100.0
+        sp = QTransform().translate(dx, dy).map(outline)
+        d_len = math.hypot(dx, dy)
+        ux, uy = (dx / d_len, dy / d_len) if d_len > 0.01 else (0.0, 1.0)
+        for piece, c in pieces:          # la esquina levantada flota: su sombra se separa de la nota y deforma el contorno
+            cs = int(c['cast'])
+            if cs > 0:
+                sp = sp.united(QTransform().translate(dx + ux * cs, dy + uy * cs).map(piece))
+        q.drawImage(0, 0, _soft_shadow(img.size(), sp, sh, QColor(p.get('shadow_color', '#000000')), op))
+    brush = _grad_brush(p, w, h, pad)
+
+    def lights(front):
+        for piece, c in pieces:
+            if bool(c['front']) != front:
+                continue
+            for k in ('la', 'lb'):
+                if int(c[k + '_a']) > 0:
+                    moved = QTransform().translate(int(c[k + '_dx']), int(c[k + '_dy'])).map(piece)
+                    q.drawImage(0, 0, _shade_layer(img.size(), moved, int(c[k + '_s']), int(c[k + '_k']) == 1, int(c[k + '_a'])))
+    lights(False)
+    q.setCompositionMode(QPainter.CompositionMode_Clear)
+
+    q.setPen(Qt.NoPen)
+    q.setBrush(Qt.black)
+    q.drawPath(body)                     # la sombra no debe verse a traves de un fondo semitransparente
+    q.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    q.setBrush(brush)
+    q.drawPath(body)
+    st_h = max(0, int(p.get('strip', 0)))
+    if st_h > 0:                         # franja adhesiva: una banda algo mas clara arriba, con un fino filo inferior
+        q.save()
+        q.setClipPath(body)
+        so = max(0, min(100, int(p.get('strip_op', 30)))) / 100.0
+        sy0 = pad + max(0, int(p.get('strip_y', 0)))
+        q.fillRect(QRectF(pad, sy0, w, st_h), QColor(255, 255, 255, int(255 * so)))
+        q.fillRect(QRectF(pad, sy0 + st_h, w, 1.2), QColor(0, 0, 0, int(60 * so)))
+        q.restore()
+    bw = float(p.get('border', 0))
+    if bw > 0:
+        if not flaps and not pieces:
+            hb = bw / 2.0
+            inner = _rounded_rect_path(pad + hb, pad + hb, w - bw, h - bw, [max(0.0, x - hb) for x in radii])
+            q.setPen(QPen(QColor(p['border_color']), bw))
+            q.setBrush(Qt.NoBrush)
+            q.drawPath(inner)
+        else:
+            q.save()
+            q.setClipPath(body)
+            q.setPen(QPen(QColor(p['border_color']), 2 * bw))
+            q.setBrush(Qt.NoBrush)
+            q.drawPath(body)
+            q.restore()
+
+    q.save()
+    q.setClipPath(body)
+    lights(True)
+    q.restore()
+    for flap, fmid, ftip, fdir, c in flaps:
+        q.save()
+        q.setClipPath(body)              # la solapa nunca sobresale del papel
+        fs, fo = max(0, int(c['fa_s'])), max(0, int(c['fa_a'])) / 100.0
+        if fs > 0 and fo > 0:            # luz que la solapa proyecta sobre el papel (sombra o brillo)
+            off = fs * 0.35
+            sh_path = QTransform().translate(fdir[0] * off + int(c['fa_dx']), fdir[1] * off + int(c['fa_dy'])).map(flap)
+            q.drawImage(0, 0, _soft_shadow(img.size(), sh_path, fs, QColor(255, 255, 255) if int(c['fa_k']) == 1 else QColor(60, 30, 0), min(fo, 3.0)))
+        tsh, ts = int(c['fb_a']), max(2, int(c['fb_s']))
+        pt = {'fold_round': c['rlen'], 'tip_dx': c['fb_dx'], 'tip_dy': c['fb_dy']}
+        tw = int(c['fb_k']) == 1
+        if tsh > 0 and not c['fb_over']:                     # luz BAJO la punta (sobre el papel)
+            q.drawImage(0, 0, _shade_layer(img.size(), _tip_blob(pt, flap, ftip, fdir, ts, ts * 0.3), ts, tw, tsh))
+        fc = _fold_color({'color': p['color'], 'grad': p.get('grad'), 'color2': p.get('color2', p['color']),
+                          'fold_auto': c['rev_auto'], 'fold_color': c['rev_color']})
+        fg = QLinearGradient(fmid, ftip)
+        fg.setColorAt(0.0, fc.lighter(128))
+        fg.setColorAt(1.0, fc.darker(112))
+        q.setPen(Qt.NoPen)
+        q.setBrush(QBrush(fg))
+        q.drawPath(flap)
+        q.setPen(QPen(QColor(255, 255, 255, 90), 1.0))      # brillo del filo del doblez
+
+        q.setBrush(Qt.NoBrush)
+        q.drawPath(flap)
+        if tsh > 0 and c['fb_over']:                         # luz SOBRE la punta
+            q.setClipPath(flap, Qt.IntersectClip)
+            q.drawImage(0, 0, _shade_layer(img.size(), _tip_blob(pt, flap, ftip, fdir, ts, 0.0), ts, tw, tsh))
+        q.restore()
+    if with_text and str(p.get('text', '')).strip():
+        q.setPen(QColor(p['text_color']))
+        q.setFont(QFont('Inter', int(p.get('font_size', 22))))
+        q.drawText(QRectF(pad + 10, pad + 10, w - 20, h - 20), Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap, str(p['text']))
+    q.end()
+    return img
+
+def _dominant_color(pixmap):
+    """Color dominante (lo que se ve) de una imagen: histograma de tono ponderado por saturacion*brillo sobre los pixeles
+    opacos; se promedia el entorno del tono mas frecuente. Si casi no hay color (imagen gris) devuelve el color medio."""
+    img = pixmap.toImage().convertToFormat(QImage.Format_RGBA8888)
+    w, h = img.width(), img.height()
+    if w < 2 or h < 2:
+        return QColor(160, 160, 164)
+    try:
+        arr = np.frombuffer(img.bits(), dtype=np.uint8).reshape((h, w, 4))
+    except Exception:
+        arr = np.array(img.bits(), copy=True).reshape((h, w, 4))
+    step = max(1, int((w * h / 40000.0) ** 0.5))
+    a = arr[::step, ::step].astype(np.float32)
+    vis = a[:, :, 3] > 40
+    rgb = a[:, :, :3][vis] / 255.0
+    if len(rgb) == 0:
+        return QColor(160, 160, 164)
+    r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+    mx, mn = rgb.max(axis=1), rgb.min(axis=1)
+    d = mx - mn
+    s = np.where(mx > 1e-6, d / np.maximum(mx, 1e-6), 0.0)
+    wgt = np.where(s > 0.12, s * mx, 0.0)
+    if wgt.sum() < 0.02 * len(rgb):
+        m_ = rgb.mean(axis=0)
+        return QColor.fromRgbF(float(m_[0]), float(m_[1]), float(m_[2]))
+    dd = np.maximum(d, 1e-6)
+    hh = np.where(mx == r, ((g - b) / dd) % 6.0, np.where(mx == g, (b - r) / dd + 2.0, (r - g) / dd + 4.0)) * 60.0
+    idx = (hh // 10.0).astype(int) % 36
+    hist = np.bincount(idx, weights=wgt, minlength=36)
+    b0 = int((hist + np.roll(hist, 1) + np.roll(hist, -1)).argmax())
+    near = np.abs(((idx - b0 + 18) % 36) - 18) <= 1
+    ww = wgt * near
+    ang = np.deg2rad(hh)
+    hm = float(np.degrees(np.arctan2((ww * np.sin(ang)).sum(), (ww * np.cos(ang)).sum())) % 360.0)
+    sm = float((s * ww).sum() / ww.sum())
+    vm = float((mx * ww).sum() / ww.sum())
+    return QColor.fromHsvF(hm / 360.0, min(1.0, sm), min(1.0, vm))
+
+
+# ---------------------------------------------------------------- ayuda de gestos (una sola fuente de verdad)
+GESTURE_MODS = (("C", "Ctrl"), ("A", "Alt"), ("S", "May\u00fas"), ("W", "Win"))
+# clave = modificadores pulsados (orden C, A, S, W); filas = (entrada, que hace, condicion: None | 'layer' | 'nolayer')
+GESTURE_TABLE = {
+    "": [
+        ("Click", "Editar el texto del widget (capa de texto)", None),
+        ("Arrastrar", "Mover el widget (los hijos con posici\u00f3n ligada la siguen)", 'nolayer'),
+        ("Arrastrar", "Mover la CAPA seleccionada dentro del widget", 'layer'),
+        ("Doble click", "Ocultar el widget (pide confirmaci\u00f3n)", None),
+        ("Click derecho", "Men\u00fa del widget (aqu\u00ed est\u00e1 todo lo que hacen estos gestos)", None),
+        ("Esc / Intro", "Quitar la selecci\u00f3n de capa", 'layer'),
+    ],
+
+    "C": [
+        ("Arrastrar", "ENLAZAR: el widget pasa a ser HIJO del widget donde sueltes", None),
+        ("Rueda", "Sobre una imagen (sin capa seleccionada): cambiar el tono (salta entre los predefinidos)", 'nolayer'),
+        ("Rueda", "Sobre un bot\u00f3n de texto: tama\u00f1o de letra del bot\u00f3n", None),
+        ("Rueda", "Capa seleccionada (texto o imagen): ancho de la capa (\u00b110)", 'layer'),
+        ("Doble click", "Ocultar TODOS los widgets (pide confirmaci\u00f3n)", None),
+        ("Teclas", "1\u20260: cargar el perfil N \u00b7 F12: consola", None),
+        ("Teclas", "\u2190/\u2192: girar la capa seleccionada 5\u00b0", 'layer'),
+    ],
+
+    "A": [
+        ("Arrastrar", "ENLAZAR: el widget pasa a ser PADRE del widget donde sueltes", None),
+        ("Con otras teclas", "Alt hace los pasos m\u00e1s finos (\u00b11 en vez de \u00b110)", None),
+    ],
+
+    "S": [
+        ("Arrastrar", "Mover todo el widget aunque haya una capa seleccionada", None),
+        ("Rueda", "Capa seleccionada: alto de la capa (\u00b110)", 'layer'),
+    ],
+
+    "CS": [
+        ("Rueda", "Sobre una imagen (sin capa seleccionada): tono FINO (1\u00b0)", 'nolayer'),
+        ("Rueda", "Capa seleccionada (texto o imagen): ancho y alto a la vez", 'layer'),
+        ("Teclas", "\u2191/\u2193: perfil anterior / siguiente \u00b7 P: men\u00fa r\u00e1pido de perfiles", None),
+        ("Teclas", "\u2190/\u2192: girar la capa seleccionada 1\u00b0", 'layer'),
+    ],
+
+    "CA": [
+        ("Click", "Seleccionar capa: L1 \u2192 L2 \u2192 ninguna", None),
+        ("Rueda", "Capa seleccionada (texto o imagen): ancho fino (\u00b11)", 'layer'),
+        ("Teclas", "\u2191/\u2193: inclinar la capa (0,1 \u00b7 con May\u00fas 0,01) \u00b7 \u2190/\u2192: girar 5\u00b0", 'layer'),
+    ],
+
+    "AS": [
+        ("Rueda", "Sobre un bot\u00f3n de texto: cambiar su fuente (anterior / siguiente)", None),
+        ("Rueda", "Capa seleccionada: alto fino (\u00b11)", 'layer'),
+    ],
+
+    "CAW": [
+        ("Arrastrar", "Mover el widget con TODOS sus descendientes", None),
+    ],
+
+    "CAS": [
+        ("Click izq.", "CLONAR el widget (hereda su jerarqu\u00eda)", None),
+        ("Arrastrar", "CREAR UN HIJO (tipo: Ajustes > Tipo de hijo): aparece bajo el cursor y se coloca donde sueltes", None),
+        ("Click central", "Rotaci\u00f3n aleatoria del widget (\u00b120\u00b0)", None),
+        ("Click der.", "ELIMINAR el widget sin confirmar", None),
+    ],
+
+    "CASW": [
+        ("Click izq.", "CLONAR el widget como hijo de posici\u00f3n independiente (hereda su jerarqu\u00eda)", None),
+        ("Arrastrar", "CREAR UN HIJO (otro tipo, Ajustes > Tipo de hijo): aparece bajo el cursor y se coloca donde sueltes", None),
+        ("Click central", "Resetear la rotaci\u00f3n a 0\u00b0", None),
+        ("Click der.", "ELIMINAR el widget y TODOS sus descendientes (confirma solo si tiene hijos)", None),
+    ],
+}
+GESTURE_SECTIONS = (("", "Sin teclas"), ("C", "Ctrl"), ("A", "Alt"), ("S", "May\u00fas"), ("CS", "Ctrl + May\u00fas"),
+                    ("CA", "Ctrl + Alt"), ("AS", "Alt + May\u00fas"), ("CAW", "Ctrl + Alt + Win"),
+                    ("CAS", "Ctrl + Alt + May\u00fas"), ("CASW", "Ctrl + Alt + May\u00fas + Win"))
+
+
+def _gesture_rows(key, layer_sel=0, linking=None):
+    rows = []
+    if linking == 'child':
+        rows.append(("Soltar", "sobre el widget que ser\u00e1 su PADRE"))
+    elif linking == 'parent':
+        rows.append(("Soltar", "sobre el widget que ser\u00e1 su HIJO"))
+    for kind, text, cond in GESTURE_TABLE.get(key, []):
+        if cond is None or (cond == 'layer') == bool(layer_sel):
+            rows.append((kind, text))
+    return rows
+
+
+def _gesture_html(key, layer_sel=0, linking=None):
+    def _chip(c, n):
+        bg, fg = ("#ffd166", "#1b1b2b") if c in key else ("#3b3f5c", "#8f94b8")
+        return "<span style='background:%s;color:%s;'>&nbsp;%s&nbsp;</span>&nbsp;" % (bg, fg, n)
+    chips = "".join(_chip(c, n) for c, n in GESTURE_MODS)
+    layer = ("Capa activa: L%d" % layer_sel) if layer_sel else "Sin capa activa"
+    out = ["<div>%s&nbsp;&nbsp;<span style='color:#9fb3ff'>%s</span></div>" % (chips, layer)]
+    rows = _gesture_rows(key, layer_sel, linking)
+    if rows:
+        out.append("<table cellspacing='0' cellpadding='2'>")
+        for kind, text in rows:
+            out.append("<tr><td style='color:#ffb86b;font-weight:600;white-space:nowrap;'>%s&nbsp;&nbsp;</td><td>%s</td></tr>" % (kind, text))
+        out.append("</table>")
+    else:
+        out.append("<div style='color:#9aa0c8'><i>Sin funci\u00f3n con esta combinaci\u00f3n</i></div>")
+    return "".join(out)
+
+
+class GestureHud(QLabel):
+    """Recuadro junto al cursor que dice que hara cada click / arrastre / rueda con los modificadores pulsados."""
+    WIDTH = 440
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowTransparentForInput)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setTextFormat(Qt.RichText)
+        self.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.setStyleSheet("QLabel{background:transparent;color:#f1f2ff;padding:8px 11px;font:12px 'Segoe UI';}")
+        self._html = None
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor(22, 24, 40, 240))
+        p.setPen(QPen(QColor(255, 255, 255, 50), 1))
+        p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 10, 10)
+        p.end()
+        super().paintEvent(e)
+
+    def show_at(self, html, pos):
+        if html != self._html:
+            self._html = html
+            self.setText(html)
+            doc = QTextDocument()
+            doc.setDefaultFont(QFont("Segoe UI", 9))
+            doc.setHtml(html)
+            doc.setTextWidth(self.WIDTH - 26)
+            self.setFixedSize(self.WIDTH, int(doc.size().height()) + 22)
+        scr = QApplication.screenAt(pos) or QApplication.primaryScreen()
+        g = scr.availableGeometry()
+        x, y = pos.x() + 20, pos.y() + 24
+        if x + self.width() > g.right():
+            x = pos.x() - self.width() - 14
+        if y + self.height() > g.bottom():
+            y = pos.y() - self.height() - 14
+        self.move(max(g.left(), x), max(g.top(), y))
+        if not self.isVisible():
+            self.show()
+
+
+def _gesture_guide_html(manager):
+    h = ["<h2>Gestos del rat\u00f3n y del teclado</h2>",
+         "<p>Mant\u00e9n pulsadas las teclas <b>Ctrl</b>, <b>Alt</b>, <b>May\u00fas</b> o <b>Win</b> mientras pasas el rat\u00f3n sobre un widget: "
+         "junto al cursor aparece un recuadro con lo que har\u00e1 cada click, arrastre o rueda. "
+         "Todo lo que se hace con estas combinaciones tambi\u00e9n est\u00e1 en el <b>men\u00fa del widget</b> (click derecho).</p>"]
+    for key, title in GESTURE_SECTIONS:
+        h.append("<h3>%s</h3><table cellspacing='0' cellpadding='3'>" % title)
+        for kind, text, cond in GESTURE_TABLE.get(key, []):
+            extra = " <i>(con una capa seleccionada)</i>" if cond == 'layer' else ""
+            h.append("<tr><td><b>%s</b>&nbsp;&nbsp;</td><td>%s%s</td></tr>" % (kind, text, extra))
+        h.append("</table>")
+    h.append("<h2>Atajos de teclado configurables</h2><table cellspacing='0' cellpadding='3'>")
+    seen_sets = {}
+    for cid, label, _k, _g, _n in HOTKEY_COMMANDS:
+        key, glob = manager.hotkeys.binding(cid)
+        if cid.startswith("set_"):
+            kind = cid.rsplit("_", 1)[0]
+            if kind not in seen_sets and key:
+                seen_sets[kind] = (key, glob)
+            continue
+        if key:
+            h.append("<tr><td><b>%s</b>&nbsp;&nbsp;</td><td>%s</td><td>&nbsp;%s</td></tr>" % (
+                key, label, "(global)" if glob else "(con un widget enfocado)"))
+    names = {"set_load": "Cargar el perfil de la ranura N (cifra 1\u20260)", "set_loadc": "Cargar el perfil N (o el perfil n.\u00ba N de la lista)",
+             "set_save": "Guardar el perfil activo en la ranura N"}
+    for kind, (key, glob) in seen_sets.items():
+        h.append("<tr><td><b>%s</b>&nbsp;&nbsp;</td><td>%s</td><td>&nbsp;%s</td></tr>" % (
+            key.replace("1", "1\u20260") if key[-1:] == "1" else key, names.get(kind, kind), "(global)" if glob else "(con un widget enfocado)"))
+    h.append("</table><p>Se cambian en <i>Atajos de teclado\u2026</i> (men\u00fa de la bandeja).</p>")
+    return "".join(h)
+
+
+class GestureGuideDialog(QDialog):
+    def __init__(self, manager):
+        super().__init__(None)
+        self.setWindowTitle("Gu\u00eda de gestos y atajos")
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.resize(700, 720)
+        lay = QVBoxLayout(self)
+        view = QTextEdit()
+        view.setReadOnly(True)
+        view.setHtml(_gesture_guide_html(manager))
+        lay.addWidget(view)
+        btns = QDialogButtonBox(QDialogButtonBox.Close)
+        btns.rejected.connect(self.close)
+        lay.addWidget(btns)
+
+
+class AboutDialog(QDialog):
+    """Acerca de: tarjeta animada con enlace a Ko-fi."""
+    KOFI_URL = "https://ko-fi.com/jaimeluisolguinmesina"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        import random
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setWindowTitle("Acerca de WidgetArena")
+        self.setFixedSize(460, 600)
+
+        rnd = random.Random(7)
+        self._stars = [(rnd.random(), rnd.random(), rnd.random() * 6.28, 1 + rnd.random() * 1.8) for _ in range(46)]
+        self._t0 = time.perf_counter()
+        self._drag = None
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(38, 262, 38, 30)
+        lay.setSpacing(12)
+
+        def lab(text, css, wrap=True):
+            l = QLabel(text)
+            l.setAlignment(Qt.AlignCenter)
+            l.setWordWrap(wrap)
+            l.setStyleSheet("background:transparent;" + css)
+            return l
+        lay.addWidget(lab("Tus notas y widgets, enlazados y siempre a mano en el escritorio.",
+                          "color:#d9d5ff;font:500 14px 'Segoe UI';"))
+        chip = ("background:rgba(255,255,255,28);border:1px solid rgba(255,255,255,50);border-radius:11px;"
+                "padding:4px 10px;color:#f1eeff;font:600 11px 'Segoe UI';")
+        for row in (("Widgets enlazados", "Corona", "Templates"), ("Perfiles al instante", "Atajos globales", "Telegram")):
+            hl = QHBoxLayout()
+            hl.setSpacing(8)
+            hl.addStretch(1)
+            for t in row:
+                hl.addWidget(lab(t, chip, False))
+            hl.addStretch(1)
+            lay.addLayout(hl)
+        lay.addSpacing(6)
+
+        lay.addWidget(lab("Si WidgetArena te ahorra tiempo, inv\u00edtame a un caf\u00e9 y ay\u00fadame a seguir mejor\u00e1ndola.",
+                          "color:#ffffff;font:600 15px 'Segoe UI';"))
+        self.btn = QPushButton("\u2615   Inv\u00edtame a un caf\u00e9 en Ko-fi")
+        self.btn.setCursor(Qt.PointingHandCursor)
+        self.btn.setFixedHeight(54)
+        self.btn.setStyleSheet(
+            "QPushButton{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #ff5e5b,stop:1 #ff9a5b);color:white;"
+            "border:none;border-radius:27px;font:700 16px 'Segoe UI';padding:0 26px;}"
+            "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #ff7673,stop:1 #ffb36f);}"
+            "QPushButton:pressed{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #e24f4c,stop:1 #e88548);}")
+        self.glow = QGraphicsDropShadowEffect(self.btn)
+
+        self.glow.setColor(QColor(255, 94, 91, 170))
+        self.glow.setOffset(0, 6)
+        self.glow.setBlurRadius(26)
+        self.btn.setGraphicsEffect(self.glow)
+        self.btn.clicked.connect(self._open_kofi)
+        lay.addWidget(self.btn)
+        link = lab('<a href="%s" style="color:#bfb6ff;text-decoration:none;">ko-fi.com/jaimeluisolguinmesina</a>' % self.KOFI_URL,
+                   "font:500 12px 'Segoe UI';", False)
+        link.setOpenExternalLinks(True)
+
+        link.setCursor(Qt.PointingHandCursor)
+        lay.addWidget(link)
+        lay.addStretch(1)
+        lay.addWidget(lab("Hecho con cari\u00f1o por Jaime Luis Olgu\u00edn Mesina", "color:#9d97d6;font:500 11px 'Segoe UI';", False))
+        self.close_btn = QToolButton(self)
+        self.close_btn.setText("\u2715")
+        self.close_btn.setCursor(Qt.PointingHandCursor)
+        self.close_btn.setStyleSheet("QToolButton{background:transparent;color:#d9d5ff;border:none;font:700 15px 'Segoe UI';"
+                                     "padding:6px 9px;border-radius:12px;}QToolButton:hover{background:rgba(255,255,255,40);color:#fff;}")
+        self.close_btn.move(self.width() - 62, 22)
+
+        self.close_btn.clicked.connect(self.close)
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)
+        self._timer.timeout.connect(self._tick)
+
+    def _open_kofi(self):
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(self.KOFI_URL))
+
+    def _tick(self):
+        import math
+        self.glow.setBlurRadius(26 + 10 * math.sin((time.perf_counter() - self._t0) * 2.4))
+        self.update()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._timer.start()
+        self._fade = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade.setDuration(260)
+        self._fade.setStartValue(0.0)
+        self._fade.setEndValue(1.0)
+        self._fade.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade.start()
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(e)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is not None and (e.buttons() & Qt.LeftButton):
+            self.move(e.globalPosition().toPoint() - self._drag)
+
+    def mouseReleaseEvent(self, e):
+        self._drag = None
+
+    def paintEvent(self, e):
+        import math
+        from PySide6.QtCore import QRectF, QPointF
+        from PySide6.QtGui import QRadialGradient, QPolygonF, QFontMetrics
+        t = time.perf_counter() - self._t0
+        w, h = self.width(), self.height()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        card = QRectF(10, 10, w - 20, h - 20)
+
+        for i in range(6, 0, -1):          # sombra suave
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(0, 0, 0, 9))
+            p.drawRoundedRect(card.adjusted(-i, -i + 4, i, i + 4), 24 + i, 24 + i)
+        path = QPainterPath()
+        path.addRoundedRect(card, 24, 24)
+        p.setClipPath(path)
+        bg = QLinearGradient(0, 0, w * 0.6, h)
+        bg.setColorAt(0.0, QColor("#12132b"))
+
+        bg.setColorAt(0.55, QColor("#271a4a"))
+        bg.setColorAt(1.0, QColor("#3a1c5a"))
+        p.fillPath(path, bg)
+        for i, col in enumerate((QColor(255, 94, 91), QColor(122, 92, 255), QColor(0, 200, 215))):   # luces que flotan
+            cx = w * (0.5 + 0.38 * math.cos(t * 0.55 + i * 2.1))
+            cy = h * (0.28 + 0.16 * math.sin(t * 0.7 + i * 1.7) + 0.2 * i)
+            g = QRadialGradient(cx, cy, 210)
+            c0 = QColor(col)
+            c0.setAlpha(95)
+            c1 = QColor(col)
+            c1.setAlpha(0)
+            g.setColorAt(0, c0)
+            g.setColorAt(1, c1)
+            p.setPen(Qt.NoPen)
+            p.setBrush(g)
+            p.drawRect(0, 0, w, h)
+        p.setPen(Qt.NoPen)
+
+        for sx, sy, ph, sz in self._stars:   # estrellitas
+            a = int(70 + 110 * (0.5 + 0.5 * math.sin(t * 2.0 + ph)))
+            p.setBrush(QColor(255, 255, 255, a))
+            p.drawEllipse(QRectF(10 + sx * (w - 20), 10 + sy * (h - 20), sz, sz))
+        # emblema: tres notas y una corona
+        notes = ((-50, -13, "#ffd166", 0.0), (50, 12, "#ff8fab", 1.3), (0, -2, "#7ae7ff", 2.6))
+        for dx, ang, col, ph in notes:
+            p.save()
+            p.translate(w / 2 + dx, 112 + 4 * math.sin(t * 1.6 + ph))
+            p.rotate(ang)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(0, 0, 0, 60))
+            p.drawRoundedRect(QRectF(-38, -34, 80, 80), 9, 9)
+            p.setBrush(QColor(col))
+            p.drawRoundedRect(QRectF(-40, -40, 80, 80), 9, 9)
+            p.setBrush(QColor(0, 0, 0, 55))
+            for k in range(4):
+                p.drawRoundedRect(QRectF(-28, -24 + k * 13, 56 - (14 if k == 3 else 0), 4), 2, 2)
+            p.restore()
+        p.save()
+
+        p.translate(w / 2, 52 + 3 * math.sin(t * 1.6 + 2.6))
+        crown = QPolygonF([QPointF(-24, 8), QPointF(-30, -14), QPointF(-12, -2), QPointF(0, -22),
+                           QPointF(12, -2), QPointF(30, -14), QPointF(24, 8)])
+        cg = QLinearGradient(0, -22, 0, 8)
+        cg.setColorAt(0, QColor("#fff2a8"))
+        cg.setColorAt(1, QColor("#f5a623"))
+        p.setPen(QPen(QColor(120, 70, 0, 150), 1.2))
+        p.setBrush(cg)
+        p.drawPolygon(crown)
+
+        p.restore()
+        # titulo con degradado
+        f = QFont("Segoe UI", 31)
+        f.setBold(True)
+        tp = QPainterPath()
+        txt = "WidgetArena"
+        tw = QFontMetrics(f).horizontalAdvance(txt)
+        tp.addText((w - tw) / 2, 222, f, txt)
+        tg = QLinearGradient((w - tw) / 2, 0, (w + tw) / 2, 0)
+
+        tg.setColorAt(0.0, QColor("#ffd166"))
+        tg.setColorAt(0.5, QColor("#ff8fab"))
+        tg.setColorAt(1.0, QColor("#7ae7ff"))
+        p.setPen(Qt.NoPen)
+        p.fillPath(tp, tg)
+        p.setClipping(False)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(255, 255, 255, 46), 1.2))
+        p.drawPath(path)
+
+        p.end()
+
+
+class CrownDialog(QDialog):
+    """Corona de UNA nota (cuando es la mas ancestral): apagarla, elegir su tono (color de la nota / dominante de la imagen /
+    complementario / personalizado) y personalizar saturacion, brillo y opacidad. Se guarda como 'crown' en el JSON."""
+
+    HUE_MODES = ("Por defecto (color del widget)", "Color dominante de la imagen",
+        "Complementario del dominante (lado opuesto de la rueda)", "Personalizado")
+
+    liveChanged = Signal(dict)
+
+    def __init__(self, win, parent=None):
+        super().__init__(parent)
+        self.win = win
+        cfg = dict(win._crown_cfg())
+        self.setWindowTitle("Corona de este widget")
+        lay = QVBoxLayout(self)
+        info = QLabel("Ajustes de la corona cuando este widget es la m\u00e1s ancestral del \u00e1rbol. Lo que no se personaliza "
+                      "usa los ajustes generales (apariencia / cables / forma). Se guarda como \"crown\" en el JSON del widget.")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        self.chk_on = QCheckBox("Mostrar la corona sobre este widget")
+        self.chk_on.setChecked(not cfg.get('off'))
+        lay.addWidget(self.chk_on)
+
+        from PySide6.QtWidgets import QTabWidget
+        c_tabs = QTabWidget()                          # [PACK106] sub-pestanas: la vista previa queda fija debajo
+        lay.addWidget(c_tabs)
+        pg_t, pg_i = QWidget(), QWidget()
+        pt, pi = QVBoxLayout(pg_t), QVBoxLayout(pg_i)
+        c_tabs.addTab(pg_t, "Tono")
+        c_tabs.addTab(pg_i, "Saturaci\u00f3n, brillo y opacidad")
+
+        pt.addWidget(QLabel("Modo del tono"))
+        self.cmb = QComboBox()
+        self.cmb.addItems(self.HUE_MODES)
+        self.cmb.setCurrentIndex(max(0, min(3, int(cfg.get('hue_mode', 0) or 0))))
+        pt.addWidget(self.cmb)
+
+        hr = QHBoxLayout()
+        self.hue = QSlider(Qt.Horizontal)
+        self.hue.setRange(0, 359)
+        self.hue.setValue(int(cfg.get('hue', 0) or 0) % 360)
+        self.hue.setStyleSheet("QSlider::groove:horizontal{height:8px;border-radius:4px;background:qlineargradient("
+                               "x1:0,y1:0,x2:1,y2:0,stop:0 #f00,stop:0.17 #ff0,stop:0.33 #0f0,stop:0.5 #0ff,"
+                               "stop:0.67 #00f,stop:0.83 #f0f,stop:1 #f00);}"
+                               "QSlider::handle:horizontal{width:12px;margin:-4px 0;border-radius:6px;background:#fff;border:1px solid #333;}")
+        self.hue_lbl = QLabel()
+        self.hue_lbl.setMinimumWidth(44)
+        hr.addWidget(QLabel("Tono"))
+        hr.addWidget(self.hue, 1)
+        hr.addWidget(self.hue_lbl)
+        pt.addLayout(hr)
+
+        dr = QHBoxLayout()
+        dr.addWidget(QLabel("Dominante detectado:"))
+        self.dom_sw = QLabel()
+        self.dom_sw.setFixedSize(40, 16)
+        dr.addWidget(self.dom_sw)
+        self.dom_txt = QLabel()
+        dr.addWidget(self.dom_txt)
+        dr.addStretch(1)
+        pt.addLayout(dr)
+
+        pt.addStretch(1)
+        self.rows = {}
+        for key, label in (('sat', "Saturaci\u00f3n"), ('bright', "Brillo"), ('opacity', "Opacidad")):
+            row = QHBoxLayout()
+            chk = QCheckBox(label)
+            chk.setMinimumWidth(110)
+            sl = QSlider(Qt.Horizontal)
+            sl.setRange(0, 100)
+            vl = QLabel()
+            vl.setMinimumWidth(40)
+            chk.setChecked(cfg.get(key) is not None)
+            sl.setValue(int(cfg.get(key) if cfg.get(key) is not None else 100))
+            row.addWidget(chk)
+            row.addWidget(sl, 1)
+            row.addWidget(vl)
+            pi.addLayout(row)
+            self.rows[key] = (chk, sl, vl)
+            chk.toggled.connect(self._refresh)
+            sl.valueChanged.connect(self._refresh)
+
+        pi.addStretch(1)
+        self.preview = QLabel()
+        self.preview.setFixedSize(self.PW, self.PH)
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setStyleSheet("background:#23283a;border-radius:6px;")
+        lay.addWidget(self.preview, 0, Qt.AlignHCenter)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        b_reset = bb.addButton("Restablecer", QDialogButtonBox.ResetRole)
+        b_reset.clicked.connect(self._reset)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+        self.chk_on.toggled.connect(self._refresh)
+        self.cmb.currentIndexChanged.connect(self._refresh)
+        self.hue.valueChanged.connect(self._refresh)
+        self._pv_timer = QTimer(self)
+        self._pv_timer.setSingleShot(True)
+        self._pv_timer.setInterval(30)
+        self._pv_timer.timeout.connect(self._tick)
+        self._refresh()
+
+    def _reset(self):
+        self.chk_on.setChecked(True)
+        self.cmb.setCurrentIndex(0)
+        for chk, sl, vl in self.rows.values():
+            chk.setChecked(False)
+
+    PW, PH = 340, 260
+
+    def _paper_fallback(self, p, sw, sh):
+        """Papel de respaldo (color de la nota) si no se pudo obtener la imagen real de la nota."""
+        from PySide6.QtCore import QRectF
+        try:
+            bg = QColor(self.win.current_template_data.get('layer2', {}).get('background', '#fef08a'))
+            if not bg.isValid() or bg.alpha() == 0:
+                bg = QColor('#fef08a')
+        except Exception:
+            bg = QColor('#fef08a')
+        p.fillRect(QRectF(0, 0, sw, sh), bg)
+
+    def _paint_preview(self):
+        """Vista previa: la nota tal como se ve AHORA (con su rotacion) y la corona encima con los ajustes del dialogo."""
+        from PySide6.QtCore import QPointF
+        win = self.win
+        cfg = self.config(preview=True)
+        col, op = win._crown_style(cfg, 1.0, 1.0)
+        canvas = QPixmap(self.PW, self.PH)
+        canvas.fill(Qt.transparent)
+        p = QPainter(canvas)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        src = None
+        try:
+            src = win.grab()
+            if src.isNull() or src.width() < 4:
+                src = None
+        except Exception as e_g:
+            log_warn("Corona", f"vista previa: no se pudo capturar la nota: {e_g}")
+        if src is None:
+            try:
+                src = QPixmap(win.layer2_label.pixmap())
+                if src.isNull():
+                    src = None
+            except Exception:
+                src = None
+        if src is not None:
+            dpr = src.devicePixelRatio() or 1.0
+            sw, sh = src.width() / dpr, src.height() / dpr
+        else:
+            sw, sh = 260.0, 200.0
+        M = 48.0                                   # margen: la corona sobresale por arriba de la nota
+        W, H = sw + 2 * M, sh + 2 * M
+        k = min(self.PW / W, self.PH / H, 1.6)
+        p.translate((self.PW - W * k) / 2.0, (self.PH - H * k) / 2.0)
+        p.scale(k, k)
+        p.translate(M, M)
+        if src is not None:
+            p.drawPixmap(QPointF(0, 0), src)
+        else:
+            self._paper_fallback(p, sw, sh)
+        if self.chk_on.isChecked():
+            try:
+                anchor, ang = win._crown_anchor()
+            except Exception:
+                anchor, ang = QPointF(sw / 2.0, 6.0), 0.0
+            p.setOpacity(max(0.0, min(1.0, op)))
+            _crown_paint(p, win.manager, col, anchor.x(), anchor.y(), ang)
+        p.end()
+        self.preview.setPixmap(canvas)
+
+    def _tick(self):
+        try:
+            self._paint_preview()
+        except Exception as e_pv:
+            log_warn("Corona", f"vista previa: {e_pv}")
+        try:
+            self.liveChanged.emit(self.config())
+        except Exception as e_lv:
+            log_warn("Corona", f"cambios en vivo: {e_lv}")
+
+    def config(self, preview=False):
+
+        c = {}
+        if not self.chk_on.isChecked() and not preview:
+            c['off'] = True
+        hm = self.cmb.currentIndex()
+        if hm:
+            c['hue_mode'] = hm
+        if hm == 3:
+            c['hue'] = int(self.hue.value())
+        for key, (chk, sl, vl) in self.rows.items():
+            if chk.isChecked():
+                c[key] = int(sl.value())
+        return c
+
+    def _refresh(self, *_a):
+        from PySide6.QtCore import QPointF
+        win = self.win
+        hm = self.cmb.currentIndex()
+        self.hue.setEnabled(hm == 3)
+        self.hue_lbl.setText("%d\u00b0" % self.hue.value())
+        dom = win._crown_dominant()
+        self.dom_sw.setStyleSheet("background:%s;border:1px solid #666;border-radius:3px;" % dom.name())
+        self.dom_txt.setText("%s  (tono %d\u00b0)" % (dom.name(), max(0, dom.hue())))
+
+        cfg = self.config(preview=True)
+        col, op = win._crown_style(cfg, 1.0, 1.0)
+        h, s, v, _a2 = col.getHsvF()
+        eff = {'sat': s, 'bright': v, 'opacity': op}
+        for key, (chk, sl, vl) in self.rows.items():
+            sl.setEnabled(chk.isChecked())
+            if not chk.isChecked():
+                sl.blockSignals(True)
+                sl.setValue(int(round(eff[key] * 100)))
+                sl.blockSignals(False)
+            vl.setText("%d %%" % sl.value())
+
+        self._pv_timer.start()      # [PACK53] vista previa y cambios en vivo, agrupados cada 30 ms
+
+
+class UprightDialog(QDialog):
+    """Inclinacion con la que viene dibujada la imagen de la capa 2 (grados, sentido horario). La corona de los cables se
+    apoya en el borde superior del papel segun este angulo. Se guarda como 'upright_angle' en el JSON del widget."""
+
+    def __init__(self, win, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QDoubleSpinBox
+        self.win = win
+        self.setWindowTitle("Orientaci\u00f3n de la imagen")
+        lay = QVBoxLayout(self)
+        info = QLabel("Cu\u00e1nto est\u00e1 inclinada la imagen respecto a la horizontal (grados; positivo = giro horario). "
+                      "La corona se coloca siguiendo esa inclinaci\u00f3n. Se guarda como \"upright_angle\" en el JSON del widget.")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        row = QHBoxLayout()
+        self.sp = QDoubleSpinBox()
+        self.sp.setRange(-180.0, 180.0)
+        self.sp.setDecimals(1)
+        self.sp.setSingleStep(0.5)
+        self.sp.setSuffix(" \u00b0")
+        self.sp.setValue(win._upright_angle())
+        row.addWidget(self.sp)
+        b_auto = QPushButton("Detectar autom\u00e1ticamente")
+        b_auto.clicked.connect(lambda: self.sp.setValue(win._detect_upright_angle()))
+        b_zero = QPushButton("Horizontal (0\u00b0)")
+        b_zero.clicked.connect(lambda: self.sp.setValue(0.0))
+        row.addWidget(b_auto)
+        row.addWidget(b_zero)
+        lay.addLayout(row)
+        self.preview = QLabel()
+        self.preview.setFixedSize(300, 300)
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setStyleSheet("background:#23283a;border-radius:6px;")
+        lay.addWidget(self.preview, 0, Qt.AlignHCenter)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.sp.valueChanged.connect(self._refresh)
+        self._refresh()
+
+    def value(self):
+        return float(self.sp.value())
+
+    def _refresh(self, *_a):
+        import math
+        from PySide6.QtCore import QPointF
+        win, u = self.win, self.sp.value()
+        canvas = QPixmap(300, 300)
+        canvas.fill(Qt.transparent)
+        p = QPainter(canvas)
+        p.setRenderHint(QPainter.Antialiasing)
+        pm = getattr(win, 'layer2_base_pixmap', None)
+        g = win.current_template_data.get('layer2', {}).get('geometry', {})
+        ow, oh = float(g.get('w', 0) or 0), float(g.get('h', 0) or 0)
+        if pm is not None and not pm.isNull() and ow > 0 and oh > 0:
+            k = min(260.0 / ow, 260.0 / oh)
+            sw, sh = ow * k, oh * k
+            x0, y0 = (300 - sw) / 2.0, (300 - sh) / 2.0
+            p.drawPixmap(int(x0), int(y0), pm.scaled(int(sw), int(sh), Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+            fr = win._get_paper_frame(u)
+            if fr is None:
+                b = win._get_unrotated_paper_bounds()
+                fr = (b.center().x(), b.top())
+            cx, cy = x0 + fr[0] * k, y0 + fr[1] * k
+            p.translate(cx, cy)
+            p.rotate(u)
+            pen = QPen(QColor('#ffcc33'), 2.5)
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+            p.setPen(pen)
+            p.drawPath(_crown_path(1.4))
+            p.setPen(QPen(QColor('#4dd0e1'), 1, Qt.DashLine))
+            p.drawLine(QPointF(-70, 0), QPointF(70, 0))
+        p.end()
+        self.preview.setPixmap(canvas)
+
+
+def _desktop_wallpaper():
+    """[PACK82] QPixmap con el fondo de escritorio actual de Windows (la imagen, o su color liso si no hay imagen).
+    None si no se puede obtener (otro sistema, fondo no legible)."""
+    if sys.platform != 'win32':
+        return None
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(520)
+        ctypes.windll.user32.SystemParametersInfoW(0x0073, 520, buf, 0)      # SPI_GETDESKWALLPAPER
+        if buf.value and os.path.exists(buf.value):
+            pm = QPixmap(buf.value)
+            if not pm.isNull():
+                return pm
+    except Exception as e:
+        log_warn("BaseNote", f"No se pudo leer el fondo de escritorio: {e}")
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Colors") as k:
+            r, g, b = [int(x) for x in winreg.QueryValueEx(k, "Background")[0].split()]
+
+        pm = QPixmap(8, 8)
+        pm.fill(QColor(r, g, b))
+        return pm
+    except Exception:
+        return None
+
+
+class BaseNotePreview(QWidget):
+    """[PACK82] Vista previa con camara. Rueda = zoom, arrastrar = mover, doble clic = vista completa.
+    La camara puede acercarse sola a la esquina que se edita y volver (despacio) a la vista completa tras 10 s sin tocar nada
+    (se puede bloquear). El fondo se puede cambiar (color propio o fondo de escritorio de Windows)."""
+    IDLE_MS = 10000                      # [PACK95] pausa sin tocar controles antes de volver sola a la vista completa (10 s)
+    ANIM_MS = 260
+    RETURN_FACTOR = 7                    # [PACK95] la vuelta automatica dura ANIM_MS x 7 (~1,8 s), mucho mas lenta que el acercamiento
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(360, 360)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setCursor(Qt.OpenHandCursor)
+        self.setToolTip("Rueda: zoom \u00b7 Arrastrar: mover \u00b7 Doble clic: vista completa")
+        self._img = None
+        self._pm = None
+        self._zoom, self._cx, self._cy = 1.0, 0.0, 0.0
+        self._fit = True                 # sigue a la vista completa (se reajusta al cambiar de tama\u00f1o)
+        self._auto = False               # la vista actual la puso la camara autom\u00e1tica (y volver\u00e1 sola)
+        self.locked = False              # bloquea los movimientos autom\u00e1ticos de la camara
+        self._drag = None
+        self._bg_kind, self._bg_color, self._bg_pix, self._bg_cache = 0, QColor('#e9e9ec'), None, None
+        self._from = self._to = (1.0, 0.0, 0.0)
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(self.ANIM_MS)
+        self._anim.setEasingCurve(QEasingCurve.InOutCubic)
+
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.valueChanged.connect(self._anim_step)
+        self._idle = QTimer(self)
+        self._idle.setSingleShot(True)
+        self._idle.timeout.connect(self._idle_return)
+
+    # ---- imagen y vista
+    def pixmap(self):
+        return self._pm
+
+    def set_image(self, img):
+        self._img = img
+        self._pm = QPixmap.fromImage(img)
+        if self._fit:
+            self._apply_fit()
+        self.update()
+
+    def _fit_zoom(self):
+        if self._img is None:
+            return 1.0
+        return max(0.01, min(self.width() / float(self._img.width()), self.height() / float(self._img.height())) * 0.94)
+
+    def _apply_fit(self):
+        if self._img is not None:
+            self._zoom, self._cx, self._cy = self._fit_zoom(), self._img.width() / 2.0, self._img.height() / 2.0
+
+    def view(self):
+        return self._zoom, self._cx, self._cy
+
+    def _set_view(self, z, cx, cy):
+        if self._img is None:
+            return
+        fz = self._fit_zoom()
+        self._zoom = max(fz * 0.4, min(24.0, z))
+        self._cx = max(0.0, min(float(self._img.width()), cx))
+        self._cy = max(0.0, min(float(self._img.height()), cy))
+        self.update()
+
+    def _go(self, z, cx, cy, animate=True, slow=False):
+        self._anim.stop()
+        self._anim.setDuration(max(1, int(self.ANIM_MS * (self.RETURN_FACTOR if slow else 1))))
+        if not animate or self.isHidden() or self.ANIM_MS <= 0:
+            self._set_view(z, cx, cy)
+            return
+        self._from, self._to = (self._zoom, self._cx, self._cy), (z, cx, cy)
+        self._anim.start()
+
+    def _anim_step(self, t):
+        (z0, x0, y0), (z1, x1, y1) = self._from, self._to
+        t = float(t)
+        self._set_view(z0 * (z1 / z0) ** t, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)
+
+    def reset_view(self, animate=True, slow=False):
+        """Vista completa del widget (slow=True: animacion lenta, la que se usa en la vuelta automatica)."""
+        self._idle.stop()
+        self._fit, self._auto = True, False
+        if self._img is not None:
+            self._go(self._fit_zoom(), self._img.width() / 2.0, self._img.height() / 2.0, animate, slow)
+
+    def focus_corner(self, corner, w, h, size):
+        """Camara automatica: acerca la vista a la esquina 'corner' (0 sup.izq., 1 sup.der., 2 inf.der., 3 inf.izq.)."""
+        if self.locked or self._drag is not None or self._img is None:
+            return
+        pad = (self._img.width() - int(w)) / 2.0
+        X = pad if corner in (0, 3) else pad + w
+        Y = pad if corner in (0, 1) else pad + h
+        sx = 1.0 if corner in (0, 3) else -1.0
+        sy = 1.0 if corner in (0, 1) else -1.0
+        half = max(30.0, size * 0.75 + 24.0)
+        z = min(self.width(), self.height()) / (2.0 * half)
+        z = max(self._fit_zoom() * 1.15, min(10.0, z))
+        self._fit, self._auto = False, True
+        self._go(z, X + sx * size * 0.45, Y + sy * size * 0.45)
+        self._idle.start(self.IDLE_MS)
+
+    def focus_rect(self, r):
+        """[PACK87] Acerca la vista a un rectangulo de la imagen (QRectF) y la deja ahi."""
+        if self._img is None:
+            return
+        self._manual()
+        z = min(self.width() / max(r.width(), 1.0), self.height() / max(r.height(), 1.0))
+        self._go(max(self._fit_zoom() * 0.4, min(24.0, z)), r.center().x(), r.center().y())
+
+    def _idle_return(self):
+        if self._auto and not self.locked and self._drag is None:
+            self.reset_view(True, True)
+
+    def set_locked(self, on):
+        self.locked = bool(on)
+        if self.locked:
+            self._idle.stop()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._bg_cache = None
+        if self._fit:
+            self._apply_fit()
+
+    # ---- rat\u00f3n: zoom con la rueda, mover arrastrando, doble clic = vista completa
+    def _manual(self):
+        self._anim.stop()
+        self._idle.stop()
+        self._fit, self._auto = False, False
+
+    def wheelEvent(self, e):
+        if self._img is None:
+            return
+        pos = e.position()
+        dy = e.angleDelta().y()
+        if not dy:
+            return
+        self._manual()
+        W2, H2 = self.width() / 2.0, self.height() / 2.0
+        bx, by = (pos.x() - W2) / self._zoom + self._cx, (pos.y() - H2) / self._zoom + self._cy      # punto de la imagen bajo el cursor
+        z = max(self._fit_zoom() * 0.4, min(24.0, self._zoom * 1.18 ** (dy / 120.0)))
+        self._set_view(z, bx - (pos.x() - W2) / z, by - (pos.y() - H2) / z)
+        e.accept()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag = (e.position(), self._cx, self._cy, False)
+            self.setCursor(Qt.ClosedHandCursor)
+        e.accept()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is None or self._img is None:
+            return
+        p0, cx0, cy0, moved = self._drag
+        d = e.position() - p0
+        if not moved and abs(d.x()) + abs(d.y()) < 3:
+            return
+        if not moved:
+            self._manual()
+            self._drag = (p0, cx0, cy0, True)
+        self._set_view(self._zoom, cx0 - d.x() / self._zoom, cy0 - d.y() / self._zoom)
+
+    def mouseReleaseEvent(self, e):
+        self._drag = None
+        self.setCursor(Qt.OpenHandCursor)
+        e.accept()
+
+    def mouseDoubleClickEvent(self, e):
+        self._drag = None
+        self.reset_view(True)
+        e.accept()
+
+    # ---- fondo
+    def set_background(self, kind, color=None, pix=None):
+        """kind: 0 gris claro, 1 color propio, 2 fondo de escritorio (pix)."""
+        self._bg_kind = int(kind)
+        if color is not None:
+            self._bg_color = QColor(color)
+        self._bg_pix = pix
+        self._bg_cache = None
+        self.update()
+
+    def _paint_bg(self, p):
+        W, H = self.width(), self.height()
+        if self._bg_kind == 2 and self._bg_pix is not None and not self._bg_pix.isNull():
+            if self._bg_cache is None or self._bg_cache.size() != QSize(W, H):
+                sc = self._bg_pix.scaled(W, H, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                self._bg_cache = sc.copy((sc.width() - W) // 2, (sc.height() - H) // 2, W, H)
+            p.drawPixmap(0, 0, self._bg_cache)
+        elif self._bg_kind == 1:
+            p.fillRect(self.rect(), self._bg_color)
+        else:
+            p.fillRect(self.rect(), QColor('#e9e9ec'))
+
+    def paintEvent(self, e):
+        from PySide6.QtCore import QRectF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(self.rect()), 6, 6)
+        p.setClipPath(clip)
+        self._paint_bg(p)
+        if self._pm is not None:
+            p.translate(self.width() / 2.0, self.height() / 2.0)
+            p.scale(self._zoom, self._zoom)
+            p.translate(-self._cx, -self._cy)
+            p.drawPixmap(0, 0, self._pm)
+        p.end()
+
+
+class _CornerModePicker(QWidget):
+    """[PACK91] Elige que hace una esquina (nada / doblez completo / esquina levantada) con miniaturas de la propia esquina.
+    Misma interfaz minima que un QComboBox: currentIndex, setCurrentIndex, currentIndexChanged."""
+    currentIndexChanged = Signal(int)
+    _ICONS = {}
+
+    @classmethod
+    def _icon(cls, corner, mode):
+        key = (int(corner), int(mode))
+        if key not in cls._ICONS:
+            pm = QPixmap()
+            try:
+                P = dict(BASE_NOTE_DEFAULTS)
+                P.update(w=84, h=62, radius=8, shadow=5, shadow_op=40, shadow_dx=0, shadow_dy=2, grad=False,
+                         fold=bool(mode), cx=_cx_with({int(corner): {'mode': int(mode), 'size': 26}} if mode else {}))
+                pm = QPixmap.fromImage(render_base_note(P)).scaled(64, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            except Exception as e:
+                log_warn("BaseNote", f"No se pudo dibujar la miniatura de la esquina: {e}")
+            cls._ICONS[key] = pm
+        return cls._ICONS[key]
+
+    def __init__(self, corner, names, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QToolButton, QButtonGroup
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self._grp = QButtonGroup(self)
+        self._grp.setExclusive(True)
+        self._btns = []
+        self._cur = 0
+        for m, nm in enumerate(names):
+            b = QToolButton()
+            b.setCheckable(True)
+            b.setText(nm)
+            b.setIcon(QIcon(self._icon(corner, m)))
+            b.setIconSize(QSize(64, 48))
+            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            b.setStyleSheet("QToolButton{padding:4px 8px;border:1px solid #555;border-radius:4px;}"
+                            "QToolButton:checked{background:#2f5f46;border:1px solid #3f7f5f;font-weight:bold;}")
+            self._grp.addButton(b, m)
+            self._btns.append(b)
+            lay.addWidget(b)
+        lay.addStretch(1)
+        self._btns[0].setChecked(True)
+        self._grp.idClicked.connect(self._clicked)
+
+    def _clicked(self, m):
+        if int(m) != self._cur:
+            self._cur = int(m)
+            self.currentIndexChanged.emit(self._cur)
+
+    def currentIndex(self):
+        return self._cur
+
+    def setCurrentIndex(self, m):
+        m = max(0, min(len(self._btns) - 1, int(m)))
+        self._btns[m].setChecked(True)
+        if m != self._cur:
+            self._cur = m
+            self.currentIndexChanged.emit(m)
+
+
+_BN_COLOR_KEYS = ('color', 'color2', 'border_color', 'shadow_color', 'fold_color', 'text_color')
+
+
+def _bn_extract(src):
+    """[PACK97] Saca los parametros de una nota base de un texto JSON (o de lo ya leido). Acepta un template completo
+    (con la clave 'base_note') o directamente los parametros. Devuelve un dict sin validar o None."""
+    obj = src
+    if isinstance(src, str):
+        try:
+            obj = json.loads(src.strip().lstrip('\ufeff'))
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(obj, dict):
+        return None
+    if isinstance(obj.get('base_note'), dict):
+        obj = obj['base_note']
+    return obj if any(k in BASE_NOTE_DEFAULTS for k in obj) else None
+
+
+def _bn_clean(raw, ranges=None):
+    """[PACK97] Parametros de nota base validados: solo claves conocidas, del tipo correcto y dentro de rango
+    (lo pegado puede venir de cualquier sitio). Las claves que faltan no aparecen en el resultado."""
+    ranges = ranges or {}
+    out = {}
+    for k, dv in BASE_NOTE_DEFAULTS.items():
+        if k not in raw:
+            continue
+        v = raw[k]
+        if k == 'corners':
+            if isinstance(v, list) and len(v) == 4:
+                out[k] = [bool(x) for x in v]
+        elif k == 'cx':
+            if isinstance(v, list) and len(v) == 4 and all(isinstance(x, dict) for x in v):
+                cl = []
+                for i, x in enumerate(v):
+                    c = _cx_clean(i, x)
+                    cl.append({kk: (max(-2000, min(2000, vv)) if isinstance(vv, int) and not isinstance(vv, bool) else vv) for kk, vv in c.items()})
+                out[k] = cl
+            elif isinstance(v, list) and not v:
+                out[k] = []
+        elif k == 'lifts':
+            if isinstance(v, list) and len(v) <= 4 and all(isinstance(x, dict) for x in v):
+                out[k] = copy.deepcopy(v)
+        elif isinstance(dv, bool):
+            if isinstance(v, bool):
+                out[k] = v
+        elif isinstance(dv, int):
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or abs(v) > 1e9:
+                continue
+            lo, hi = ranges.get(k, (-5000, 5000))
+            out[k] = max(lo, min(hi, int(round(v))))
+        elif isinstance(dv, str):
+            if not isinstance(v, str):
+                continue
+            if k in _BN_COLOR_KEYS:
+                if QColor(v).isValid():
+                    out[k] = QColor(v).name()
+            else:
+                out[k] = v[:2000]
+    return out
+
+
+class BaseNoteDialog(QDialog):
+    """Crea (o edita) una nota con la forma elegida: esquinas, borde, degradado, franja adhesiva, pico doblado,
+    sombra y texto, con vista previa en vivo. La nota se genera como imagen PNG (la mascara de la ventana sigue su forma)."""
+    PRESETS = (
+        ("Post-it con doblez", {'radius': 0, 'grad': True, 'color': '#fff6b0', 'color2': '#fbd34d', 'grad_angle': 35,
+                                'strip': 30, 'strip_op': 32, 'strip_y': 0, 'fold': True,
+                                'cx': _cx_with({3: {'mode': 1, 'size': 90, 'tip': 100, 'c1': 50, 'c2': 50, 'c3': -70, 'rlen': 55,
+                                                    'fa_k': 0, 'fa_a': 55, 'fa_s': 12, 'fb_k': 1, 'fb_a': 28, 'fb_s': 12, 'fb_over': True}}),
+                                'shadow': 18, 'shadow_op': 55, 'shadow_dx': -5, 'shadow_dy': 7, 'corners': [True, True, True, True]}),
+        ("Esquina levantada", {'radius': 0, 'grad': True, 'color': '#fff6b0', 'color2': '#fbd34d', 'grad_angle': 35,
+                               'strip': 30, 'strip_op': 32, 'strip_y': 0, 'fold': True,
+                               'cx': _cx_with({2: {'mode': 2, 'size': 90, 'tip': 0, 'c1': -45, 'c2': -45, 'la_k': 0, 'la_a': 40, 'la_s': 16,
+                                                   'front': True, 'cast': 6}}),
+                               'shadow': 18, 'shadow_op': 55, 'shadow_dx': -5, 'shadow_dy': 7, 'corners': [True, True, True, True]}),
+        ("Doblez + levantadas", {'radius': 0, 'grad': True, 'color': '#fff6b0', 'color2': '#fbd34d', 'grad_angle': 35,
+                                 'strip': 30, 'strip_op': 32, 'strip_y': 0, 'fold': True,
+                                 'cx': _cx_with({3: {'mode': 1, 'size': 80, 'tip': 100, 'c1': 50, 'c2': 50, 'c3': -70, 'rlen': 55,
+                                                     'fa_k': 0, 'fa_a': 55, 'fa_s': 12, 'fb_k': 1, 'fb_a': 28, 'fb_s': 12},
+                                                 0: {'mode': 2, 'size': 60, 'tip': 0, 'c1': -40, 'c2': -40, 'la_k': 0, 'la_a': 35, 'la_s': 14, 'cast': 4},
+                                                 1: {'mode': 2, 'size': 45, 'tip': 0, 'c1': -40, 'c2': -40, 'la_k': 0, 'la_a': 35, 'la_s': 12, 'cast': 4}}),
+                                 'shadow': 18, 'shadow_op': 55, 'shadow_dx': -5, 'shadow_dy': 7, 'corners': [True, True, True, True]}),
+        ("Nota plana", {'radius': 14, 'grad': False, 'color': '#fef08a', 'strip': 0, 'fold': False,
+                        'shadow': 8, 'shadow_op': 45, 'shadow_dx': 0, 'shadow_dy': 3, 'corners': [True, True, True, True]}),
+    )
+
+    def __init__(self, manager, parent=None, start=None, editing=False, live=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QSpinBox as _SB, QLineEdit as _LE, QTabWidget, QScrollArea
+        self._live = live                   # [PACK80] funcion(parametros | None) que pinta los cambios en la nota real
+        self.setWindowTitle("Editar nota base" if editing else "Nueva nota base")
+        self.p = dict(BASE_NOTE_DEFAULTS)
+        self.p['corners'] = list(BASE_NOTE_DEFAULTS['corners'])
+        for k, v in (start or {}).items():
+            if k in self.p and isinstance(v, type(self.p[k])):
+                self.p[k] = copy.deepcopy(v) if isinstance(v, (list, dict)) else v
+        self.p['cx'] = _norm_cx(self.p)
+        self._building = True
+        self._sync = []
+        self._ranges = {}                    # [PACK97] clave -> (minimo, maximo) de cada control numerico (para validar lo que se pega)
+        root = QHBoxLayout(self)
+        left = QVBoxLayout()
+        root.addLayout(left)
+        prow = QHBoxLayout()
+        prow.addWidget(QLabel("Punto de partida:"))
+        for name, d in self.PRESETS:
+            b = QPushButton(name)
+            b.clicked.connect(lambda _c=False, d=d: self._apply(d))
+            prow.addWidget(b)
+
+        prow.addStretch(1)
+        left.addLayout(prow)
+        self._mgr = manager
+        srow_ = QHBoxLayout()                # [PACK71] biblioteca de estilos de nota base (templates editables)
+        srow_.addWidget(QLabel("Mis estilos:"))
+        self.cb_styles = QComboBox()
+        self.cb_styles.setMinimumWidth(160)
+        srow_.addWidget(self.cb_styles, 1)
+        self.cb_styles.activated.connect(lambda _i: self._style_load())      # elegir un estilo lo aplica al instante
+        for txt, fn, tip in (("Guardar estilo...", self._style_save, "Guarda esta forma como template editable (si existe el nombre, lo reemplaza)"),
+                             ("Borrar", self._style_delete, "Elimina el estilo elegido de la lista")):
+            b_ = QPushButton(txt)
+            b_.setToolTip(tip)
+            b_.clicked.connect(lambda _c=False, f=fn: f())
+            srow_.addWidget(b_)
+        left.addLayout(srow_)
+        xrow_ = QHBoxLayout()                # [PACK97] copiar / pegar el template o el estilo (JSON) y exportar el template
+        xrow_.addWidget(QLabel("JSON:"))
+        for txt, fn, tip in (("Copiar template", self._tpl_copy, "Copia al portapapeles el template completo de esta nota base (JSON): forma, colores, texto e imagen"),
+                             ("Pegar template", self._tpl_paste, "Aplica aqu\u00ed un template de nota base copiado (tambi\u00e9n vale el JSON copiado en el navegador de templates), con su texto"),
+                             ("Copiar estilo", self._style_copy, "Copia al portapapeles solo el estilo (JSON): forma, colores y esquinas, sin el texto"),
+                             ("Pegar estilo", self._style_paste, "Aplica un estilo copiado a esta nota, manteniendo su texto"),
+                             ("Exportar...", self._tpl_export, "Guarda el template completo de esta nota base en un archivo .json")):
+            b_ = QPushButton(txt)
+            b_.setToolTip(tip)
+            b_.clicked.connect(lambda _c=False, f=fn: f())
+            xrow_.addWidget(b_)
+        xrow_.addStretch(1)
+        left.addLayout(xrow_)
+        self._style_fill()
+        tabs = QTabWidget()
+        left.addWidget(tabs, 1)
+
+        def page(title, scroll=False):
+            w_ = QWidget()
+            f_ = QFormLayout(w_)
+            if scroll:                       # [PACK80] pestanas largas con barra de desplazamiento
+                sa_ = QScrollArea()
+                sa_.setWidgetResizable(True)
+                sa_.setFrameShape(QFrame.NoFrame)
+                sa_.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                f_.setRowWrapPolicy(QFormLayout.WrapLongRows)
+                sa_.setWidget(w_)
+                tabs.addTab(sa_, title)
+            else:
+                tabs.addTab(w_, title)
+            return f_
+
+        def spin(key, lo, hi, suffix=""):
+            s = _SB()
+            s.setRange(lo, hi)
+            self._ranges[key] = (lo, hi)
+            s.setSuffix(suffix)
+            s.setValue(int(self.p[key]))
+            s.valueChanged.connect(lambda v, k=key: self._set(k, int(v)))
+            self._sync.append(lambda s=s, k=key: s.setValue(int(self.p[k])))
+            return s
+
+        def color_btn(key):
+            b = QPushButton()
+            b.setFixedWidth(70)
+
+            def paint():
+                b.setStyleSheet(f"background:{self.p[key]};border:1px solid #666;min-height:18px;")
+
+            def pick():
+                c = QColorDialog.getColor(QColor(self.p[key]), self, "Color")
+                if c.isValid():
+                    self._set(key, c.name())
+                    paint()
+            b.clicked.connect(pick)
+            self._sync.append(paint)
+            paint()
+            return b
+
+        def check(key, text):
+            c = QCheckBox(text)
+            c.setChecked(bool(self.p[key]))
+            c.toggled.connect(lambda on, k=key: self._set(k, bool(on)))
+            self._sync.append(lambda c=c, k=key: c.setChecked(bool(self.p[k])))
+            return c
+
+        # ---- Forma y color  [PACK102] en sub-pestanas con desplazamiento propio (antes una sola lista larga)
+        _fpage = QWidget()
+        _fpl = QVBoxLayout(_fpage)
+        _fpl.setContentsMargins(0, 0, 0, 0)
+        ftabs = QTabWidget()
+        _fpl.addWidget(ftabs)
+        tabs.addTab(_fpage, "Forma y color")
+        self.tab_shape = ftabs
+
+        def subpage(title):
+            w_ = QWidget()
+            f_ = QFormLayout(w_)
+            f_.setRowWrapPolicy(QFormLayout.WrapLongRows)
+            sa_ = QScrollArea()
+            sa_.setWidgetResizable(True)
+            sa_.setFrameShape(QFrame.NoFrame)
+            sa_.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            sa_.setWidget(w_)
+            ftabs.addTab(sa_, title)
+            return f_
+        form = subpage("Tama\u00f1o y esquinas")
+        row = QHBoxLayout()
+        self.sp_w, self.sp_h = spin('w', 60, 1200, " px"), spin('h', 60, 1200, " px")
+        row.addWidget(self.sp_w)
+        row.addWidget(QLabel("\u00d7"))
+        row.addWidget(self.sp_h)
+        form.addRow("Tama\u00f1o (ancho \u00d7 alto)", row)
+
+        rrow = QHBoxLayout()
+        self.sp_r = spin('radius', 0, 600, " px")
+        rrow.addWidget(self.sp_r)
+        for txt, fn in (("Recta", lambda: self.sp_r.setValue(0)), ("Suave", lambda: self.sp_r.setValue(14)),
+                        ("Muy redonda", lambda: self.sp_r.setValue(min(self.sp_w.value(), self.sp_h.value()) // 2))):
+            b = QPushButton(txt)
+            b.clicked.connect(fn)
+            rrow.addWidget(b)
+
+        form.addRow("Redondez de las esquinas", rrow)
+        crow = QHBoxLayout()
+        self._corner_checks = []
+        for i, name in enumerate(("sup. izq.", "sup. der.", "inf. der.", "inf. izq.")):
+            c = QCheckBox(name)
+            c.setChecked(bool(self.p['corners'][i]))
+            c.toggled.connect(lambda on, i=i: self._set_corner(i, on))
+            crow.addWidget(c)
+            self._corner_checks.append(c)
+        self._sync.append(lambda: [c.setChecked(bool(self.p['corners'][i])) for i, c in enumerate(self._corner_checks)])
+        form.addRow("Esquinas redondeadas", crow)
+
+        form = subpage("Color y degradado")
+        form.addRow("Color de fondo", color_btn('color'))
+        grow = QHBoxLayout()
+        self.chk_grad = check('grad', "Degradado hasta")
+        grow.addWidget(self.chk_grad)
+        grow.addWidget(color_btn('color2'))
+        form.addRow(grow)
+
+        def icombo(key, items):
+            cb = QComboBox()
+            cb.addItems(items)
+            cb.setCurrentIndex(max(0, min(len(items) - 1, int(self.p[key]))))
+            cb.currentIndexChanged.connect(lambda i, k=key: self._set(k, int(i)))
+            self._sync.append(lambda cb=cb, k=key: cb.setCurrentIndex(max(0, min(len(items) - 1, int(self.p[k])))))
+            return cb
+        self._grad_rows = {}                 # [PACK80] forma del degradado
+        for key, lab, wdg in (
+                ('grad_kind', "Tipo de degradado", icombo('grad_kind', ["Lineal (en una direcci\u00f3n)", "Radial (desde un punto)", "C\u00f3nico (alrededor de un punto)", "Espejo (lineal sim\u00e9trico)"])),
+                ('grad_angle', "Direcci\u00f3n o giro (90\u00b0 = hacia abajo)", spin('grad_angle', 0, 360, "\u00b0")),
+                ('grad_size', "Tama\u00f1o (100 % = de lado a lado de la nota)", spin('grad_size', 5, 400, " %")),
+                ('grad_bias', "Balance entre los dos colores (50 % = centrado)", spin('grad_bias', 5, 95, " %")),
+                ('grad_cx', "Centro: horizontal (0 = medio, \u00b1100 = bordes)", spin('grad_cx', -100, 100, " %")),
+                ('grad_cy', "Centro: vertical (0 = medio, \u00b1100 = bordes)", spin('grad_cy', -100, 100, " %")),
+                ('grad_spread', "Fuera del tama\u00f1o del degradado", icombo('grad_spread', ["Seguir con el \u00faltimo color", "Reflejar (ida y vuelta)", "Repetir"]))):
+            form.addRow(lab, wdg)
+            self._grad_rows[key] = wdg
+
+        self._grad_enable()
+
+        form = subpage("Borde y franja adhesiva")
+        form.addRow("Grosor del borde", spin('border', 0, 20, " px"))
+        form.addRow("Color del borde", color_btn('border_color'))
+        form.addRow("Alto de la franja adhesiva (0 = sin franja)", spin('strip', 0, 200, " px"))
+        form.addRow("Opacidad de la franja", spin('strip_op', 0, 100, " %"))
+        form.addRow("Distancia de la franja al borde", spin('strip_y', 0, 400, " px"))
+
+        # ---- [PACK81] Pico doblado: cada esquina decide si se dobla, se levanta o nada, con sus curvas y sus luces
+        _pw = QWidget()                      # [PACK102] sin desplazamiento de la pestana entera: solo el de cada esquina
+        ff = QVBoxLayout(_pw)
+        ff.setContentsMargins(0, 0, 0, 0)
+        tabs.addTab(_pw, "Pico doblado")
+        self._ff = ff
+        self._rows_none, self._rows_fold, self._rows_lift, self._fold_all, self._lsync = [], [], [], [], []
+        self._corner_names = ("Superior izquierda", "Superior derecha", "Inferior derecha", "Inferior izquierda")
+        self._mode_names = ("Ninguno", "Doblez completo", "Esquina levantada")
+        self._lc = next((i for i, c_ in enumerate(self.p['cx']) if c_['mode']), 2)
+        KINDS = ["Sombra (oscurece)", "Brillo (aclara)"]
+        GAIN = "Intensidad (100 % normal; hasta 300 % para que se note aunque est\u00e9 muy difuminada)"
+
+        def cspin(key, lo, hi, suffix=""):
+            s = _SB()
+            s.setRange(lo, hi)
+            s.setSuffix(suffix)
+            s.setValue(int(self._cur()[key]))
+            s.valueChanged.connect(lambda v, k=key: self._set_cx(k, int(v)))
+            self._lsync.append(lambda s=s, k=key: s.setValue(int(self._cur()[k])))
+            return s
+
+        def ccombo(key, items, as_bool=False):
+            cb = QComboBox()
+            cb.addItems(items)
+            cb.setCurrentIndex(1 if self._cur()[key] else 0)
+            cb.currentIndexChanged.connect(lambda i, k=key: self._set_cx(k, bool(i) if as_bool else int(i)))
+            self._lsync.append(lambda cb=cb, k=key: cb.setCurrentIndex(1 if self._cur()[k] else 0))
+            return cb
+
+        def ccheck(key, text):
+            c_ = QCheckBox(text)
+            c_.setChecked(bool(self._cur()[key]))
+            c_.toggled.connect(lambda on, k=key: self._set_cx(k, bool(on)))
+            self._lsync.append(lambda c_=c_, k=key: c_.setChecked(bool(self._cur()[k])))
+            return c_
+
+        def ccolor(key):
+            b = QPushButton()
+            b.setFixedWidth(70)
+
+            def paint():
+                b.setStyleSheet(f"background:{self._cur()[key]};border:1px solid #666;min-height:18px;")
+
+            def pick():
+                col = QColorDialog.getColor(QColor(self._cur()[key]), self, "Color")
+                if col.isValid():
+                    self._set_cx(key, col.name())
+                    paint()
+            b.clicked.connect(pick)
+            self._lsync.append(paint)
+            paint()
+            return b
+
+        def add(group, lab, wdg=None, enable=True):
+            if wdg is None:
+                ff.addRow(lab)
+                group.append(lab)
+            else:
+                ff.addRow(lab, wdg)
+                group.append(wdg)
+                if enable and isinstance(wdg, QWidget):
+                    self._fold_all.append(wdg)
+
+        def head(group, text):
+            add(group, QLabel("<b>" + text + "</b>"))
+
+        def light(group, pre, title, with_over=False, lo_size=0):
+            head(group, title)
+            add(group, "Tipo de luz", ccombo(pre + '_k', KINDS))
+            add(group, GAIN, cspin(pre + '_a', 0, 300, " %"))
+            add(group, "Tama\u00f1o (difuminado)", cspin(pre + '_s', lo_size, 80, " px"))
+            add(group, "Desplazamiento X (+ derecha)", cspin(pre + '_dx', -40, 40, " px"))
+            add(group, "Desplazamiento Y (+ abajo)", cspin(pre + '_dy', -40, 40, " px"))
+            if with_over:
+                add(group, "D\u00f3nde", ccombo(pre + '_over', ["Bajo la punta (sobre el papel)", "Sobre la punta"], True))
+
+        self._fold_chk = check('fold', "Doblar / levantar esquinas")
+        ff.addWidget(self._fold_chk)
+        from PySide6.QtWidgets import QTabWidget as _QTW
+        self.tab_corner = _QTW()             # [PACK91] una subpestana por esquina (el selector "Ajustando la esquina" ya no hace falta)
+        self._tab_corner_of = (0, 1, 3, 2)   # subpestana -> esquina (sup. izq., sup. der., inf. izq., inf. der.)
+        self._corner_pages = []
+        self._mode_cbs = [None] * 4
+        for i in self._tab_corner_of:
+            pg = QWidget()
+            pl = QVBoxLayout(pg)
+            pl.setContentsMargins(6, 6, 6, 6)
+            mp = _CornerModePicker(i, self._mode_names)
+            mp.setCurrentIndex(int(self.p['cx'][i]['mode']))
+            mp.currentIndexChanged.connect(lambda m, i=i: self._set_cx_mode(i, m))
+            self._mode_cbs[i] = mp
+            self._fold_all.append(mp)
+            pl.addWidget(mp)
+            self._corner_pages.append(pl)
+            self.tab_corner.addTab(pg, self._corner_names[i])
+        self._sync.append(lambda: [cb.setCurrentIndex(int(self.p['cx'][i]['mode'])) for i, cb in enumerate(self._mode_cbs)])
+        ff.addWidget(self.tab_corner, 1)
+        self._cbox = QWidget()               # los ajustes de la esquina: una sola caja que se coloca dentro de la subpestana activa
+        cf = QFormLayout(self._cbox)
+        cf.setContentsMargins(0, 0, 0, 0)
+        cf.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        ff = cf
+        self._ff = cf
+        copy_btn = QPushButton("Copiar estos ajustes a las otras esquinas del mismo modo")
+        copy_btn.clicked.connect(lambda _c=False: self._lift_copy())
+        self._fold_all.append(copy_btn)
+        self._cscroll = QScrollArea()        # [PACK102] los ajustes se desplazan DENTRO de la subpestana, bajo "Copiar estos ajustes"
+        self._cscroll.setWidgetResizable(True)
+        self._cscroll.setFrameShape(QFrame.NoFrame)
+        self._cscroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._cscroll.setWidget(self._cbox)
+        self._cwrap = QWidget()
+        _wl = QVBoxLayout(self._cwrap)
+        _wl.setContentsMargins(0, 0, 0, 0)
+        _wl.addWidget(copy_btn)
+        _wl.addWidget(self._cscroll, 1)
+        note0 = QLabel("Esta esquina no tiene efecto: elige arriba \u00abDoblez completo\u00bb o \u00abEsquina levantada\u00bb para ella.")
+        note0.setWordWrap(True)
+        add(self._rows_none, note0)
+
+        # -- doblez completo: 5 curvas = 4 tramos del pico + la linea del doblez
+        head(self._rows_fold, "Forma del doblez")
+        for key, lab, lo, hi, suf in (
+                ('size', "Tama\u00f1o del doblez", 8, 400, " px"),
+                ('tip', "Punta: distancia a la esquina (0 = en la esquina)", 0, 100, " %"),
+                ('c1', "Pico, lado 1: curvatura general (negativa = c\u00f3ncava)", -100, 100, " %"),
+                ('p1', "      d\u00f3nde se curva m\u00e1s (50 = en el medio)", 25, 75, " %"),
+                ('k1', "      curva 1 \u00b7 tramo junto al doblez: ajuste extra", -100, 100, " %"),
+                ('k2', "      curva 2 \u00b7 tramo hacia la punta: ajuste extra", -100, 100, " %"),
+                ('j1', "      uni\u00f3n de las curvas 1 y 2 (menos = curva 1 m\u00e1s corta)", 20, 80, " %"),
+                ('c2', "Pico, lado 2: curvatura general (negativa = c\u00f3ncava)", -100, 100, " %"),
+                ('p2', "      d\u00f3nde se curva m\u00e1s (50 = en el medio)", 25, 75, " %"),
+                ('k3', "      curva 3 \u00b7 tramo desde la punta: ajuste extra", -100, 100, " %"),
+                ('k4', "      curva 4 \u00b7 tramo junto al doblez: ajuste extra", -100, 100, " %"),
+                ('j2', "      uni\u00f3n de las curvas 3 y 4 (menos = curva 3 m\u00e1s corta)", 20, 80, " %"),
+                ('c3', "Curva 5 \u00b7 l\u00ednea del doblez (negativa = hacia dentro)", -100, 100, " %"),
+                ('p3', "      d\u00f3nde se curva m\u00e1s (50 = en el medio)", 25, 75, " %"),
+                ('rlen', "Punta terminada en curva: longitud (0 = punta sin redondear)", 0, 100, " %"),
+                ('round', "Punta terminada en curva: forma (+ hacia fuera \u00b7 0 recta \u00b7 \u2212 hacia dentro, simula un doblez)", -100, 100, " %")):
+            add(self._rows_fold, lab, cspin(key, lo, hi, suf))
+        crow2 = QHBoxLayout()
+        ca = ccheck('rev_auto', "Autom\u00e1tico (m\u00e1s oscuro que el papel)")
+        cbtn = ccolor('rev_color')
+        crow2.addWidget(ca)
+        crow2.addWidget(cbtn)
+        ff.addRow("Color del reverso", crow2)
+        self._rows_fold.append(crow2)
+        self._fold_all += [ca, cbtn]
+        light(self._rows_fold, 'fa', "Luz que proyecta la solapa sobre el papel")
+        light(self._rows_fold, 'fb', "Luz de la punta redondeada", with_over=True, lo_size=2)
+
+        # -- esquina levantada
+        head(self._rows_lift, "Forma de la esquina levantada")
+        for key, lab, lo, hi, suf in (
+                ('size', "Tama\u00f1o del doblez", 8, 400, " px"),
+                ('tip', "Punta: distancia a la esquina (0 = en la esquina)", 0, 100, " %"),
+                ('c1', "Curva 1 (negativa = c\u00f3ncava)", -100, 100, " %"),
+                ('p1', "      d\u00f3nde se curva m\u00e1s (50 = en el medio)", 25, 75, " %"),
+                ('c2', "Curva 2 (negativa = c\u00f3ncava)", -100, 100, " %"),
+                ('p2', "      d\u00f3nde se curva m\u00e1s (50 = en el medio)", 25, 75, " %")):
+            add(self._rows_lift, lab, cspin(key, lo, hi, suf))
+        light(self._rows_lift, 'la', "Luz 1 del borde levantado", lo_size=2)
+        light(self._rows_lift, 'lb', "Luz 2 del borde levantado", lo_size=2)
+        add(self._rows_lift, "Capa de las luces", ccombo('front', ["Detr\u00e1s de la nota", "Delante de la nota"], True))
+        head(self._rows_lift, "Sombra de la nota bajo la esquina")
+        add(self._rows_lift, "Separaci\u00f3n de la sombra (0 = sin cambio)", cspin('cast', 0, 80, " px"))
+        note_ = QLabel("La esquina levantada flota sobre la mesa: con la sombra de la nota activada (pesta\u00f1a \u00abSombra de la nota\u00bb), "
+                       "su parte de sombra se aleja del papel y deforma el contorno de la sombra.")
+        note_.setWordWrap(True)
+        add(self._rows_lift, note_)
+        self._sync.append(lambda: [f() for f in self._lsync])
+        self._fold_chk.toggled.connect(self._fold_enable)
+        self.tab_corner.setCurrentIndex(self._tab_corner_of.index(self._lc))
+        self._corner_pages[self.tab_corner.currentIndex()].insertWidget(1, self._cwrap, 1)
+        self.tab_corner.currentChanged.connect(self._corner_tab_changed)
+
+        # ---- Sombra
+        sf = page("Sombra de la nota")
+        sf.addRow("Tama\u00f1o (difuminado)", spin('shadow', 0, 60, " px"))
+        sf.addRow("Opacidad", spin('shadow_op', 0, 100, " %"))
+        sf.addRow("Desplazamiento horizontal (+ derecha)", spin('shadow_dx', -40, 40, " px"))
+        sf.addRow("Desplazamiento vertical (+ abajo)", spin('shadow_dy', -40, 40, " px"))
+        sf.addRow("Color de la sombra", color_btn('shadow_color'))
+
+        # ---- Texto
+        tf = page("Texto")
+        self.ed_text = _LE(str(self.p['text']))
+        self.ed_text.textChanged.connect(lambda t: self._set('text', t))
+        self._sync.append(lambda: self.ed_text.setText(str(self.p['text'])))
+        tf.addRow("Texto inicial", self.ed_text)
+        trow = QHBoxLayout()
+        trow.addWidget(color_btn('text_color'))
+        trow.addWidget(spin('font_size', 6, 120, " pt"))
+        tf.addRow("Color y tama\u00f1o del texto", trow)
+
+        self.chk_tpl = QCheckBox("Guardar tambi\u00e9n como template:")
+        self.ed_tpl = _LE("nota_base")
+        self.ed_tpl.setEnabled(False)
+        self.chk_tpl.toggled.connect(self.ed_tpl.setEnabled)
+        trow2 = QHBoxLayout()
+        trow2.addWidget(self.chk_tpl)
+        trow2.addWidget(self.ed_tpl, 1)
+        if not editing:
+            left.addLayout(trow2)
+        else:
+            self.chk_tpl.hide()
+            self.ed_tpl.hide()
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        left.addWidget(bb)
+        self.preview = BaseNotePreview()     # [PACK82] vista previa con camara (zoom, mover, fondo)
+        right = QVBoxLayout()                # [PACK80] vista previa + casilla de vista en vivo sobre la nota real
+        right.addWidget(self.preview, 1)
+        ps = self._mgr.global_state.get('note_preview') if isinstance(getattr(self._mgr, 'global_state', None), dict) else None
+        ps = ps if isinstance(ps, dict) else {}
+        brow = QHBoxLayout()
+        brow.addWidget(QLabel("Fondo:"))
+        self.cb_pbg = QComboBox()
+        self.cb_pbg.addItems(["Gris claro", "Color personalizado", "Fondo de escritorio de Windows"])
+        brow.addWidget(self.cb_pbg, 1)
+        self.btn_pbg = QPushButton()
+        self.btn_pbg.setFixedWidth(60)
+        self.btn_pbg.setToolTip("Color del fondo de la vista previa")
+        brow.addWidget(self.btn_pbg)
+        right.addLayout(brow)
+        crow_ = QHBoxLayout()
+        self.chk_lock = QCheckBox("Bloquear el zoom autom\u00e1tico")
+        self.chk_lock.setToolTip("La c\u00e1mara se acerca sola a la esquina que editas y vuelve a la vista completa si dejas de tocar los controles")
+        crow_.addWidget(self.chk_lock, 1)
+        self.btn_reset_view = QPushButton("Vista completa")
+        self.btn_reset_view.setToolTip("Doble clic en la vista previa hace lo mismo")
+        crow_.addWidget(self.btn_reset_view)
+        right.addLayout(crow_)
+        self.lbl_pbg = QLabel("Rueda: zoom \u00b7 Arrastrar: mover \u00b7 Doble clic: vista completa")
+        self.lbl_pbg.setStyleSheet("color:#888;")
+        self.lbl_pbg.setWordWrap(True)
+        right.addWidget(self.lbl_pbg)
+        self._pbg_color = ps.get('color') if isinstance(ps.get('color'), str) and QColor(ps.get('color')).isValid() else '#e9e9ec'
+        self.chk_lock.setChecked(bool(ps.get('lock', False)))
+        self.preview.set_locked(self.chk_lock.isChecked())
+        self.chk_lock.toggled.connect(lambda on: (self.preview.set_locked(on), self._save_preview_cfg()))
+        self.btn_reset_view.clicked.connect(lambda _c=False: self.preview.reset_view(True))
+        self.cb_pbg.currentIndexChanged.connect(self._pbg_changed)
+        self.btn_pbg.clicked.connect(self._pbg_pick)
+        self.cb_pbg.blockSignals(True)
+        self.cb_pbg.setCurrentIndex(max(0, min(2, int(ps.get('bg', 0) or 0))))
+        self.cb_pbg.blockSignals(False)
+        self._pbg_apply()
+        self.chk_live = QCheckBox("Ver los cambios en la nota real mientras edito")
+        self.chk_live.setChecked(True)
+        self.chk_live.setVisible(live is not None)
+        self.chk_live.toggled.connect(self._live_toggled)
+        right.addWidget(self.chk_live)
+        root.addLayout(right, 1)
+        self._live_timer = QTimer(self)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.setInterval(140)
+        self._live_timer.timeout.connect(self._live_fire)
+        tabs.setMinimumHeight(560)
+        self._building = False
+        self._fold_enable()
+        self._refresh()
+
+    def _style_fill(self, select=None):
+        self.cb_styles.blockSignals(True)
+        cur = select or self.cb_styles.currentData()
+        self.cb_styles.clear()
+        bn = self._mgr.base_note_templates()
+        self.cb_styles.addItem("(elige un estilo guardado...)" if bn else "(a\u00fan no hay estilos: usa \u00abGuardar estilo...\u00bb)", None)
+        for n, bp in bn:
+            self.cb_styles.addItem(n[:-5], n)
+        i = self.cb_styles.findData(cur) if cur else 0
+        self.cb_styles.setCurrentIndex(max(i, 0))
+        self.cb_styles.blockSignals(False)
+
+    def _style_load(self):
+        n = self.cb_styles.currentData()
+        bp = dict(self._mgr.base_note_templates()).get(n) if n else None
+        if not isinstance(bp, dict):
+            return
+        d = dict(BASE_NOTE_DEFAULTS)
+        d.update({k: (list(v) if isinstance(v, list) else v) for k, v in bp.items() if k in BASE_NOTE_DEFAULTS})
+        d['text'] = self.p.get('text', d.get('text', ''))
+        d['corners'] = list(d['corners'])
+        self._apply(d)
+
+    def _style_save(self):
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "Guardar estilo", "Nombre del estilo:", text=self.cb_styles.currentText() if self.cb_styles.currentData() else "mi_nota")
+        safe = self._mgr._tpl_safe_name(name) if ok else None
+        if not safe:
+            return
+        if safe in dict(self._mgr.base_note_templates()):
+            if QMessageBox.question(self, "Guardar estilo", "Ya existe '%s'. Reemplazarlo?" % safe[:-5],
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+        self._mgr.save_base_note_template(safe, self.get_params())
+        self._style_fill(select=safe)
+
+    def _tell(self, text, ms=1800):
+        """[PACK97] Aviso breve arriba en la pantalla (si hay gestor)."""
+        try:
+            self._mgr._osd(text, ms)
+        except Exception:
+            pass
+
+    def _clip_params(self, with_text):
+        """Parametros validados del portapapeles (None si no hay una nota base valida). with_text=False descarta el texto."""
+        raw = _bn_extract(QApplication.clipboard().text())
+        if raw is None:
+            return None
+        d = _bn_clean(raw, self._ranges)
+        if not with_text:
+            d.pop('text', None)
+        return d
+
+    def _paste(self, with_text):
+        d = self._clip_params(with_text)
+        if not d:
+            self._tell("El portapapeles no contiene un " + ("template" if with_text else "estilo") + " de nota base (JSON)", 2800)
+            return
+        new = dict(BASE_NOTE_DEFAULTS)
+        new['corners'] = list(new['corners'])
+        new['lifts'] = []
+        new['cx'] = []
+        new['text'] = self.p.get('text', new['text'])
+        new.update(d)
+        self._apply(new)
+        self._tell(("Template" if with_text else "Estilo") + " de nota base pegado")
+
+    def _tpl_paste(self):
+        self._paste(True)
+
+    def _style_paste(self):
+        self._paste(False)
+
+    def _tpl_json(self):
+        return json.dumps(self._mgr._base_note_tdata(self.get_params(), stable=True), indent=2, ensure_ascii=False)
+
+    def _tpl_copy(self):
+        """[PACK97] Copia el template completo (el mismo JSON que guarda 'Guardar estilo...')."""
+        QApplication.clipboard().setText(self._tpl_json())
+        self._tell("Template de nota base copiado (JSON)")
+
+    def _style_copy(self):
+        """[PACK97] Copia solo el estilo: los parametros de la nota base sin el texto."""
+        p = self.get_params()
+        p.pop('text', None)
+        QApplication.clipboard().setText(json.dumps({"base_note": p}, indent=2, ensure_ascii=False))
+        self._tell("Estilo de nota base copiado (JSON)")
+
+    def _tpl_export(self):
+        """[PACK97] Guarda el template completo en un archivo .json."""
+        base = (self.cb_styles.currentText() if self.cb_styles.currentData() else "nota_base") + ".json"
+        path, _ = QFileDialog.getSaveFileName(self, "Exportar template de nota base", os.path.join(DATA_DIR, base), "JSON (*.json)")
+        if not path:
+            return
+        if not os.path.splitext(path)[1]:
+            path += ".json"
+        try:
+            txt = self._tpl_json()
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(txt)
+        except (OSError, TypeError, ValueError) as e:
+            QMessageBox.warning(self, "Exportar", "No se pudo exportar:\n%s" % e)
+            return
+        self._tell("Template exportado: " + os.path.basename(path))
+
+    def _style_delete(self):
+        n = self.cb_styles.currentData()
+        if not n:
+            return
+        if QMessageBox.question(self, "Borrar estilo", "Borrar el estilo '%s'? Los widgets ya creados no cambian." % n[:-5],
+                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            os.remove(os.path.join(TEMPLATES_DIR, n))
+        except OSError:
+            return
+        self._style_fill()
+        tb = getattr(self._mgr, 'template_browser', None)
+        if tb is not None:
+            tb.reload()
+
+    def _fold_enable(self, on=None):
+        on = bool(self.p['fold']) if on is None else bool(on)
+        for c in self._fold_all:
+            c.setEnabled(on)
+        m = int(self._cur()['mode'])
+        for hnd in self._rows_none:
+            self._ff.setRowVisible(hnd, m == 0)
+        for hnd in self._rows_fold:
+            self._ff.setRowVisible(hnd, m == 1)
+        for hnd in self._rows_lift:
+            self._ff.setRowVisible(hnd, m == 2)
+        for ti, ci in enumerate(self._tab_corner_of):      # un punto en la subpestana de las esquinas con efecto
+            self.tab_corner.setTabText(ti, self._corner_names[ci] + ("  \u25cf" if int(self.p['cx'][ci]['mode']) else ""))
+            self.tab_corner.setTabToolTip(ti, self._mode_names[int(self.p['cx'][ci]['mode'])])
+
+    def _grad_enable(self, on=None):
+        rows = getattr(self, '_grad_rows', None)
+        if not rows:
+            return
+        k = int(self.p['grad_kind'])
+        use = {'grad_kind': True, 'grad_bias': True, 'grad_cx': True, 'grad_cy': True,
+               'grad_angle': k in (0, 2, 3), 'grad_size': k in (0, 1, 3), 'grad_spread': k in (0, 1)}
+        for key, w_ in rows.items():
+            w_.setEnabled(bool(self.p['grad']) and use[key])
+
+    def _save_preview_cfg(self):
+        gs = getattr(self._mgr, 'global_state', None)
+        if isinstance(gs, dict):
+            gs['note_preview'] = {'bg': int(self.cb_pbg.currentIndex()), 'color': self._pbg_color, 'lock': bool(self.chk_lock.isChecked())}
+            try:
+                self._mgr.save_global_state(record_history=False)
+            except Exception as e:
+                log_warn("BaseNote", f"No se pudo guardar el ajuste de la vista previa: {e}")
+
+    def _pbg_apply(self):
+        k = int(self.cb_pbg.currentIndex())
+        self.btn_pbg.setEnabled(k == 1)
+        self.btn_pbg.setStyleSheet(f"background:{self._pbg_color};border:1px solid #666;min-height:18px;")
+        pix = None
+        hint = "Rueda: zoom \u00b7 Arrastrar: mover \u00b7 Doble clic: vista completa"
+        if k == 2:
+            pix = _desktop_wallpaper()
+            if pix is None:
+                hint = "No se pudo leer el fondo de escritorio (solo en Windows): se usa el gris claro."
+                k = 0
+        self.lbl_pbg.setText(hint)
+        self.preview.set_background(k, self._pbg_color, pix)
+
+    def _pbg_changed(self, _i):
+        self._pbg_apply()
+        self._save_preview_cfg()
+
+    def _pbg_pick(self):
+        c = QColorDialog.getColor(QColor(self._pbg_color), self, "Color de fondo de la vista previa")
+        if c.isValid():
+            self._pbg_color = c.name()
+            self._pbg_apply()
+            self._save_preview_cfg()
+
+    def _cam(self):
+        """C\u00e1mara autom\u00e1tica: acerca la vista previa a la esquina que se est\u00e1 editando."""
+        if self._building or not self.p.get('fold'):
+            return
+        c = self.p['cx'][self._lc]
+        if int(c['mode']) == 0:
+            return
+        self.preview.focus_corner(self._lc, int(self.p['w']), int(self.p['h']), int(c['size']))
+
+    def _cur(self):
+        return self.p['cx'][self._lc]
+
+    def _set_cx(self, key, value):
+        if self._building:
+            return
+        self._cur()[key] = value
+        self._refresh()
+        self._cam()
+
+    def _set_cx_mode(self, i, m):
+        if self._building:
+            return
+        c, m = self.p['cx'][i], int(m)
+        old = int(c['mode'])
+        if m == old:
+            return
+        if m:                                            # al cambiar de modo, la punta y las curvas toman las t\u00edpicas del modo nuevo (el tama\u00f1o se conserva)
+            nd = _cx_new(i, m)
+            for k in ('tip', 'c1', 'p1', 'c2', 'p2'):
+                c[k] = nd[k]
+        c['mode'] = m
+        if m and self._lc != i:
+            self._select_corner(i)                       # los controles pasan a mostrar esa esquina
+        else:
+            self._lift_corner_changed(self._lc)
+        self._refresh()
+        self._cam()
+
+    def _select_corner(self, i):
+        self.tab_corner.setCurrentIndex(self._tab_corner_of.index(int(i) % 4))
+
+    def _corner_tab_changed(self, ti):
+        self._corner_pages[int(ti)].insertWidget(1, self._cwrap, 1)   # la caja de ajustes pasa a la subpestana elegida
+        self._cwrap.show()
+        self._lift_corner_changed(self._tab_corner_of[int(ti)])
+
+    def _lift_corner_changed(self, i):
+        self._lc = int(i) % 4
+        was, self._building = self._building, True
+        for f in self._lsync:
+            f()
+        self._building = was
+        self._fold_enable()
+        if not was:
+            self._cam()
+
+    def _lift_copy(self):
+        """[PACK89] Copia los ajustes a las otras esquinas del mismo modo. Los desplazamientos X / Y de las luces estan en
+        pantalla (+ derecha, + abajo): en una esquina del lado contrario se reflejan, para que la luz o la sombra quede
+        a la misma distancia y del mismo lado respecto a SU esquina (antes se copiaban tal cual y se desajustaban)."""
+        src = dict(self._cur())
+        xs, ys = (0, 1, 1, 0), (0, 0, 1, 1)             # lado de cada esquina (0 sup.izq., 1 sup.der., 2 inf.der., 3 inf.izq.)
+        for i, c in enumerate(self.p['cx']):
+            if i != self._lc and c['mode'] == src['mode']:
+                c.update({k: v for k, v in src.items() if k != 'mode'})
+                fx = -1 if xs[i] != xs[self._lc] else 1
+                fy = -1 if ys[i] != ys[self._lc] else 1
+                for pre in ('fa', 'fb', 'la', 'lb'):
+                    c[pre + '_dx'] = int(src[pre + '_dx']) * fx
+                    c[pre + '_dy'] = int(src[pre + '_dy']) * fy
+        self._refresh()
+        self._cam()
+
+    def _apply(self, d):
+        self._building = True
+        for k, v in d.items():
+            self.p[k] = copy.deepcopy(v) if isinstance(v, (list, dict)) else v
+        self.p['cx'] = _norm_cx(self.p)
+        for f in self._sync:
+            f()
+        self._building = False
+        self._fold_enable()
+        self._grad_enable()
+        self._refresh()
+
+    def _set(self, key, value):
+        if self._building:
+            return
+        self.p[key] = value
+        if key in ('grad', 'grad_kind'):
+            self._grad_enable()
+        self._refresh()
+
+    def _set_corner(self, i, on):
+        if self._building:
+            return
+        self.p['corners'][i] = bool(on)
+        self._refresh()
+
+    def _live_schedule(self):
+        if self._live is not None and not self._building and self.chk_live.isChecked():
+            self._live_timer.start()
+
+    def _live_fire(self):
+        if self._live is not None and self.chk_live.isChecked():
+            self._live(copy.deepcopy(self.p))
+
+    def _live_toggled(self, on):
+        if self._live is None:
+            return
+        if on:
+            self._live_fire()
+        else:
+            self._live(None)                            # deja la nota real como estaba
+
+    def done(self, r):
+        self._live_timer.stop()
+        super().done(r)
+
+    def _refresh(self):
+        if self._building:
+            return
+        self.sp_r.setMaximum(max(1, min(self.sp_w.value(), self.sp_h.value()) // 2))
+        self.preview.set_image(render_base_note(self.p, with_text=True))
+        self._live_schedule()
+
+    def get_params(self):
+        return copy.deepcopy(self.p)
+
+    def template_name(self):
+        return self.ed_tpl.text() if self.chk_tpl.isChecked() else None
+
+
+
+
+class ConnectorOverlayGroup:
+    """Una ConnectorOverlay POR PANTALLA. Una sola ventana que abarque monitores con distinta escala no
+    puede ser coherente en todos (su tamano nativo usa la escala de una unica pantalla) y los cables
+    acababan apuntando a sitios donde no hay ninguna nota. Cada pantalla pinta solo su parte, en su
+    propio sistema de coordenadas. Expone la misma interfaz que una ConnectorOverlay."""
+
+    def __init__(self, manager):
+        self.manager = manager
+        self.overlays = {}          # QScreen -> ConnectorOverlay
+        self._source_id = None
+        self._drag_id = None
+        self._faint = False
+        self._fade_val = self._fade_from = self._fade_target = 1.0
+        self._fade_t0, self._fade_ms = 0.0, 1.0
+        self.fading_out = False
+        self._fade_timer = QTimer()
+        self._fade_timer.setInterval(16)
+        self._fade_timer.timeout.connect(self._fade_tick)
+        self.sync_screens()
+        app = QApplication.instance()
+        if app is not None:
+            app.screenAdded.connect(self._on_screens_changed)
+            app.screenRemoved.connect(self._on_screens_changed)
+
+    def _on_screens_changed(self, *_args):
+        self.sync_screens()
+
+    def sync_screens(self, screens=None):
+        screens = list(QApplication.screens() if screens is None else screens)
+        for scr in list(self.overlays):
+            if scr not in screens:
+                ov = self.overlays.pop(scr)
+                ov.hide()
+                ov.deleteLater()
+        for scr in screens:
+            if scr in self.overlays:
+                continue
+            ov = ConnectorOverlay(self.manager)
+            try:
+                ov.setScreen(scr)
+            except TypeError:
+                pass
+            ov.source_id, ov.drag_id, ov.faint = self._source_id, self._drag_id, self._faint
+            self.overlays[scr] = ov
+            QTimer.singleShot(1500, lambda o=ov: self._prewarm(o))
+
+    def _prewarm(self, ov):
+        """Crea la ventana nativa del overlay por adelantado (mostrar/ocultar un fotograma transparente) para
+        que la primera aparicion de cables al pasar el raton no pague la creacion de la ventana."""
+        try:
+            if ov not in self.overlays.values() or ov.isVisible() or self._source_id or self._drag_id:
+                return
+            flags = Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput | Qt.WindowStaysOnTopHint
+            ov.setWindowFlags(flags)
+            ov.setGeometry(ov.screen().geometry().x(), ov.screen().geometry().y(), 1, 1)
+            ov.blank = True
+            ov.show()
+            ov.repaint()
+            ov.hide()
+            ov.blank = False
+        except Exception as e:
+            log_warn("Manager", f"No se pudo precalentar el overlay de cables: {e}")
+
+    def set_fade(self, v):
+        """Fija el fundido al instante (cancela cualquier fundido en curso)."""
+        self._fade_timer.stop()
+        self.fading_out = False
+        self._fade_val = self._fade_target = float(v)
+        self._set('_fade', self._fade_val)
+
+    def fade_to(self, target, ms):
+        """Lleva el fundido hasta 'target' (0-1) en 'ms' milisegundos con una curva suave. A 0 oculta los cables."""
+        target = float(target)
+        if ms <= 0:
+            self.set_fade(target)
+            return
+        self._fade_from, self._fade_target = self._fade_val, target
+        self._fade_t0, self._fade_ms = time.monotonic(), float(ms)
+        self.fading_out = target <= 0.0
+        self._fade_timer.start()
+
+    def _fade_tick(self):
+        t = (time.monotonic() - self._fade_t0) * 1000.0 / max(1.0, self._fade_ms)
+        done = t >= 1.0
+        t = min(1.0, t)
+        e = t * t * (3.0 - 2.0 * t)
+        self._fade_val = self._fade_from + (self._fade_target - self._fade_from) * e
+        self._set('_fade', self._fade_val)
+        self.update()
+        if done:
+            self._fade_timer.stop()
+            if self._fade_target <= 0.0:
+                self.manager.hide_cables()     # ya invisibles: se ocultan (y se restablece el fundido)
+            else:
+                self.fading_out = False
+
+    def _set(self, name, value):
+        for ov in self.overlays.values():
+            setattr(ov, name, value)
+
+    @property
+    def source_id(self):
+        return self._source_id
+
+    @source_id.setter
+    def source_id(self, value):
+        self._source_id = value
+        self._set('source_id', value)
+
+    @property
+    def drag_id(self):
+        return self._drag_id
+
+    @drag_id.setter
+    def drag_id(self, value):
+        self._drag_id = value
+        self._set('drag_id', value)
+
+    @property
+    def faint(self):
+        return self._faint
+
+    @faint.setter
+    def faint(self, value):
+        self._faint = bool(value)
+        self._set('faint', self._faint)
+
+    def _visible(self):
+        return [ov for ov in self.overlays.values() if ov.isVisible()]
+
+    def isVisible(self):
+        return bool(self._visible())
+
+    def repaint(self):
+        for ov in self._visible():
+            ov.repaint()
+
+    def update(self):
+        for ov in self._visible():
+            ov.update()
+
+    def request_update(self):
+        for ov in self._visible():
+            ov.request_update()
+
+    def hide_overlay(self, ov):
+        # Fotograma transparente ANTES de ocultar: la ventana translucida conserva su ultimo bitmap.
+        ov.blank = True
+        ov.repaint()
+        ov.hide()
+        ov.blank = False
+
+    def hide(self):
+        for ov in self._visible():
+            self.hide_overlay(ov)
+
+
+class WidgetManager(QObject):
+    
+    def __init__(self, app, console_hwnd=None):
+        super().__init__()
+        self.app = app
+        self.widgets = {}
+        self.global_state = {}
+        self.all_visible = True
+        self.app_is_quitting = False 
+
+        self._pending_disk_write = False
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(5 * 60 * 1000)
+        self._autosave_timer.timeout.connect(self._periodic_autosave)
+        self._autosave_timer.start()
+
+        self.dialog_parent = QWidget()
+        self.dialog_parent.setWindowFlags(Qt.Tool) 
+        self.dialog_parent.hide()
+
+        self.console_hwnd = console_hwnd
+        self.console_visible = False
+        self._resident = {}
+        self.user32 = None
+        if self.console_hwnd:
+            try:
+                self.user32 = ctypes.WinDLL('user32')
+                self.SW_HIDE = 0
+                self.SW_SHOW = 5
+            except Exception as e:
+                log_error("Manager", f"No se pudo cargar user32.dll para el control de la consola: {e}")
+                self.console_hwnd = None
+
+        self.network_manager = QNetworkAccessManager(self)
+        log_info("Manager", f"Configurando perfil web persistente en: {WEB_DATA_DIR}")
+        self.web_profile = QWebEngineProfile("persistent_profile", self)
+        self.web_profile.setPersistentStoragePath(WEB_DATA_DIR)
+        self.web_profile.setPersistentCookiesPolicy(QWebEngineProfile.AllowPersistentCookies)
+        
+        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        self.web_profile.setHttpUserAgent(ua)
+        
+        settings = self.web_profile.settings()
+        settings.setAttribute(settings.WebAttribute.PlaybackRequiresUserGesture, False)
+        settings.setAttribute(settings.WebAttribute.PluginsEnabled, True)
+        
+        self.setup_tray_icon()
+        self._ensure_data_defaults()
+        self.load_global_state()
+        if not self.global_state:
+            self._first_run_default()
+        
+        self.build_tray_menu()
+
+        self._apply_collapse_visibility()
+        
+        self._seed_global_history()          # [PACK54] estado inicial: tambien el primer cambio se puede deshacer
+        self.connector_overlay = ConnectorOverlayGroup(self)
+        self.app.aboutToQuit.connect(self.force_save_all_states)
+        self.app.aboutToQuit.connect(self._autosave_current_profile)
+        self.app.aboutToQuit.connect(self._persist_history)
+        self.browser = None
+        self.hotkeys = HotkeyManager(self)     # atajos + teclas de menu (hotkeys.json)
+        self.app.aboutToQuit.connect(self.hotkeys.shutdown)
+        self._init_gesture_hud()
+        self.build_tray_menu()                 # de nuevo, ya con teclas de acceso
+        self._hover_cable_timer = QTimer(self)
+        self._hover_cable_timer.setInterval(25)
+        self._hover_cable_timer.timeout.connect(self._poll_hover_cables)
+        if os.environ.get("WIDGET_ARENA_NO_HOVER_CABLES", "0") != "1":
+            self._hover_cable_timer.start()
+
+    def setup_tray_icon(self):
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(self.app.windowIcon())
+        self.tray_icon.setToolTip("WidgetArena")
+        self.tray_icon.activated.connect(self._handle_tray_activation)
+        self.tray_icon.show()
+
+    def _handle_tray_activation(self, reason):
+        self.tray_gesture(reason)       # gestos configurables (hotkeys.json -> tray_gestures)
+
+    def _get_widget_display_name(self, widget_id, state=None):
+        if state is None:
+            state = self.global_state.get(widget_id, {})
+        custom_name = (state.get('custom_name') or '').strip()
+        if custom_name:
+            return custom_name
+        _tn = str(state.get('template_name') or widget_id)
+        return _tn[:-5] if _tn.lower().endswith('.json') else _tn
+
+    def _rename_widget(self, widget_id):
+        parent_widget = self.widgets.get(widget_id)
+        state = self.global_state.get(widget_id)
+        if not state:
+            return
+
+        current_name = self._get_widget_display_name(widget_id, state)
+        new_name, ok = QInputDialog.getText(
+            parent_widget,
+            "Renombrar Widget",
+            "Nombre para identificar este widget en la lista:",
+            text=current_name
+        )
+        if not ok:
+            return
+
+        state['custom_name'] = new_name.strip()
+        self.save_global_state()
+        self.build_tray_menu()
+
+    def _build_widget_row_action(self, widget_id, state, parent_menu):
+        is_enabled = state.get('enabled', True)
+        display_name = self._get_widget_display_name(widget_id, state)
+
+        row = QWidget(parent_menu)
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(8 + 16 * getattr(self, '_row_depth', 0), 2, 6, 2)       # [PACK69] sangria por jerarquia
+        row_layout.setSpacing(8)
+
+        checkbox = QCheckBox(row)
+        checkbox.setChecked(is_enabled)
+        checkbox.setToolTip("Mostrar/ocultar este widget")
+        checkbox.toggled.connect(
+            lambda checked, wid=widget_id: self.toggle_widget_enabled(wid, force_state=checked)
+        )
+        row_layout.addWidget(checkbox)
+        thumb = QLabel(row)             # [PACK65] miniatura del widget
+        thumb.setFixedSize(self.ROW_THUMB)
+        thumb.setAlignment(Qt.AlignCenter)
+        self._row_thumb_set(widget_id, state, thumb)
+        row_layout.addWidget(thumb)
+
+        name_label = QLabel(row)
+        name_label.setToolTip(display_name + "  (" + _KIND_LABEL[_widget_kind(state)].lower() + ")")
+        fm = name_label.fontMetrics()
+        name_label.setText(fm.elidedText(display_name + getattr(self, '_row_suffix', {}).get(widget_id, ''), Qt.ElideRight, 190 - 16 * getattr(self, '_row_depth', 0)))
+        if not is_enabled:
+            name_label.setStyleSheet("color: #888888;")
+        name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        row_layout.addWidget(name_label, 1)
+
+        more_button = QToolButton(row)
+        more_button.setText("\u22ef")
+        more_button.setAutoRaise(True)
+        more_button.setCursor(Qt.PointingHandCursor)
+        more_button.setToolTip("Mas opciones para este widget (renombrar, editar, clonar, eliminar...)")
+        more_button.setPopupMode(QToolButton.InstantPopup)
+        widget_submenu = QMenu(more_button)
+
+        def _fill_row_menu(wid=widget_id, m=widget_submenu):
+            # El menu de cada widget se construye al ABRIRLO (antes: los N a la vez en cada reconstruccion del menu).
+            built = self.build_widget_context_menu(wid, from_tray=True)
+            m.clear()
+            m._built = built            # mantiene vivas sus acciones y submenus
+            for a in built.actions():
+                m.addAction(a)
+        widget_submenu.aboutToShow.connect(_fill_row_menu)
+        more_button.setMenu(widget_submenu)
+        row_layout.addWidget(more_button)
+
+        action = QWidgetAction(parent_menu)
+        action.setDefaultWidget(row)
+        return action
+
+    # --- [NUEVO] Temporizadores + notificaciones de Telegram ---
+
+    def set_widget_timer(self, widget_id, iso_or_none, custom_message=""):
+        """Guarda (o borra) el instante objetivo y mensaje del temporizador."""
+        state = self.global_state.get(widget_id)
+        if not isinstance(state, dict):
+            return
+        if iso_or_none:
+            state['timer_target'] = iso_or_none
+            state['timer_message'] = custom_message
+        else:
+            state.pop('timer_target', None)
+            state.pop('timer_message', None)
+        self.save_global_state(record_history=False)
+        self.build_tray_menu()   # el submenu de la nota muestra "Cancelar temporizador"
+
+    def get_hierarchy_settings(self):
+        """Ajustes del resaltado = valores por defecto + lo guardado (compatible con el formato antiguo)."""
+        out = copy.deepcopy(HIERARCHY_DEFAULTS)
+        stored = self.global_state.get('hierarchy_settings')
+        if isinstance(stored, str):
+            try:
+                stored = json.loads(stored)
+            except Exception:
+                stored = None
+        if isinstance(stored, dict):
+            for k, v in stored.items():
+                if k not in out:
+                    continue
+                if isinstance(out[k], dict):
+                    if isinstance(v, dict):
+                        out[k].update({kk: vv for kk, vv in v.items() if kk in out[k]})
+                else:
+                    out[k] = v
+        return out
+
+    def get_tint_color(self, kind):
+        t = self.get_hierarchy_settings().get(f'tint_{kind}', HIERARCHY_DEFAULTS['tint_hover'])
+        clamp = lambda x, lo, hi: max(lo, min(hi, int(x)))
+        vals = [float(t['h']), float(t['s']), float(t['v']), float(t['a'])]
+        if all(v == int(v) for v in vals):
+            return QColor.fromHsv(int(vals[0]) % 360, clamp(vals[1], 0, 255), clamp(vals[2], 0, 255), clamp(vals[3], 0, 255))
+        f01 = lambda x: max(0.0, min(1.0, x / 255.0))
+        return QColor.fromHsvF((vals[0] % 360.0) / 360.0, f01(vals[1]), f01(vals[2]), f01(vals[3]))
+
+    def _show_tint_preview(self, mode):
+        color = self.get_tint_color(mode)
+        for w in self.widgets.values():
+            if w.isVisible():
+                w._hierarchy_tint_color = color
+                w._refresh_hierarchy_tint()
+
+    def _clear_tint_preview(self):
+        for w in self.widgets.values():
+            w._set_hierarchy_highlighted(False)
+
+    def _edit_hierarchy_settings(self):
+        original = copy.deepcopy(self.global_state.get('hierarchy_settings'))
+        dialog = HierarchySettingsDialog(self.get_hierarchy_settings(), self.dialog_parent)
+
+        def on_changed(data, mode, preview_on):
+            # Se aplica en vivo; si se cancela se restaura el valor original.
+            self.global_state['hierarchy_settings'] = json.dumps(data)
+            if preview_on:
+                self._show_tint_preview(mode)
+            else:
+                self._clear_tint_preview()
+
+        dialog.settingsChanged.connect(on_changed)
+        self._begin_cable_preview()
+        on_changed(dialog.get_data(), dialog.mode_key(), dialog.preview_enabled())
+        try:
+            accepted = dialog.exec()
+        finally:
+            self._end_cable_preview()
+        self._clear_tint_preview()
+        if accepted:
+            self.global_state['hierarchy_settings'] = json.dumps(dialog.get_data())
+            self.save_global_state(record_history=False)
+        else:
+            if original is None:
+                self.global_state.pop('hierarchy_settings', None)
+            else:
+                self.global_state['hierarchy_settings'] = original
+
+    def _cable_preview_dash_now(self):
+        """[PACK90] Estilo de la vista previa: discontinuo si se esta editando un ajuste de los discontinuos o si la casilla
+        'Previsualizar discontinuas' esta marcada; si no, continuo."""
+        return bool(getattr(self, '_cable_preview_ctx_dash', False) or getattr(self, '_cable_preview_dashed', False))
+
+    def _begin_cable_preview(self, faint=True):
+        """Muestra TODOS los cables mientras un dialogo de ajustes esta abierto (solo existe durante el dialogo)."""
+        sample = self._first_linked_widget()
+        self._cable_preview_dashed = False
+        self._cable_preview_ctx_dash = False
+        self._cable_preview_active = True
+        self._cable_preview_all = sample is not None
+        self._cable_preview_faint = bool(faint)
+        if sample is not None:
+            self.show_cables_for(sample, faint=self._cable_preview_faint)
+        return sample
+
+    def _cable_preview_refresh(self, sample):
+        """Tras cada cambio de un ajuste: repinta; si algo ocultara el overlay, lo vuelve a mostrar."""
+        if sample is None or not getattr(self, '_cable_preview_active', False):
+            return
+        grp = self.connector_overlay
+        if grp.isVisible():
+            grp.update()
+        else:
+            self.show_cables_for(sample, faint=getattr(self, '_cable_preview_faint', True))
+
+    def _set_cable_preview_faint(self, sample, faint):
+        self._cable_preview_faint = bool(faint)
+        if sample is not None:
+            self.show_cables_for(sample, faint=self._cable_preview_faint)
+
+    def _end_cable_preview(self):
+        self._cable_preview_active = False
+        self._cable_preview_all = False
+        self._cable_preview_dashed = False
+        self._cable_preview_ctx_dash = False
+        self.hide_cables()
+
+    def _first_linked_widget(self):
+        for wid in self.widgets:
+            st = self.global_state.get(wid, {})
+            if self.get_children(wid) or (isinstance(st, dict) and st.get('parent_id') in self.widgets):
+                return wid
+        return None
+
+    def _build_cable_dialog(self, on_change, spec=None, title="Cables"):
+        """Dialogo de ajustes de cables, en pestanas, con una miniatura en vivo a la derecha de cada ajuste.
+        Devuelve (dialogo, {clave: (control, valor_por_defecto)}, layout)."""
+        from PySide6.QtWidgets import QDoubleSpinBox, QTabWidget, QScrollArea as _QSA
+        dlg = QDialog(self.dialog_parent)
+        dlg.setWindowTitle(title)
+        lay = QVBoxLayout(dlg)
+        controls, thumbs = {}, []
+
+        def refresh():
+            for t in thumbs:
+                t.update()
+
+        def add_row(grid, r, key, label, kind, suffix, thumb):
+            if key == '_cable_hover_opacity':
+                default, lo, hi, cur = 35, 5, 100, self.get_cable_hover_opacity_pct()
+            else:
+                default, lo, hi = self.CABLE_LENGTH_PARAMS[key]
+                cur = self.get_cable_param(key)
+            if kind == 'c':
+                w = _CableCombo(suffix)
+                w.setValue(int(cur))
+            elif kind == 'f':
+                w = QDoubleSpinBox()
+                w.setDecimals(1)
+                w.setSingleStep(0.1)
+                w.setRange(lo, hi)
+                w.setValue(cur)
+            else:
+                w = QSpinBox()
+                w.setRange(int(lo), int(hi))
+                w.setValue(int(cur))
+            w.setSuffix(suffix)
+            w.valueChanged.connect(lambda v, k=key: (on_change(k, v), refresh()))
+            controls[key] = (w, default)
+            lb = QLabel(label)
+            lb.setWordWrap(True)
+            grid.addWidget(lb, r, 0)
+            grid.addWidget(w, r, 1)
+            if thumb:
+                tv = CableSampleView(self, thumb)
+                thumbs.append(tv)
+                grid.addWidget(tv, r, 2)
+
+        def fill_groups(pl, groups):
+            for g_title, rows, note in groups:
+                box = QGroupBox(g_title)
+                grid = QGridLayout(box)
+                grid.setColumnStretch(0, 1)
+                kinds = {r_[4] for r_ in rows}
+                shared = len(rows) >= 2 and len(kinds) == 1 and kinds <= {'fx', 'rope'}     # [PACK103] una sola miniatura para todo el grupo
+                for r, row in enumerate(rows):
+                    add_row(grid, r, *((tuple(row[:4]) + (None,)) if shared else row))
+                if shared:
+                    tv = CableSampleView(self, next(iter(kinds)))
+                    thumbs.append(tv)
+                    grid.addWidget(tv, 0, 2, len(rows), 1, Qt.AlignTop)
+                if note:
+                    nl = QLabel(note)
+                    nl.setWordWrap(True)
+                    grid.addWidget(nl, len(rows), 0, 1, 3)
+                pl.addWidget(box)
+
+        tabs = QTabWidget()
+        subtabs = []
+        for tab_title, groups in (spec or CABLE_DIALOG_SPEC):
+            page = QWidget()
+            pl = QVBoxLayout(page)
+            if groups and groups[0][0] == '@sub':      # [PACK103] sub-pestanas, cada una con su desplazamiento propio
+                st_ = QTabWidget()
+                for _m, sub_title, sub_groups in groups:
+                    sp_ = QWidget()
+                    spl = QVBoxLayout(sp_)
+                    fill_groups(spl, sub_groups)
+                    spl.addStretch(1)
+                    sa_ = _QSA()
+                    sa_.setWidgetResizable(True)
+                    sa_.setFrameShape(QFrame.NoFrame)
+                    sa_.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                    sa_.setWidget(sp_)
+                    st_.addTab(sa_, sub_title)
+                pl.addWidget(st_)
+                subtabs.append(st_)
+            else:
+                fill_groups(pl, groups)
+                pl.addStretch(1)
+            tabs.addTab(page, tab_title)
+        ctx = QComboBox()
+        ctx.addItem("Las muestras simulan: cables al pasar el rat\u00f3n (tenues)")
+        ctx.addItem("Las muestras simulan: cables a opacidad plena (arrastre, plegado)")
+        self._cable_sample_hover = True
+        ctx.currentIndexChanged.connect(lambda i: (setattr(self, '_cable_sample_hover', i == 0), refresh()))
+        lay.addWidget(ctx)
+        lay.addWidget(tabs)
+        dlg.cable_tabs = tabs
+        dlg.cable_subtabs = subtabs
+        dlg.setMinimumWidth(800)
+        return dlg, controls, lay
+
+    def _edit_crown_settings(self):
+        """[PACK79] Dialogo propio de la corona del ancestro (antes iba dentro de Cables)."""
+        self._edit_cable_settings(crown=True)
+
+    def _edit_cable_settings(self, crown=False):
+        crown_keys = [r[0] for _t, gs in CROWN_DIALOG_SPEC for _g, rws, _n in gs for r in rws]
+        if crown:
+            keys = ['show_crown'] + crown_keys
+        else:
+            keys = ['_cable_hover_opacity'] + [k for k in self.CABLE_LENGTH_PARAMS if k not in crown_keys]
+        original = {k: self.global_state[k] for k in keys if k in self.global_state}
+        sample = self._first_linked_widget()
+
+        def on_change(key, value):
+            self.global_state[key] = round(float(value), 1) if isinstance(value, float) else int(value)
+            self._cable_preview_ctx_dash = key in ('_cable_dash_len', '_cable_dash_gap')    # [PACK90] editando los discontinuos: se ven discontinuos
+            self._cable_preview_refresh(sample)
+
+        dlg, controls, lay = self._build_cable_dialog(on_change, CROWN_DIALOG_SPEC if crown else None,
+                                                      "Corona del ancestro" if crown else "Cables")
+        dlg.cable_tabs.currentChanged.connect(lambda _i: (setattr(self, '_cable_preview_ctx_dash', False), self._cable_preview_refresh(sample)))
+        if crown:
+            info = QLabel("La corona es la marca que aparece sobre el widget ancestro cuando se muestran los cables. "
+                          "Estos ajustes valen para todos los widgets.")
+            info.setWordWrap(True)
+            lay.insertWidget(0, info)
+            show_chk = QCheckBox("Mostrar la corona sobre el ancestro")
+            show_chk.setChecked(self.get_show_crown())
+
+            def on_show(on):
+                self.global_state['show_crown'] = bool(on)
+                for _w, _d in controls.values():
+                    _w.setEnabled(bool(on))
+                for w_ in self.widgets.values():
+                    w_._update_crown_badge()
+                self._cable_preview_refresh(sample)
+                if self.connector_overlay.isVisible():
+                    self.connector_overlay.update()
+            show_chk.toggled.connect(on_show)
+            lay.insertWidget(1, show_chk)
+            for _w, _d in controls.values():
+                _w.setEnabled(show_chk.isChecked())
+        _at = lay.indexOf(dlg.cable_tabs)               # [PACK90] las opciones de la vista previa van SOBRE las pestanas
+        if sample is None:
+            lay.insertWidget(_at, QLabel("(No hay widgets conectados para previsualizar.)"))
+        else:
+            row_ = QHBoxLayout()
+            chk = QCheckBox("Previsualizar a opacidad plena (sin la tenuidad de hover)")
+            chk.toggled.connect(lambda on: self._set_cable_preview_faint(sample, not on))
+            chk2 = QCheckBox("Previsualizar discontinuas")
+            chk2.setToolTip("La vista previa muestra un solo estilo: continuo, o discontinuo si marcas esto.\n"
+                            "Mientras cambias la longitud o el hueco de los trazos se ven siempre discontinuos.")
+            chk2.toggled.connect(lambda on: (setattr(self, '_cable_preview_dashed', bool(on)), self._cable_preview_refresh(sample)))
+            row_.addWidget(chk)
+            row_.addWidget(chk2)
+            row_.addStretch(1)
+            lay.insertLayout(_at, row_)
+        reset_btn = QPushButton("Restablecer valores por defecto")
+        reset_btn.clicked.connect(lambda: [w.setValue(d) for w, d in controls.values()])    # [PACK79] en corona no toca "mostrar"
+        lay.addWidget(reset_btn)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        self._begin_cable_preview()
+        try:
+            accepted = dlg.exec()
+        finally:
+            self._cable_preview_active = False
+            self._cable_preview_all = False
+            self._cable_preview_dashed = False
+            self._cable_preview_ctx_dash = False
+            self.hide_cables()
+        if accepted:
+            self.save_global_state(record_history=False)
+            self.build_tray_menu()
+        else:
+            for k in keys:
+                if k in original:
+                    self.global_state[k] = original[k]
+                else:
+                    self.global_state.pop(k, None)
+            if crown:
+                for w_ in self.widgets.values():
+                    w_._update_crown_badge()
+
+    def _edit_telegram_config(self):
+        token = self.global_state.get('telegram_token', '')
+        chat_id = self.global_state.get('telegram_chat_id', '')
+        dialog = TelegramConfigDialog(token, chat_id, self.dialog_parent)
+        if dialog.exec():
+            t, c = dialog.get_data()
+            self.global_state['telegram_token'] = t
+            self.global_state['telegram_chat_id'] = c
+            self.save_global_state(record_history=False)
+
+    def _set_timer_for_widget(self, widget_id):
+        window = self.widgets.get(widget_id)
+        if not window:
+            return
+        state = self.global_state.get(widget_id, {})
+        current_dt = window.timer_target_dt
+        current_msg = state.get('timer_message', '')
+
+        dialog = TimerSetDialog(current_dt, current_msg, self.dialog_parent)
+        if dialog.exec():
+            if dialog.remove_requested:
+                window._cancel_timer()
+            else:
+                window._start_timer_at(dialog.get_target_datetime(), dialog.get_message())
+                if not self.global_state.get('telegram_token') or not self.global_state.get('telegram_chat_id'):
+                    QMessageBox.information(
+                        self.dialog_parent, "Telegram sin configurar",
+                        "El temporizador quedó programado, pero todavía no configuraste Telegram, "
+                        "así que al cumplirse no se enviará ninguna notificación.\n\n"
+                        "Configúralo desde el menú de la bandeja: \"Configurar Telegram...\"."
+                )
+
+    def _cancel_timer_for_widget(self, widget_id):
+        window = self.widgets.get(widget_id)
+        if window:
+            window._cancel_timer()
+
+    def send_telegram_notification(self, widget_id):
+        token = self.global_state.get('telegram_token', '')
+        chat_id = self.global_state.get('telegram_chat_id', '')
+        if not token or not chat_id:
+            log_warn("Telegram", "Notificacion fallida: Token o Chat ID no configurado.")
+            if getattr(self, 'tray_icon', None):
+                self.tray_icon.showMessage(
+                    "Temporizador cumplido",
+                    "No se envio la notificacion: falta configurar Telegram.",
+                    QSystemTrayIcon.Warning, 5000)
+            return
+
+        state = self.global_state.get(widget_id, {})
+        display_name = self._get_widget_display_name(widget_id, state)
+
+        # Un recordatorio que solo dice "nota X" sirve poco: se agrega un
+        # extracto del texto de la nota.
+        custom_msg = state.get('timer_message', '').strip()
+        text = f"\u23f0 <b>{display_name}</b>"
+
+        if custom_msg:
+            text += f"\n\n{custom_msg}"
+        else:
+            preview = ""
+            try:
+                content = (state.get('template_data', {}).get('layer1', {}).get('content') or '')
+                doc = QTextDocument()
+                doc.setHtml(content)
+                preview = " ".join(doc.toPlainText().split())[:300]
+            except Exception:
+                pass
+            if preview:
+                text += f"\n\n<i>{preview}</i>"
+
+        url = (f"https://api.telegram.org/bot{token}/sendMessage"
+               f"?chat_id={urllib.parse.quote(chat_id)}&text={urllib.parse.quote(text)}&parse_mode=HTML")
+
+        reply = self.network_manager.get(QNetworkRequest(QUrl(url)))
+
+        def _done():
+            if reply.error() != QNetworkReply.NoError:
+                err = reply.errorString()
+                log_error("Telegram", f"Fallo al enviar la notificacion: {err}")
+                if getattr(self, 'tray_icon', None):
+                    self.tray_icon.showMessage(
+                        "Error de Telegram", f"No se pudo enviar la notificacion:\n{err}",
+                        QSystemTrayIcon.Warning, 5000)
+            else:
+                log_info("Telegram", f"Notificacion enviada ({display_name}).")
+            reply.deleteLater()
+
+        reply.finished.connect(_done)
+
+    def build_tray_menu(self):
+        menu = _HMenu()
+        menu.setToolTipsVisible(True)
+
+        toggle_all_text = "Ocultar todos los widgets" if self.all_visible else "Mostrar todos los widgets"
+        toggle_all_action = QAction(toggle_all_text, self)
+        toggle_all_action.triggered.connect(self.toggle_all_visibility)
+        menu.addAction(toggle_all_action)
+        collapse_action = QAction("Desplegar todos los hijos" if self._all_collapsed() else "Plegar todos los hijos", self)
+        collapse_action.triggered.connect(lambda: self.toggle_collapse_all())
+        menu.addAction(collapse_action)
+        reload_all_action = QAction("Recargar todos los widgets (F5)", self)
+        reload_all_action.triggered.connect(self.reload_all_widgets)
+        menu.addAction(reload_all_action)
+
+        menu.addSeparator()
+
+        add_new_action = QAction("Nuevo widget...", self)
+        add_new_action.triggered.connect(self.show_template_chooser)
+        menu.addAction(add_new_action)
+        new_default_action = QAction("Nuevo widget predeterminado", self)
+        new_default_action.triggered.connect(lambda: self.add_new_widget())
+        menu.addAction(new_default_action)
+        types_ = self.widget_types_in_use()       # [PACK67] tipos (por aspecto) del set actual, notas base incluidas
+        if types_:
+            types_menu = QMenu("Nuevo con un aspecto en uso", menu)
+            for _t in types_[:30]:
+                _a = QAction(self._type_icon(_t), "%s    (\u00d7%d)" % (_t['name'], _t['count']), self)
+                _a.triggered.connect(lambda _c=False, t=_t: self.add_widget_of_type(t))
+                types_menu.addAction(_a)
+            menu.addMenu(types_menu)
+        base_note_action = QAction("Nueva nota base...", self)
+        base_note_action.triggered.connect(self.show_base_note_dialog)
+        menu.addAction(base_note_action)
+        browser_action = QAction("Navegador de widgets...", self)
+        browser_action.triggered.connect(lambda: self.show_browser())
+        menu.addAction(browser_action)
+
+        menu.addSeparator()
+
+        widgets_menu = QMenu("Widgets", menu)
+        sort_menu = QMenu("Ordenar por", widgets_menu)
+        sort_group = QActionGroup(sort_menu)
+        for _key, _label in self.SORT_MODES:
+            sort_act = QAction(_label, self)
+            sort_act.setCheckable(True)
+            sort_act.setChecked(_key == self.get_sort_mode())
+            sort_act.triggered.connect(lambda _c=False, k=_key: self.set_sort_mode(k))
+            sort_group.addAction(sort_act)
+            sort_menu.addAction(sort_act)
+        widgets_menu.addMenu(sort_menu)
+        flt_menu = QMenu("Mostrar", widgets_menu)       # [PACK69]
+        flt_group = QActionGroup(flt_menu)
+        for _fk, _fl in (("all", "Todos"), ("on", "Solo visibles"), ("off", "Solo ocultos"), ("roots", "Solo ra\u00edces (sin hijos)")):
+            _fa = QAction(_fl, self)
+            _fa.setCheckable(True)
+            _fa.setChecked(_fk == self.menu_widget_filter())
+            _fa.triggered.connect(lambda _c=False, k=_fk: self.set_menu_widget_filter(k))
+            flt_group.addAction(_fa)
+            flt_menu.addAction(_fa)
+        widgets_menu.addMenu(flt_menu)
+        grp_act = QAction("Hijos bajo su padre (los plegados se ocultan)", self)
+        grp_act.setCheckable(True)
+        grp_act.setChecked(self.menu_group_children())
+        grp_act.toggled.connect(self.set_menu_group_children)
+        widgets_menu.addAction(grp_act)
+        widgets_menu.addSeparator()
+        _ids, _depth = self._menu_widget_rows()       # [PACK69] filtro y arbol
+        if not _ids:
+            no_widgets = QAction("No hay widgets activos", self)
+            no_widgets.setEnabled(False)
+            widgets_menu.addAction(no_widgets)
+        for widget_id in _ids:
+            state = self.global_state[widget_id]
+            self._row_depth = _depth.get(widget_id, 0)
+            row_action = self._build_widget_row_action(widget_id, state, widgets_menu)
+            widgets_menu.addAction(row_action)
+        
+        menu.addMenu(widgets_menu)
+        self._row_depth = 0
+        menu.addSeparator()
+
+        self._build_profiles_menu(menu)
+        hub_top = QAction("Guardar y cargar...", self)       # [PACK72] el mapa de todo lo que se guarda
+        hub_top.triggered.connect(lambda: self.show_data_hub())
+        menu.addAction(hub_top)
+        
+        menu.addSeparator()
+
+        undo_action = QAction("Deshacer 煤ltimo cambio (Ctrl+Alt+Z)", self)
+        undo_action.setText("Deshacer \u00faltimo cambio (Ctrl+Alt+Z)")
+        undo_action.triggered.connect(self.undo_global)
+
+        edit_menu = QMenu("Edici\u00f3n", menu)
+        edit_menu.addAction(undo_action)
+        redo_action = QAction("Rehacer (Ctrl+Alt+Y)", self)
+        redo_action.triggered.connect(self.redo_global)
+        edit_menu.addAction(redo_action)
+        menu.addMenu(edit_menu)
+
+        cfg_menu = QMenu("Ajustes", menu)            # [PACK58] todo lo de configuracion en un solo submenu
+        look_menu = QMenu("Apariencia", menu)
+
+        cables_action = QAction("Cables (opacidad y grosor)...", self)
+        cables_action.triggered.connect(self._edit_cable_settings)
+        look_menu.addAction(cables_action)
+        crown_cfg_action = QAction("Corona del ancestro (tama\u00f1o, posici\u00f3n, opacidad)...", self)      # [PACK79]
+        crown_cfg_action.triggered.connect(lambda checked=False: self._edit_crown_settings())
+        look_menu.addAction(crown_cfg_action)
+        crown_toggle = QAction("Mostrar la corona sobre el ancestro", self)
+        crown_toggle.setCheckable(True)
+        crown_toggle.setChecked(self.get_show_crown())
+        crown_toggle.toggled.connect(self.set_show_crown)
+        look_menu.addAction(crown_toggle)
+
+        tones_menu = QMenu("Tonos y color base", look_menu)
+        hues_action = QAction("Tonos predefinidos (Ctrl+rueda)...", self)
+        hues_action.triggered.connect(self._edit_predefined_hues)
+        tones_menu.addAction(hues_action)
+        bulk_base_hue_action = QAction("Color base de varias im\u00e1genes...", self)
+        bulk_base_hue_action.triggered.connect(self._bulk_edit_base_hue)
+        tones_menu.addAction(bulk_base_hue_action)
+        look_menu.addMenu(tones_menu)
+
+        hierarchy_action = QAction("Resaltado al pasar el rat\u00f3n...", self)
+        hierarchy_action.triggered.connect(self._edit_hierarchy_settings)
+        look_menu.addAction(hierarchy_action)
+        hint_action = QAction("Mostrar ayuda de gestos al mantener Ctrl, Alt, May\u00fas o Win", self)
+        hint_action.setCheckable(True)
+        hint_action.setChecked(self._gesture_hints_on())
+        hint_action.toggled.connect(self.set_gesture_hints)
+        look_menu.addAction(hint_action)
+        ms_action = QAction("Men\u00fas con secciones e iconos", self)
+        ms_action.setCheckable(True)
+        ms_action.setChecked(self._menu_style_on())
+        ms_action.toggled.connect(self.set_menu_style)
+        look_menu.addAction(ms_action)
+        cfg_menu.addMenu(look_menu)
+
+        data_menu = self._build_data_menu(menu)
+        data_menu_ = data_menu
+
+        integ_menu = QMenu("Integraciones", menu)
+        telegram_action = QAction("Configurar Telegram...", self)
+        telegram_action.triggered.connect(self._edit_telegram_config)
+        integ_menu.addAction(telegram_action)
+        cfg_menu.addMenu(integ_menu)
+
+        menu.addSeparator()
+
+        hotkeys_action = QAction("Atajos de teclado...", self)
+        hotkeys_action.triggered.connect(self.show_hotkeys)
+        cfg_menu.insertAction(integ_menu.menuAction(), hotkeys_action)
+        child_cfg_action = QAction("Tipo de hijo al crear con el rat\u00f3n...", self)            # [PACK62]
+        child_cfg_action.triggered.connect(self.edit_child_types)
+        cfg_menu.insertAction(integ_menu.menuAction(), child_cfg_action)
+        cfg_menu.addMenu(data_menu_)
+        menu.addMenu(cfg_menu)
+        guide_action = QAction("Gu\u00eda de gestos y atajos...", self)
+        guide_action.triggered.connect(self.show_gesture_guide)
+        menu.addAction(guide_action)
+        console_action = QAction("Mostrar u ocultar la consola", self)
+        console_action.triggered.connect(self.toggle_console_visibility)
+        menu.addAction(console_action)
+        menu.addSeparator()
+        about_action = QAction("Acerca de WidgetArena  \u2615", self)
+        about_action.triggered.connect(self.show_about)
+        menu.addAction(about_action)
+        exit_action = QAction("Salir de WidgetArena", self)
+        exit_action.triggered.connect(self.safe_quit)
+        menu.addAction(exit_action)
+        
+        if getattr(self, 'hotkeys', None) is not None:
+            self.hotkeys.decorate(menu, "tray")
+        _style_menu(menu, _MENU_GROUPS_T, _MENU_RULES_T, decorate=self._menu_style_on())       # [PACK78]
+        self.tray_icon.setContextMenu(menu)
+        if getattr(self, 'browser', None) is not None:
+            self.browser.schedule_refresh()
+        
+    def show_browser(self, select_id=None):
+        """Abre (o trae al frente) el navegador de widgets."""
+        if not isinstance(select_id, str):
+            select_id = None
+        if getattr(self, 'browser', None) is None:
+            self.browser = WidgetBrowserWindow(self)
+        b = self.browser
+        b.refresh()
+        b.show()
+        b.setWindowState((b.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive)
+        b.raise_()
+        b.activateWindow()
+        if select_id:
+            it = b._find_item(select_id)
+            if it is not None:
+                b.tree.setCurrentItem(it)
+
+    # ---- templates, orden, plegado global y gestos del tray ----------------
+    MENU_FILTERS = ('all', 'on', 'off', 'roots')
+
+    def menu_widget_filter(self):
+        v = self.global_state.get('menu_widget_filter', 'all')
+        return v if v in self.MENU_FILTERS else 'all'
+
+    def set_menu_widget_filter(self, k):
+        self.global_state['menu_widget_filter'] = k if k in self.MENU_FILTERS else 'all'
+        self.save_global_state(record_history=False)
+        self.build_tray_menu()
+
+    def menu_group_children(self):
+        return bool(self.global_state.get('menu_group_children', True))
+
+    def set_menu_group_children(self, on):
+        self.global_state['menu_group_children'] = bool(on)
+        self.save_global_state(record_history=False)
+        self.build_tray_menu()
+
+    def _menu_widget_rows(self):
+        """[PACK69] Filas del menu Widgets: filtradas y, si se quiere, en arbol (cada hijo bajo su padre, con sangria).
+        Los padres plegados ocultan sus descendientes y muestran cuantos son."""
+        gs = self.global_state
+        ids = [w for w, s in gs.items() if isinstance(s, dict)]
+        flt = self.menu_widget_filter()
+        if flt == 'on':
+            ids = [w for w in ids if gs[w].get('enabled', True)]
+        elif flt == 'off':
+            ids = [w for w in ids if not gs[w].get('enabled', True)]
+        elif flt == 'roots':
+            ids = [w for w in ids if gs[w].get('parent_id') not in gs]
+        ids = self.sort_ids(ids)
+        depth, self._row_suffix = {}, {}
+        if not self.menu_group_children() or flt == 'roots':
+            return ids, depth
+        idset = set(ids)
+        kids, roots = {}, []
+        for w in ids:
+            p = gs[w].get('parent_id')
+            if p in idset and p != w:
+                kids.setdefault(p, []).append(w)
+            else:
+                roots.append(w)
+        out, seen = [], set()
+
+        def visit(w, d):
+            if w in seen:
+                return
+            seen.add(w)
+            out.append(w)
+            depth[w] = min(d, 6)
+            if gs[w].get('collapsed') and kids.get(w):
+                hidden = []
+                stack = list(kids[w])
+                while stack:
+                    x = stack.pop()
+                    if x not in seen:
+                        seen.add(x)
+                        hidden.append(x)
+                        stack.extend(kids.get(x, []))
+                self._row_suffix[w] = "   (+%d plegados)" % len(hidden)
+                return
+            for c in kids.get(w, []):
+                visit(c, d + 1)
+        for w in roots:
+            visit(w, 0)
+        for w in ids:          # ciclos u huerfanos: nunca se pierden
+            if w not in seen:
+                visit(w, 0)
+        return out, depth
+
+    SORT_MODES = (("created", "Orden de creaci\u00f3n"), ("created_desc", "M\u00e1s nuevos primero"),
+                  ("name", "Nombre (A-Z)"), ("enabled", "Visibles primero"),
+                  ("template", "Template"), ("pos", "Posici\u00f3n en pantalla"))
+
+    def get_sort_mode(self):
+        mode = self.global_state.get('widget_sort', 'created')
+        return mode if mode in dict(self.SORT_MODES) else 'created'
+
+    def set_sort_mode(self, mode):
+        if mode not in dict(self.SORT_MODES):
+            return
+        self.global_state['widget_sort'] = mode
+        self.save_global_state(record_history=False)
+        self.build_tray_menu()
+
+    def sort_ids(self, ids):
+        """Ordena ids de widgets segun el criterio elegido (tray y navegador)."""
+        ids, gs, mode = list(ids), self.global_state, self.get_sort_mode()
+        order = {w: i for i, w in enumerate(gs)}
+        name = lambda w: self._get_widget_display_name(w, gs.get(w, {})).lower()
+
+        def pos(w):
+            try:
+                g = gs[w].get('template_data', {}).get('geometry', {})
+                return (float(g.get('y', 0)), float(g.get('x', 0)))
+            except (TypeError, ValueError, AttributeError):
+                return (0.0, 0.0)
+        keys = {
+            'created_desc': lambda w: -order.get(w, 0),
+            'name': lambda w: (name(w), order.get(w, 0)),
+            'enabled': lambda w: (not gs[w].get('enabled', True), name(w)),
+            'template': lambda w: (str(gs[w].get('template_name', '')).lower(), name(w)),
+            'pos': pos,
+        }
+        return sorted(ids, key=keys.get(mode, lambda w: order.get(w, 0)))
+
+    def _tpl_settings_path(self):
+        return os.path.join(TEMPLATES_DIR, "_settings.json")
+
+    def default_template_name(self):
+        try:
+            with open(self._tpl_settings_path(), 'r', encoding='utf-8') as f:
+                n = os.path.basename(str(json.load(f).get('default', '')))
+            if n and os.path.exists(os.path.join(TEMPLATES_DIR, n)):
+                return n
+        except Exception:
+            pass
+        return os.path.basename(DEFAULT_TEMPLATE_FILE)
+
+    def default_template_path(self):
+        return os.path.join(TEMPLATES_DIR, self.default_template_name())
+
+    def set_default_template(self, name):
+        try:
+            os.makedirs(TEMPLATES_DIR, exist_ok=True)
+            with open(self._tpl_settings_path(), 'w', encoding='utf-8') as f:
+                json.dump({"default": os.path.basename(name)}, f, indent=2)
+        except OSError as e:
+            log_warn("Manager", f"No se pudo guardar el template predeterminado: {e}")
+
+    TYPE_CRITERIA_DEFAULT = {'hue': False, 'font': False, 'size': False}
+
+    def type_criteria(self):
+        """[PACK67] Que distingue un 'tipo de widget' de otro. SIEMPRE se ignoran: posicion, rotacion y texto."""
+        c = dict(self.TYPE_CRITERIA_DEFAULT)
+        s = self.global_state.get('type_criteria')
+        if isinstance(s, str):
+            try:
+                s = json.loads(s)
+            except Exception:
+                s = None
+        if isinstance(s, dict):
+            for k in c:
+                if k in s:
+                    c[k] = bool(s[k])
+        return c
+
+    def _img_identity(self, path):
+        """Identidad de una imagen: las notas base (un PNG distinto por nota) se identifican por su CONTENIDO."""
+        p = str(path or '')
+        if os.path.basename(p).startswith('nota_base_'):
+            full = _resolve_stored(p)
+            try:
+                mt = os.path.getmtime(full)
+                cache = self.__dict__.setdefault('_img_id_cache', {})
+                hit = cache.get((full, mt))
+                if hit is None:
+                    with open(full, 'rb') as f:
+                        hit = cache[(full, mt)] = 'nb:' + hashlib.md5(f.read()).hexdigest()
+                return hit
+            except OSError:
+                return 'nb?:' + os.path.basename(p)
+        return os.path.normcase(p.replace('\\', '/'))
+
+    def widget_type_key(self, td, crit=None):
+        crit = crit or self.type_criteria()
+
+        def lay(ld):
+            ld = ld or {}
+            k = {'t': ld.get('type'), 'bg': str(ld.get('background', 'transparent')), 'sc': bool(ld.get('scaled_contents'))}
+            if ld.get('type') == 'text':
+                if crit['font']:
+                    k.update(ff=str(ld.get('font_family', '')), fs=ld.get('font_size'), col=str(ld.get('color', '')))
+            else:
+                k['c'] = self._img_identity(ld.get('content'))
+            if crit['hue']:
+                eff = ld.get('image_effects') or {}
+                try:
+                    k['fx'] = [round(float(eff.get(x, 0) or 0)) for x in ('hue', 'saturation', 'brightness', 'contrast')] + [bool(eff.get('colorize'))]
+                except (TypeError, ValueError):
+                    k['fx'] = []
+            if crit['size']:
+                g = ld.get('geometry') or {}
+                k['sz'] = (g.get('w'), g.get('h'))
+            return k
+        raw = json.dumps([lay(td.get('layer1')), lay(td.get('layer2'))], sort_keys=True, default=str)
+        return hashlib.md5(raw.encode('utf-8', 'replace')).hexdigest()
+
+    def widget_types_in_use(self):
+        """[PACK67] Tipos de widget presentes en el set actual (agrupados por aspecto), de mas a menos usados."""
+        crit = self.type_criteria()
+        groups, order = {}, []
+        for wid, s in self.global_state.items():
+            if not (isinstance(s, dict) and isinstance(s.get('template_data'), dict)):
+                continue
+            key = self.widget_type_key(s['template_data'], crit)
+            g = groups.get(key)
+            if g is None:
+                g = groups[key] = {'key': key, 'ids': [], 'state': s}
+                order.append(key)
+            g['ids'].append(wid)
+        out, names = [], {}
+        for key in order:
+            g = groups[key]
+            st = g['state']
+            td = st['template_data']
+            tn = os.path.basename(str(st.get('template_name') or ''))
+            l2 = td.get('layer2') or {}
+            if os.path.basename(str(l2.get('content', ''))).startswith('nota_base_') or td.get('base_note'):
+                bp = td.get('base_note') if isinstance(td.get('base_note'), dict) else {}
+                gm = l2.get('geometry') or {}
+                nm = "Nota base %s\u00d7%s" % (bp.get('w', gm.get('w', '?')), bp.get('h', gm.get('h', '?')))
+            else:
+                nm = (tn[:-5] if tn.lower().endswith('.json') else tn) or "Widget"
+            names[nm] = names.get(nm, 0) + 1
+            if names[nm] > 1:
+                nm += " (%d)" % names[nm]
+            out.append({'key': key, 'name': nm, 'count': len(g['ids']), 'ids': g['ids'], 'tpl': tn, 'data': td})
+        out.sort(key=lambda t: -t['count'])
+        return out
+
+    def state_for_type(self, ty):
+        """Estado de un widget NUEVO de ese tipo: el aspecto del representante, con el texto vacio (conserva su formato)."""
+        td = copy.deepcopy(ty['data'])
+        for _ln in ('layer1', 'layer2'):       # [PACK69] un widget nuevo de un tipo sale sin rotar
+            if isinstance(td.get(_ln), dict) and 'rotation' in td[_ln]:
+                td[_ln]['rotation'] = 0
+        l1 = td.get('layer1')
+        if isinstance(l1, dict) and l1.get('type') == 'text':
+            l1['content'] = self._blank_keep_format(l1.get('content'))
+        _off = (len(self.widgets) % 10) * 30
+        g = td.setdefault('geometry', {})
+        g['x'], g['y'] = 100 + _off, 100 + _off
+        return {"enabled": True, "always_on_top": self._default_always_on_top(), "template_name": ty.get('tpl') or self.default_template_name(),
+                "custom_name": "", "template_data": td}
+
+    def add_widget_of_type(self, ty):
+        return self.add_new_widget(state=self.state_for_type(ty))
+
+    def apply_type_to_widget(self, widget_id, ty):
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict):
+            return
+        new = self.state_for_type(ty)['template_data']
+        cur = st.get('template_data', {})
+        cg = cur.get('geometry', {'x': 100, 'y': 100})
+        new.setdefault('geometry', {})['x'], new['geometry']['y'] = cg.get('x', 100), cg.get('y', 100)
+        if (cur.get('layer1') or {}).get('type') == 'text' and (new.get('layer1') or {}).get('type') == 'text':
+            new['layer1']['content'] = cur['layer1'].get('content', '')       # conserva el texto del widget
+        st['template_data'], st['template_name'] = new, ty.get('tpl') or st.get('template_name')
+        if widget_id in self.widgets:
+            self.widgets[widget_id].load_template_data(new)
+        self.save_global_state()
+        self.build_tray_menu()
+
+    def _type_icon(self, ty, size=QSize(48, 36)):
+        try:
+            td = self.state_for_type(ty)['template_data']
+            sig = hashlib.md5(json.dumps(td, sort_keys=True, default=str).encode('utf-8', 'replace')).hexdigest()
+            cache = self.__dict__.setdefault('_type_icon_cache', {})
+            ic = cache.get((sig, size.width(), size.height()))
+            if ic is None:
+                pm = _tpl_preview(td, QSize(120, 90)).scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                if len(cache) > 300:
+                    cache.clear()
+                ic = cache[(sig, size.width(), size.height())] = QIcon(pm)
+            return ic
+        except Exception:
+            return QIcon()
+
+    def edit_type_criteria(self):
+        dlg = QDialog(self.dialog_parent)
+        dlg.setWindowTitle("Criterio de \u00abaspectos en uso\u00bb")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("Dos widgets tienen el MISMO aspecto si comparten su imagen de fondo o la forma de su nota base.\n"
+                             "Nunca cuentan: la posici\u00f3n, la rotaci\u00f3n ni el texto escrito."))
+        cur = self.type_criteria()
+        boxes = {}
+        for k, lab in (('hue', "Distinguir por tono / saturaci\u00f3n / brillo de la imagen"),
+                       ('font', "Distinguir por tipograf\u00eda, tama\u00f1o y color del texto"),
+                       ('size', "Distinguir por el tama\u00f1o del marco")):
+            cb = QCheckBox(lab)
+            cb.setChecked(cur[k])
+            lay.addWidget(cb)
+            boxes[k] = cb
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if not dlg.exec():
+            return
+        self.global_state['type_criteria'] = json.dumps({k: b.isChecked() for k, b in boxes.items()})
+        self.save_global_state(record_history=False)
+        self.build_tray_menu()
+        tb = getattr(self, 'template_browser', None)
+        if tb is not None:
+            tb.reload()
+
+    ROW_THUMB = QSize(52, 39)
+
+    def templates_in_use(self):
+        """[PACK65] {nombre.json: n} de los templates que usan los widgets del set actual."""
+        out = {}
+        for s in self.global_state.values():
+            if isinstance(s, dict) and 'template_name' in s:
+                n = os.path.basename(str(s.get('template_name') or ''))
+                if n:
+                    out[n] = out.get(n, 0) + 1
+        return out
+
+    def template_files_grouped(self):
+        """[PACK65] (en_uso, resto, contadores): primero los templates que usa el set actual (mas usados antes)."""
+        allf = self.template_files()
+        use = self.templates_in_use()
+        used = sorted([n for n in allf if n in use], key=lambda n: (-use[n], n.lower()))
+        rest = [n for n in allf if n not in use]
+        return used, rest, use
+
+    def template_icon(self, name, size=QSize(64, 48)):
+        try:
+            p = os.path.join(TEMPLATES_DIR, os.path.basename(str(name)))
+            try:
+                mt = os.path.getmtime(p)
+            except OSError:
+                mt = 0
+            cache = self.__dict__.setdefault('_tpl_icon_cache', {})
+            key = (name, size.width(), size.height(), mt)
+            ic = cache.get(key)
+            if ic is None:
+                pm = _tpl_preview(self.load_template_by_name(name), QSize(120, 90))
+                ic = QIcon(pm.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                if len(cache) > 300:
+                    cache.clear()
+                cache[key] = ic
+            return ic
+        except Exception:
+            return QIcon()
+
+    def _fill_template_combo(self, cb, current=None):
+        """[PACK65] Combo de templates: los EN USO primero, con miniatura, y una linea separadora."""
+        used, rest, use = self.template_files_grouped()
+        cb.clear()
+        cb.setIconSize(QSize(64, 48))
+        cb.setMaxVisibleItems(14)
+        for n in used:
+            cb.addItem(self.template_icon(n), n[:-5] + "   \u00b7 en uso (\u00d7%d)" % use[n], n)
+        if used and rest:
+            cb.insertSeparator(cb.count())
+        for n in rest:
+            cb.addItem(self.template_icon(n), n[:-5], n)
+        i = cb.findData(current)
+        if i >= 0:
+            cb.setCurrentIndex(i)
+
+    def _row_thumb_set(self, wid, state, label):
+        """[PACK65] Miniatura de un widget para el menu de la bandeja: de cache o, si no, perezosa (no frena el menu)."""
+        td = state.get('template_data')
+        try:
+            sig = hashlib.md5(json.dumps(td, sort_keys=True, default=str).encode('utf-8', 'replace')).hexdigest()
+        except Exception:
+            sig = None
+        cache = self.__dict__.setdefault('_row_thumbs', {})
+        hit = cache.get(wid)
+        if hit is not None and hit[0] == sig:
+            label.setPixmap(hit[1])
+            return
+        ph = QPixmap(self.ROW_THUMB)
+        ph.fill(QColor("#3a3a3e"))
+        label.setPixmap(ph)
+        if not isinstance(td, dict):
+            return
+        self.__dict__.setdefault('_row_thumb_q', []).append((wid, sig, label, td))
+        t = self.__dict__.get('_row_thumb_timer')
+        if t is None:
+            t = self._row_thumb_timer = QTimer(self)
+            t.setInterval(8)
+            t.timeout.connect(self._row_thumb_step)
+        if not t.isActive():
+            t.start()
+
+    def _row_thumb_step(self):
+        q = self._row_thumb_q
+        for _ in range(3):
+            if not q:
+                self._row_thumb_timer.stop()
+                return
+            wid, sig, label, td = q.pop(0)
+            hit = self._row_thumbs.get(wid)
+            if hit is not None and hit[0] == sig:
+                pm = hit[1]
+            else:
+                try:
+                    pm = _tpl_preview(td, QSize(120, 90)).scaled(self.ROW_THUMB, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                except Exception:
+                    continue
+                self._row_thumbs[wid] = (sig, pm)
+            try:
+                label.setPixmap(pm)
+            except RuntimeError:
+                pass
+
+    def template_files(self):
+        try:
+            names = [n for n in os.listdir(TEMPLATES_DIR) if n.lower().endswith('.json') and not n.startswith('_')]
+        except OSError:
+            names = []
+        if os.path.basename(DEFAULT_TEMPLATE_FILE) not in names:
+            self.get_default_template_data()          # lo crea si no existe
+            names.append(os.path.basename(DEFAULT_TEMPLATE_FILE))
+        return sorted(set(names), key=str.lower)
+
+
+    def load_template_by_name(self, name):
+        try:
+            with open(os.path.join(TEMPLATES_DIR, os.path.basename(str(name))), 'r', encoding='utf-8') as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                return d
+        except Exception as e:
+            log_warn("Manager", f"No se pudo leer el template {name}: {e}")
+        return self.get_default_template_data()
+
+    @staticmethod
+    def _tpl_safe_name(name):
+        n = os.path.basename((name or '').strip())
+        for ch in '<>:"/\\|?*':
+            n = n.replace(ch, '_')
+        n = n.strip('. _')
+        if not n or n.lower() == '.json':
+            return None
+        return n if n.lower().endswith('.json') else n + '.json'
+
+    def save_template(self, name, data):
+        os.makedirs(TEMPLATES_DIR, exist_ok=True)
+        with open(os.path.join(TEMPLATES_DIR, os.path.basename(name)), 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        return name
+
+    def apply_template_to_widget(self, widget_id, name):
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict):
+            return
+        data = self.load_template_by_name(name)
+        cur = st.get('template_data', {}).get('geometry', {'x': 100, 'y': 100})
+        data.setdefault('geometry', {})
+        data['geometry']['x'], data['geometry']['y'] = cur.get('x', 100), cur.get('y', 100)
+        if self.keep_content_on_apply():
+            self._carry_content(st.get('template_data'), data)       # [PACK71] el contenido de la nota no cambia
+        st['template_data'], st['template_name'] = data, os.path.basename(name)
+        if widget_id in self.widgets:
+            self.widgets[widget_id].load_template_data(data)
+        self.save_global_state()
+        self.build_tray_menu()
+
+    def show_template_chooser(self, *_a, apply_to=None, select=None):
+        """Pestana 'Templates' del navegador: crear un widget con un template o, con apply_to, cambiar el de un widget."""
+        self.show_browser()
+        tb = self.browser.templates
+        tb.set_target(apply_to if isinstance(apply_to, str) else None)
+        tb.reload(select=select if isinstance(select, str) else None)
+        self.browser.tabs.setCurrentWidget(tb)
+
+    def toggle_collapse_all(self, force=None):
+        """Colapsa todos los padres (solo se ven las raices) o expande todo."""
+        parents = [w for w, s in self.global_state.items() if isinstance(s, dict) and self.get_children(w)]
+        if not parents:
+            return
+        collapse = bool(force) if force is not None else any(
+            not self.global_state[w].get('collapsed', False) for w in parents)
+        for w in parents:
+            self.global_state[w]['collapsed'] = collapse
+        self.save_global_state()
+        self._apply_collapse_visibility()
+        self._refresh_connector_overlay()
+        self.build_tray_menu()
+
+    def _all_collapsed(self):
+        parents = [s for w, s in self.global_state.items() if isinstance(s, dict) and self.get_children(w)]
+        return bool(parents) and all(s.get('collapsed', False) for s in parents)
+
+
+    def _tray_mods(self):
+        """'', 'ctrl', 'alt' o 'ctrl+alt' segun las teclas pulsadas; None si hay Shift o Win."""
+        c = a = s = w = False
+        try:
+            if sys.platform == "win32":
+                gk = ctypes.WinDLL("user32").GetAsyncKeyState
+                c, a, s = bool(gk(0x11) & 0x8000), bool(gk(0x12) & 0x8000), bool(gk(0x10) & 0x8000)
+                w = bool(gk(0x5B) & 0x8000) or bool(gk(0x5C) & 0x8000)
+            else:
+                mm = QApplication.queryKeyboardModifiers()
+                c, a, s, w = (bool(mm & Qt.ControlModifier), bool(mm & Qt.AltModifier),
+                              bool(mm & Qt.ShiftModifier), bool(mm & Qt.MetaModifier))
+        except Exception:
+            pass
+        if s or w:
+            return None
+        return "+".join(n for n, f in (("ctrl", c), ("alt", a)) if f)
+
+    def tray_gesture(self, reason):
+        kind = {QSystemTrayIcon.Trigger: "click", QSystemTrayIcon.DoubleClick: "double",
+                QSystemTrayIcon.MiddleClick: "middle"}.get(reason)
+        if kind is None or getattr(self, 'hotkeys', None) is None:
+            return
+        mods = "" if kind == "middle" else self._tray_mods()
+        if mods is None:
+            return
+        cmd = self.hotkeys.tray_command((mods + "+" + kind) if mods else kind)
+        if cmd:
+            self.hotkeys.run(cmd)
+
+    def _init_gesture_hud(self):
+        self._hud = GestureHud()
+        self._hud_key = ""
+        self._hud_since = 0.0
+        self._hud_timer = QTimer(self)
+        self._hud_timer.setInterval(60)
+        self._hud_timer.timeout.connect(self._gesture_poll)
+        self._hud_timer.start()
+
+    def _menu_style_on(self):
+        return bool(self.global_state.get('menu_style', True))
+
+    def set_menu_style(self, on):
+        """[PACK53] Interruptor: secciones, colores e iconos en los menus (apagarlo = menus planos, como antes)."""
+        self.global_state['menu_style'] = bool(on)
+        self._pending_disk_write = True
+        self.build_tray_menu()
+
+    def _gesture_hints_on(self):
+        return bool(self.global_state.get('gesture_hints', True))
+
+    def set_gesture_hints(self, on):
+        self.global_state['gesture_hints'] = bool(on)
+        self._pending_disk_write = True
+        if not on and getattr(self, '_hud', None) is not None:
+            self._hud.hide()
+
+    @staticmethod
+    def _poll_mod_key():
+        """Modificadores pulsados AHORA (tambien sin foco): cadena con C, A, S, W."""
+        if sys.platform == "win32":
+            try:
+                g = ctypes.windll.user32.GetAsyncKeyState
+                if g(0xA5) & 0x8000:           # AltGr (@ # | ~): no es un gesto
+                    return ""
+                return (("C" if g(0x11) & 0x8000 else "") + ("A" if g(0x12) & 0x8000 else "")
+                        + ("S" if g(0x10) & 0x8000 else "") + ("W" if (g(0x5B) | g(0x5C)) & 0x8000 else ""))
+            except Exception:
+                pass
+        m = QApplication.queryKeyboardModifiers()
+        return "".join(c for c, f in (("C", Qt.ControlModifier), ("A", Qt.AltModifier),
+                                      ("S", Qt.ShiftModifier), ("W", Qt.MetaModifier)) if m & f)
+
+    @staticmethod
+    def _native_root_at_cursor():
+        """[PACK70] HWND de la ventana raiz que Windows ve bajo el cursor (respeta el orden Z real y las ventanas de
+        otras aplicaciones; ignora las ventanas transparentes al raton). None si no se puede saber (no es Windows)."""
+        if sys.platform != "win32":
+            return None
+        try:
+            from ctypes import wintypes
+            u = ctypes.windll.user32
+            u.WindowFromPoint.argtypes = [wintypes.POINT]
+            u.WindowFromPoint.restype = wintypes.HWND
+            u.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+            u.GetAncestor.restype = wintypes.HWND
+            pt = wintypes.POINT()
+            u.GetCursorPos(ctypes.byref(pt))
+            h = u.WindowFromPoint(pt)
+            if not h:
+                return 0
+            return int(u.GetAncestor(h, 2) or h)
+        except Exception:
+            return None
+
+    def _note_hit_at(self, pos):
+        """Id de la nota VISIBLE bajo el cursor (mascara de su forma y orden Z real: una nota tapada por otra ventana,
+        p. ej. el navegador, no cuenta)."""
+        self._prune_dead_windows()
+        root = self._native_root_at_cursor()
+        for wid, w in self.widgets.items():
+            if not w.isVisible() or not w.geometry().contains(pos):
+                continue
+            if root is not None:
+                try:
+                    if int(w.winId()) != root:
+                        continue
+                except RuntimeError:
+                    continue
+            m = w.mask()
+            if m.isEmpty() or m.contains(w.mapFromGlobal(pos)):
+                return wid
+        return None
+
+    def _window_under_cursor(self, pos):
+        root = self._native_root_at_cursor()
+        if root is not None:             # Windows: manda el orden Z real (nada si encima hay otra aplicacion)
+            if root:
+                for sw in self.widgets.values():
+                    try:
+                        if sw.isVisible() and int(sw.winId()) == root:
+                            return sw
+                    except RuntimeError:
+                        pass
+            return None
+        w = QApplication.widgetAt(pos)
+        while w is not None and not isinstance(w, StickerWindow):
+            w = w.parentWidget()
+        if w is not None:
+            return w
+        for sw in self.widgets.values():        # p. ej. si encima hay una ventana de cables
+            if sw.isVisible() and sw.geometry().contains(pos):
+                return sw
+        return None
+
+    def _gesture_poll(self):
+        hud = getattr(self, '_hud', None)
+        if hud is None:
+            return
+        key = self._poll_mod_key() if self._gesture_hints_on() else ""
+        now = time.perf_counter()
+        if not key:
+            self._hud_key, self._hud_since = "", 0.0
+            if hud.isVisible():
+                hud.hide()
+            return
+        if key != self._hud_key:
+            self._hud_key, self._hud_since = key, now
+        if now - self._hud_since < 0.22:           # un atajo rapido (Ctrl+C...) no debe parpadear
+            return
+        pos = QCursor.pos()
+        win = self._window_under_cursor(pos)
+        linking = None
+        for sw in self.widgets.values():
+            if getattr(sw, '_is_link_dragging', False):
+                linking = getattr(sw, '_link_drag_role', None)
+                win = win or sw
+        if win is None or (win.layer1_editor.isVisible() and win.layer1_editor.hasFocus()):
+            if hud.isVisible():
+                hud.hide()
+            return
+        hud.show_at(_gesture_html(key, win._selected_layer_num, linking), pos)
+
+    def show_gesture_guide(self, *_a):
+        dlg = getattr(self, "_guide_dlg", None)
+        try:
+            alive = dlg is not None and dlg.isVisible()
+        except RuntimeError:
+            alive = False
+        if not alive:
+            self._guide_dlg = dlg = GestureGuideDialog(self)
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def show_about(self, *_a):
+        dlg = getattr(self, "_about_dlg", None)
+        try:
+            alive = dlg is not None and dlg.isVisible()
+        except RuntimeError:
+            alive = False
+        if not alive:
+            self._about_dlg = dlg = AboutDialog()
+        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        dlg.move(screen.availableGeometry().center() - dlg.rect().center())
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def show_hotkeys(self, *_a):
+        """Abre el navegador en la pestana de atajos."""
+        self.show_browser()
+        b = self.browser
+        b.tabs.setCurrentWidget(b.keys_tab)
+
+    def cycle_sort_mode(self):
+        keys = [k for k, _l in self.SORT_MODES]
+        self.set_sort_mode(keys[(keys.index(self.get_sort_mode()) + 1) % len(keys)])
+
+    def set_all_visible(self, visible):
+        if bool(self.all_visible) != bool(visible):
+            self.toggle_all_visibility()
+
+    def cable_opacity_profile(self, length):
+        """Factor de opacidad del CENTRO respecto a los extremos (1 = sin cambio): baja al alargarse el cable."""
+        near = self.get_cable_param('_cable_op_near')
+        far = max(self.get_cable_param('_cable_op_far'), near + 50.0)
+        t = max(0.0, min(1.0, (length - near) / (far - near)))
+        t = t * t * (3.0 - 2.0 * t)
+        return 1.0 + (self.get_cable_param('_cable_octr_pct') / 100.0 - 1.0) * t
+
+    def cable_curve_factor(self, length):
+        """[PACK90] Factor (0-1.5) que multiplica la curvatura segun la longitud: 1 en un cable corto y '_cable_cfar_pct' % en uno largo."""
+        near = self.get_cable_param('_cable_c_near')
+        far = max(self.get_cable_param('_cable_c_far'), near + 50.0)
+        t = max(0.0, min(1.0, (length - near) / (far - near)))
+        t = t * t * (3.0 - 2.0 * t)
+        return 1.0 + (self.get_cable_param('_cable_cfar_pct') / 100.0 - 1.0) * t
+
+    def cable_rope_params(self, length):
+        """[PACK100] Ajustes de la cuerda fisica para un cable de esa longitud (distancia entre widgets, en px):
+        (caida px, elasticidad 0-1, amortiguacion 0-1, vida 0-3, peso 0.2-4, escala) o None si la cuerda esta apagada."""
+        amt = self.get_cable_param('_rope_amount')
+        if amt <= 0:
+            return None
+        near = self.get_cable_param('_rope_near')
+        far = max(self.get_cable_param('_rope_far'), near + 50.0)
+        t = max(0.0, min(1.0, (length - near) / (far - near)))
+        t = t * t * (3.0 - 2.0 * t)
+        prox = 1.0 + (self.get_cable_param('_rope_far_pct') / 100.0 - 1.0) * t
+        L = max(float(length), 1.0)
+        depth = max(self.get_cable_param('_rope_sag_px') * prox, 0.03 * L) * amt / 100.0
+        return (min(depth, 1.2 * L), self.get_cable_param('_rope_elastic') / 100.0, self.get_cable_param('_rope_damp') / 100.0,
+                self.get_cable_param('_rope_life') / 100.0, self.get_cable_param('_rope_weight') / 100.0, 1.0,
+                36, self.get_cable_param('_rope_stiff') / 100.0, self.get_cable_param('_rope_inertia') / 100.0)
+
+    def _ropes_collect(self, now):
+        """[PACK109] Olvida las cuerdas que llevan 5 s sin usarse."""
+        ropes = getattr(self, '_ropes', None)
+        if ropes and now - getattr(self, '_ropes_gc', 0.0) > 3.0:
+            self._ropes_gc = now
+            for k_ in [k for k, r in ropes.items() if now - getattr(r, 'used', 0.0) > 5.0]:
+                del ropes[k_]
+
+    def cable_ropes_many(self, items, now, lod=0):
+        """[PACK109] Todas las cuerdas de un fotograma de una vez. items = [(clave, rect A, rect B)]. Devuelve
+        {clave: (polilinea Nx2, longitudes acumuladas, ancla A, ancla B, sigue_en_movimiento, energia)} (las apagadas no aparecen)."""
+        res, jobs = [], []
+        for key, ra, rb in items:
+            r = self._rope_job(key, ra, rb, now, lod)
+            if r is None:
+                continue
+            res.append((key, r))
+            if r[3] is not None:
+                jobs.append(r[3])
+        if jobs:
+            _ropes_integrate(jobs)
+        out = {}
+        for key, (rope, a, b, job) in res:
+            Q, cum = rope.poly(5 if lod >= 1 else 6)
+            out[key] = (Q, cum, a, b, rope.busy, rope.energy)
+        self._ropes_collect(now)
+        return out
+
+    def cable_rope_for(self, key, ra, rb, now, lod=0):
+        """[PACK100] Cuerda simulada del enlace 'key' entre los rectangulos ra y rb (geometria de los dos widgets, coordenadas
+        globales): (camino, ancla A, ancla B, sigue_en_movimiento) o None si la cuerda esta apagada. Avanza la simulacion hasta 'now'."""
+        r = self._rope_job(key, ra, rb, now, lod)
+        if r is None:
+            return None
+        rope, a, b, job = r
+        if job is not None:
+            _ropes_integrate([job])
+        self._ropes_collect(now)
+        return rope.path(), a, b, rope.busy
+
+    def _rope_job(self, key, ra, rb, now, lod=0):
+        """[PACK109] Primera mitad de cable_rope_for: (cuerda, ancla A, ancla B, trabajo de integracion o None) o None si esta apagada."""
+        import math
+        D0 = math.hypot((ra.x() + ra.width() / 2.0) - (rb.x() + rb.width() / 2.0), (ra.y() + ra.height() / 2.0) - (rb.y() + rb.height() / 2.0))
+        P = self.cable_rope_params(D0)
+        if P is None:
+            return None
+        a, b = _rope_anchors(ra, rb)
+        Da = math.hypot(b[0] - a[0], b[1] - a[1])
+        if Da < 2.0:
+            return None
+        P = (min(P[0], 1.2 * max(Da, 30.0)),) + P[1:]
+        if lod >= 1:        # [PACK103] con muchos cables o poco margen: menos vida y menos nudos (a nivel 2 las cuerdas solo se mueven si mueves los widgets)
+            P = P[:3] + (P[3] * (0.5 if lod == 1 else 0.0),) + P[4:6] + ((24 if lod == 1 else 14),) + P[7:]
+        ropes = getattr(self, '_ropes', None)
+        if ropes is None:
+            ropes = self._ropes = {}
+            self._ropes_gc = now
+        rope = ropes.get(key)
+        if rope is None:
+            import zlib
+            rope = ropes[key] = _CableRope(zlib.crc32(repr(key).encode()) & 0xffff)
+        job = rope.prep(now, a[0], a[1], b[0], b[1], P)
+        rope.used = now
+        return rope, a, b, job
+
+    def cable_fx(self, length, scale=1.0):
+        """[PACK99] Efectos de forma de un cable de esa longitud (distancia entre los widgets, en px): (caida del peso, amplitud
+        del resorte, ondas), con los px multiplicados por 'scale'. None si los dos efectos estan apagados (el caso normal: coste cero).
+        Los efectos son plenos hasta '_cable_fx_near' y bajan hasta '_cable_fx_far_pct' % desde '_cable_fx_far'; la frecuencia del resorte
+        pasa de '_cable_fx_f_near' a '_cable_fx_f_far' ondas en ese mismo tramo."""
+        wp, sp = self.get_cable_param('_cable_fx_weight'), self.get_cable_param('_cable_fx_spring')
+        if wp <= 0 and sp <= 0:
+            return None
+        near = self.get_cable_param('_cable_fx_near')
+        far = max(self.get_cable_param('_cable_fx_far'), near + 50.0)
+        t = max(0.0, min(1.0, (length - near) / (far - near)))
+        t = t * t * (3.0 - 2.0 * t)
+        prox = 1.0 + (self.get_cable_param('_cable_fx_far_pct') / 100.0 - 1.0) * t
+        L = max(float(length), 1.0)
+        sag = min(self.get_cable_param('_cable_fx_weight_px') * wp / 100.0 * prox, 1.2 * L)
+        amp = min(self.get_cable_param('_cable_fx_spring_px') * sp / 100.0 * prox, 0.5 * L)
+        f0, f1 = self.get_cable_param('_cable_fx_f_near'), self.get_cable_param('_cable_fx_f_far')
+        return (sag * scale, amp * scale, f0 + (f1 - f0) * t)
+
+    def cable_curve(self, length):
+        """Curvatura (0 recta, 1 curva en S) de un cable de esa longitud en px."""
+        return self.get_cable_param('_cable_curve') / 100.0 * self.cable_curve_factor(length)
+
+    def cable_width_profile(self, length):
+        """(grosor junto al padre/hijo, grosor en el centro) de un cable: los cables largos se afinan hacia el centro."""
+        near = self.get_cable_param('_cable_w_near')
+        far = max(self.get_cable_param('_cable_w_far'), near + 50.0)
+        t = max(0.0, min(1.0, (length - near) / (far - near)))
+        t = t * t * (3.0 - 2.0 * t)
+        w_max, w_min = self.get_cable_param('_cable_width_max'), self.get_cable_param('_cable_width_min')
+        return w_max, w_max + (w_min - w_max) * t
+
+    # (el guardado como template vive ahora en save_widget_as_template(widget_id, name=None), mas abajo)
+
+    def cycle_profile(self, step=1):
+        """Perfil siguiente / anterior (orden alfabetico)."""
+        names = [os.path.splitext(os.path.basename(p))[0] for p in self._list_profiles()]
+        if not names:
+            self._osd("No hay perfiles guardados")
+            return
+        cur = self.current_profile_name
+        i = names.index(cur) if cur in names else (-1 if step > 0 else 0)
+        self._load_profile(names[(i + step) % len(names)])
+
+    def _add_gesture_menus(self, menu, aspect_menu, widget_id, layer_menus, full=False):
+        """Todo lo que se hace con Ctrl / Alt / Mayus / Win + click, rueda o flechas, tambien desde el menu
+        ([PACK104] "Transformar" cuelga de cada capa de "Capas"; "Girar widget" de "Aspecto")."""
+        win = self.widgets.get(widget_id)
+        if win is None:
+            return
+        td = self.global_state.get(widget_id, {}).get('template_data', {})
+        names = {'text': 'texto', 'png': 'imagen', 'web': 'web'}
+        C, A, S = Qt.ControlModifier, Qt.AltModifier, Qt.ShiftModifier
+        for n in (1, 2):
+            lt = td.get(f'layer{n}', {}).get('type', 'text' if n == 1 else 'png')
+            sub = QMenu("Transformar", layer_menus[n])
+            sub.setToolTipsVisible(True)
+            sel = QAction("Seleccionar esta capa (Ctrl+Alt+click)", self)
+            sel.setCheckable(True)
+            sel.setChecked(win._selected_layer_num == n)
+            sel.triggered.connect(lambda checked, k=n: win.act_select_layer(k if checked else 0))
+            sub.addAction(sel)
+            sub.addSeparator()
+            for ga in list(layer_menus[n].actions()):        # [PACK107] la geometria exacta va con las demas transformaciones
+                if ga.menu() is None and ga.text().replace('&', '').startswith("Posici\u00f3n y tama\u00f1o"):
+                    layer_menus[n].removeAction(ga)
+                    sub.addAction(ga)
+                    sub.addSeparator()
+                    break
+
+            rot = QMenu("Girar", sub)
+            for label, key, mods in (("Girar +5\u00b0 (Ctrl+\u2192)", Qt.Key_Right, C),
+                                     ("Girar -5\u00b0 (Ctrl+\u2190)", Qt.Key_Left, C),
+                                     ("Girar +1\u00b0 (Ctrl+May\u00fas+\u2192)", Qt.Key_Right, C | S),
+                                     ("Girar -1\u00b0 (Ctrl+May\u00fas+\u2190)", Qt.Key_Left, C | S)):
+                a = QAction(label, self)
+                a.triggered.connect(lambda checked, k=n, ky=key, md=mods: win.act_key(k, ky, md))
+                rot.addAction(a)
+            sub.addMenu(rot)
+
+            shear = QMenu("Inclinar", sub)
+            for label, dx, dy in (("Vertical +0,1 (Ctrl+Alt+\u2193)", 0, 0.1), ("Vertical -0,1 (Ctrl+Alt+\u2191)", 0, -0.1),
+                                  ("Vertical +0,01 (Ctrl+Alt+May\u00fas+\u2193)", 0, 0.01), ("Vertical -0,01 (Ctrl+Alt+May\u00fas+\u2191)", 0, -0.01),
+                                  ("Horizontal +0,1", 0.1, 0), ("Horizontal -0,1", -0.1, 0),
+                                  ("Horizontal +0,01", 0.01, 0), ("Horizontal -0,01", -0.01, 0)):
+                a = QAction(label, self)
+                a.triggered.connect(lambda checked, k=n, x=dx, y=dy: win.act_shear(k, x, y))
+                shear.addAction(a)
+            shear.addSeparator()
+            a = QAction("Quitar la inclinaci\u00f3n", self)
+            a.triggered.connect(lambda checked, k=n: win.act_shear(k, None, None))
+            shear.addAction(a)
+            sub.addMenu(shear)
+
+            size = QMenu("Tama\u00f1o", sub)
+            size.setToolTipsVisible(True)
+            size.setToolTip("Con la capa seleccionada, Ctrl+rueda cambia el ancho y May\u00fas+rueda el alto (en texto y en im\u00e1genes). Sin capa seleccionada, en una imagen Ctrl+rueda cambia el tono.")
+            for label, dw, dh in (("Ancho +10 (Ctrl+rueda \u2191)", 10, 0), ("Ancho -10 (Ctrl+rueda \u2193)", -10, 0),
+                                  ("Ancho +1 (Ctrl+Alt+rueda \u2191)", 1, 0), ("Ancho -1 (Ctrl+Alt+rueda \u2193)", -1, 0),
+                                  ("Alto +10 (May\u00fas+rueda \u2191)", 0, 10), ("Alto -10 (May\u00fas+rueda \u2193)", 0, -10),
+                                  ("Alto +1 (Alt+May\u00fas+rueda \u2191)", 0, 1), ("Alto -1 (Alt+May\u00fas+rueda \u2193)", 0, -1)):
+                a = QAction(label, self)
+                a.triggered.connect(lambda checked, k=n, w_=dw, h_=dh: win.act_resize(k, w_, h_))
+                size.addAction(a)
+            sub.addMenu(size)
+
+            hue = QMenu("Tono", sub)
+            for label, up, mods in (("Siguiente tono predefinido (Ctrl+rueda \u2191)", True, C),
+                                    ("Tono predefinido anterior (Ctrl+rueda \u2193)", False, C),
+                                    ("Tono +1\u00b0 (Ctrl+May\u00fas+rueda \u2191)", True, C | S),
+                                    ("Tono -1\u00b0 (Ctrl+May\u00fas+rueda \u2193)", False, C | S)):
+                a = QAction(label, self)
+                a.triggered.connect(lambda checked, k=n, u=up, md=mods: win.act_wheel(k, u, md))
+                hue.addAction(a)
+            if lt == 'png' or full:                          # [PACK107] "Tono" va en Contenido, al lado de "Efectos de imagen"
+                hue.setEnabled(lt == 'png')
+                cm_h = next((ha.menu() for ha in layer_menus[n].actions()
+                             if ha.menu() is not None and ha.text().replace('&', '') == "Contenido"), None)
+                (cm_h if cm_h is not None else sub).addMenu(hue)
+            layer_menus[n].addMenu(sub)
+
+        rn = QMenu("Girar widget", aspect_menu)
+        a = QAction("Rotaci\u00f3n aleatoria (Ctrl+Alt+May\u00fas+click central)", self)
+        a.triggered.connect(lambda: win.act_rotate_note(None))
+        rn.addAction(a)
+        a = QAction("Resetear la rotaci\u00f3n a 0\u00b0 (Ctrl+Alt+May\u00fas+Win+click central)", self)
+        a.triggered.connect(lambda: win.act_rotate_note(0))
+        rn.addAction(a)
+        rn.addSeparator()
+        for label, dg in (("Girar 180\u00b0", 180), ("Girar 90\u00b0 en sentido antihorario", -90), ("Girar 90\u00b0 en sentido horario", 90)):
+            a = QAction(label, self)
+            a.triggered.connect(lambda checked=False, d_=dg: win.act_rotate_note_by(d_))
+            rn.addAction(a)
+
+        def _custom_rot():
+            v, ok = QInputDialog.getDouble(self.dialog_parent, "Girar este widget", "Grados a girar (positivo = sentido horario, negativo = antihorario):",
+                                           0.0, -360.0, 360.0, 1)
+            if ok and abs(v) > 1e-9:
+                win.act_rotate_note_by(v)
+        a = QAction("Girar un \u00e1ngulo personalizado...", self)
+        a.triggered.connect(lambda checked=False: _custom_rot())
+        rn.addAction(a)
+        aspect_menu.addMenu(rn)
+
+    def _choose_link_target(self, widget_id, role):
+        """[PACK105] Atajo de teclado de 'Convertir en hijo de...' / 'Convertir en padre de...': pregunta el widget de destino
+        en una lista junto al cursor (no bloquea; la lista se cierra sola al elegir o al pulsar fuera)."""
+        others = [(self._get_widget_display_name(w), w) for w, s in self.global_state.items()
+                  if isinstance(s, dict) and w != widget_id and w in self.widgets]
+        if len(others) == 0:
+            self._osd("No hay otros widgets con los que enlazar")
+            return None
+        others.sort(key=lambda t: t[0].lower())
+        pm = QMenu(self.dialog_parent)
+        pm.setToolTipsVisible(True)
+        pm.setAttribute(Qt.WA_DeleteOnClose, False)
+        head = pm.addAction("Convertir en hijo de..." if role == 'child' else "Convertir en padre de...")
+        head.setEnabled(False)
+        pm.addSeparator()
+        dup = {}
+        for name, _w in others:
+            dup[name] = dup.get(name, 0) + 1
+        for name, wid in others[:40]:
+            a = QAction((name if dup[name] == 1 else f"{name}  [{wid[-6:]}]")[:60], pm)
+            if role == 'child':
+                a.triggered.connect(lambda checked=False, t=wid: self.set_parent_link(child_id=widget_id, parent_id=t))
+            else:
+                a.triggered.connect(lambda checked=False, t=wid: self.set_parent_link(child_id=t, parent_id=widget_id))
+            pm.addAction(a)
+        if len(others) > 40:
+            more = pm.addAction(f"(hay {len(others) - 40} m\u00e1s: usa el gesto con el rat\u00f3n)")
+            more.setEnabled(False)
+        self._link_chooser = pm
+        pm.popup(self._cursor_pos())
+        return pm
+
+    def _cursor_pos(self):
+        return QCursor.pos()
+
+    def hotkey_target_window(self):
+        """[PACK105] Widget sobre el que actua una tecla GLOBAL: el que esta bajo el cursor (su papel visible; si hay varios, el
+        de arriba) o, si no hay ninguno, el ultimo que se uso (clic o tecla)."""
+        try:
+            pos = self._cursor_pos()
+            hit = []
+            for w in self.widgets.values():
+                if not w.isVisible():
+                    continue
+                try:
+                    r = w.paper_rect_global()
+                except Exception:
+                    r = w.frameGeometry()
+                if r.contains(pos):
+                    hit.append(w)
+            last = self.widgets.get(getattr(self, '_last_wid', None))
+            if hit:
+                top = QApplication.topLevelAt(pos)
+                for w in hit:
+                    if w is top:
+                        return w
+                return last if last in hit else hit[0]
+            return last
+        except Exception as e:
+            log_warn("Hotkeys", f"No se pudo decidir el widget de la tecla global: {e}")
+            return None
+
+    def _add_link_menus(self, menu, widget_id, full=False):
+        """Enlazar sin arrastrar: Ctrl+arrastrar (hija de...) y Alt+arrastrar (padre de...)."""
+        others = [(self._get_widget_display_name(w), w) for w, s in self.global_state.items()
+                  if isinstance(s, dict) and w != widget_id and w in self.widgets]
+        if not others and not full:
+            return
+        others.sort(key=lambda t: t[0].lower())
+        lm = QMenu("Enlazar con otro widget", menu)
+        lm.setToolTipsVisible(True)
+        if full:                              # [PACK105] para el editor de atajos: cada opcion pregunta el destino al pulsar la tecla
+            for title, role in (("Convertir en hijo de... (Ctrl+arrastrar sobre el widget)", 'child'),
+                                ("Convertir en padre de... (Alt+arrastrar sobre el widget)", 'parent')):
+                a = QAction(title, self)
+                a.triggered.connect(lambda checked=False, r=role: self._choose_link_target(widget_id, r))
+                lm.addAction(a)
+            menu.addMenu(lm)
+            return
+        for title, role in (("Convertir en hijo de... (Ctrl+arrastrar sobre el widget)", 'child'),
+                            ("Convertir en padre de... (Alt+arrastrar sobre el widget)", 'parent')):
+            sub = QMenu(title, lm)
+            dup = {}
+            for name, _w in others:
+                dup[name] = dup.get(name, 0) + 1
+            for name, wid in others[:40]:
+                text = name if dup[name] == 1 else f"{name}  [{wid[-6:]}]"
+                a = QAction(text[:60], self)
+                if role == 'child':
+                    a.triggered.connect(lambda checked, t=wid: self.set_parent_link(child_id=widget_id, parent_id=t))
+                else:
+                    a.triggered.connect(lambda checked, t=wid: self.set_parent_link(child_id=t, parent_id=widget_id))
+                sub.addAction(a)
+            if len(others) > 40:
+                more = QAction(f"(hay {len(others) - 40} m\u00e1s: usa el gesto con el rat\u00f3n)", self)
+                more.setEnabled(False)
+                sub.addAction(more)
+            lm.addMenu(sub)
+        menu.addMenu(lm)
+
+    def _widget_menu_groups(self, widget_id, state):
+        """[PACK78] Grupos del menu de un widget: el primer titulo dice su TIPO (nota / imagen o web) y su nombre."""
+        try:
+            nm = " ".join(str(self._get_widget_display_name(widget_id, state)).split())
+        except Exception:
+            nm = ""
+        if len(nm) > 26:
+            nm = nm[:25].rstrip() + "\u2026"
+        head = _KIND_LABEL[_widget_kind(state)] + (("  \u00b7  " + nm) if nm else "")
+        g = list(_MENU_GROUPS_W)
+        g[0] = (g[0][0], head, g[0][2])
+        return tuple(g)
+
+    def build_widget_context_menu(self, widget_id, from_tray=False, full=False):
+        """[PACK104] Menu de clic derecho del widget reorganizado: Capas / Aspecto / Relaciones / Clonar / Eliminar como submenus;
+        las opciones que no aplican al tipo de capa no se muestran. Las teclas ya asignadas se migran (HotkeyManager._PATH_MOVES).
+        [PACK105] full=True (editor de atajos y teclas): TODAS las opciones, las que no aplican ahora quedan deshabilitadas, y
+        'Enlazar con otro widget' son dos opciones que preguntan el destino al pulsar la tecla."""
+        menu = _HMenu()
+        state = self.global_state.get(widget_id)
+        if not state:
+            return menu
+        template_data = state.get('template_data', {})
+
+        def add(m_, text, fn, checked=None, tip=None, enabled=True):
+            a = QAction(text, self)
+            if checked is not None:
+                a.setCheckable(True)
+                a.setChecked(bool(checked))
+                a.triggered.connect(lambda c=False, f=fn: f(c))
+            else:
+                a.triggered.connect(lambda c=False, f=fn: f())
+            if tip:
+                a.setToolTip(tip)
+            if not enabled:
+                a.setEnabled(False)
+            m_.addAction(a)
+            return a
+
+        # ---- este widget
+        is_enabled = state.get('enabled', True)
+        if full:
+            add(menu, "Ocultar (doble click \u00b7 Ctrl+doble click: todos)", lambda wid=widget_id: self.toggle_widget_enabled(wid, force_state=False))
+            add(menu, "Mostrar", lambda wid=widget_id: self.toggle_widget_enabled(wid, force_state=True))
+        else:
+            add(menu, "Ocultar (doble click \u00b7 Ctrl+doble click: todos)" if is_enabled else "Mostrar",
+                lambda wid=widget_id, on=is_enabled: self.toggle_widget_enabled(wid, force_state=not on))
+        add(menu, "Siempre encima", lambda c, wid=widget_id: self._toggle_widget_always_on_top(wid, c),
+            checked=state.get('always_on_top', True))
+        add(menu, "Renombrar...", lambda: self._rename_widget(widget_id))
+        window = self.widgets.get(widget_id)
+        if window is not None and window.timer_active and window.timer_target_dt is not None:
+            add(menu, f"Cancelar temporizador ({window.timer_target_dt.strftime('%d/%m %H:%M')})",
+                lambda: self._cancel_timer_for_widget(widget_id))
+        elif full:
+            add(menu, "Cancelar temporizador", lambda: self._cancel_timer_for_widget(widget_id), enabled=False)
+        add(menu, "Establecer temporizador...", lambda: self._set_timer_for_widget(widget_id))
+        add(menu, "Ver en el navegador de widgets", lambda: self.show_browser(widget_id))
+
+        # ---- Capas: cada capa con su tipo, su contenido (solo lo que aplica a ese tipo), su geometria y sus transformaciones
+        layers_menu = QMenu("Capas", menu)
+        layers_menu.setToolTipsVisible(True)
+        _tn = {"text": "texto", "png": "imagen", "web": "web"}
+        lmenus = {}
+        for n_ in (1, 2):
+            ld = template_data.get(f'layer{n_}', {})
+            lt = ld.get('type', 'text' if n_ == 1 else 'png')
+            lm_ = QMenu(f"Capa {n_} \u00b7 {_tn.get(lt, lt)}", layers_menu)
+            lm_.setToolTipsVisible(True)
+            tm_ = QMenu("Tipo de capa", lm_)
+            kinds = (("Texto", 'text'), ("Imagen (png, jpg, webp)", 'png')) if n_ == 1 else \
+                    (("Imagen (png, jpg, webp)", 'png'), ("Mini Navegador Web", 'web'), ("Texto", 'text'))
+            for lab_, ty_ in kinds:
+                add(tm_, lab_, lambda c, k=n_, t_=ty_: self._edit_widget_layer(widget_id, k, t_), checked=(lt == ty_))
+            lm_.addMenu(tm_)
+            cm_ = QMenu("Contenido", lm_)
+            if lt == 'text' or full:
+                add(cm_, "Editar texto en una ventana...", lambda k=n_: self._edit_widget_layer(widget_id, k, 'text'), enabled=(lt == 'text'))
+                add(cm_, "Cargar desde .txt...", lambda k=n_: self._load_text_from_file(widget_id, k), enabled=(lt == 'text'))
+                add(cm_, "Cambiar fuente...", lambda k=n_: self._edit_widget_font(widget_id, k), enabled=(lt == 'text'))
+            if lt == 'png' or full:
+                add(cm_, "Efectos de Imagen (Tono, Color base, Brillo...)", lambda k=n_: self._edit_widget_image_effects(widget_id, k),
+                    enabled=(lt == 'png'))
+                add(cm_, "Estirar imagen para llenar el recuadro",
+                    lambda c, wid=widget_id, k=n_: self._toggle_layer_scaled_contents(wid, k, c),
+                    checked=ld.get('scaled_contents', n_ == 2), enabled=(lt == 'png'))
+            if cm_.actions():
+                lm_.addMenu(cm_)
+            add(lm_, "Posici\u00f3n y tama\u00f1o (X, Y, ancho, alto)...", lambda k=n_: self._edit_widget_geometry(widget_id, k))
+            layers_menu.addMenu(lm_)
+            lmenus[n_] = lm_
+        menu.addMenu(layers_menu)
+
+        # ---- Aspecto: template, estilo (nota base), corona y giro del widget
+        aspect_menu = QMenu("Aspecto", menu)
+        tpl_menu = QMenu("Template", aspect_menu)
+        add(tpl_menu, "Cambiar el template...", lambda: self._change_widget_template(widget_id))
+        add(tpl_menu, "Guardar como template...", lambda: self.save_widget_as_template(widget_id))
+        add(tpl_menu, "Exportar el template...", lambda: self._export_widget_template(widget_id))
+        tpl_menu.addSeparator()
+        add(tpl_menu, "Copiar template (json)", lambda: self._copy_widget_template(widget_id))       # [PACK96]
+        add(tpl_menu, "Pegar template (json)", lambda: self._paste_widget_data(widget_id, True),         # [PACK98]
+            tip="Sustituye el aspecto y el contenido de este widget por un template copiado (JSON)",
+            enabled=self._clip_widget_data() is not None)
+        tpl_menu.addSeparator()
+        pre_menu = QMenu("Usar como predeterminado", tpl_menu)
+        add(pre_menu, "Para los widgets nuevos (Nuevo widget predeterminado)", lambda: self.set_widget_as_default(widget_id, 1))
+        add(pre_menu, "Para el hijo que se crea con Ctrl+Alt+May\u00fas+Win+pulsar", lambda: self.set_widget_as_default(widget_id, 2))
+        tpl_menu.addMenu(pre_menu)
+        aspect_menu.addMenu(tpl_menu)
+        sty_menu = QMenu("Estilo", aspect_menu)                  # [PACK107] antes "Estilo" y "Nota base" eran dos submenus: es lo mismo
+        sty_menu.setToolTipsVisible(True)
+        add(sty_menu, "Generar estilo...", lambda: self.apply_base_note_to_widget(widget_id),
+            tip="Genera la capa 2 de este widget con el editor de nota base (forma, color, borde, sombra)")
+        if self._is_base_note(state) or full:       # [PACK68]
+            add(sty_menu, "Editar este estilo...", lambda: self.edit_base_note(widget_id), enabled=self._is_base_note(state),
+                tip="Reabre el editor de nota base con los par\u00e1metros de este widget y regenera su imagen")
+        sty_menu.addSeparator()
+
+        add(sty_menu, "Copiar estilo (json)", lambda: self._copy_widget_style(widget_id),
+            tip="Copia solo el aspecto (sin el texto ni la posici\u00f3n) como JSON")
+        add(sty_menu, "Pegar estilo (json)", lambda: self._paste_widget_data(widget_id, False),
+            tip="Aplica un estilo (o template) copiado a este widget y conserva su texto",
+            enabled=self._clip_widget_data() is not None)
+        aspect_menu.addMenu(sty_menu)
+        crown_menu = QMenu("Corona", aspect_menu)
+        add(crown_menu, "Tono, saturaci\u00f3n, brillo y opacidad...", lambda: self.edit_crown_style(widget_id))
+        add(crown_menu, "Orientaci\u00f3n de la imagen (inclinaci\u00f3n de la corona)...", lambda: self.edit_upright_angle(widget_id))
+        aspect_menu.addMenu(crown_menu)
+        self._add_gesture_menus(layers_menu, aspect_menu, widget_id, lmenus, full)       # Transformar (por capa) y Girar widget
+        menu.addMenu(aspect_menu)
+
+        # ---- Relaciones: padre, hijos y enlaces
+        rel_menu = QMenu("Relaciones", menu)
+        rel_menu.setToolTipsVisible(True)
+        create_child_action = add(rel_menu, "Crear hijo (Ctrl+Alt+May\u00fas[+Win]+arrastrar)",
+                                  lambda: self.create_child_note(widget_id, independent=bool(QApplication.keyboardModifiers() & Qt.MetaModifier)))
+        self._bind_independent_child_action(rel_menu, create_child_action)
+        self._add_link_menus(rel_menu, widget_id, full)
+        if state.get('parent_id') or full:
+            add(rel_menu, "Independizar posici\u00f3n de este hijo", lambda c, wid=widget_id: self.set_position_independent(wid, c),
+                checked=bool(state.get('pos_independent', False)), tip="No se mueve cuando se arrastra a su padre",
+                enabled=bool(state.get('parent_id')))
+            add(rel_menu, "Desvincular de su padre", lambda: self.unlink_parent(widget_id), enabled=bool(state.get('parent_id')))
+        children = self.get_children(widget_id)
+        if full:
+            def _fold(want, wid=widget_id):                  # idempotente: Plegar solo pliega, Desplegar solo despliega
+                if bool(self.global_state.get(wid, {}).get('collapsed', False)) != want:
+                    self.toggle_collapsed(wid)
+            add(rel_menu, "Plegar hijos", lambda: _fold(True), enabled=bool(children))
+            add(rel_menu, "Desplegar hijos", lambda: _fold(False), enabled=bool(children))
+        elif children:
+            add(rel_menu, (f"Desplegar hijos ({len(children)})" if state.get('collapsed', False) else f"Plegar hijos ({len(children)})"),
+                lambda: self.toggle_collapsed(widget_id))
+        menu.addMenu(rel_menu)
+
+        # ---- Clonar
+        n_desc = len(self.get_descendants(widget_id))
+        clone_menu = QMenu("Clonar", menu)
+        add(clone_menu, "Este widget (Ctrl+Alt+May\u00fas+click)", lambda: self.clone_widget(widget_id))
+        if n_desc or full:
+            add(clone_menu, f"Con sus descendientes ({n_desc + 1} widgets)", lambda: self.clone_tree(widget_id), enabled=bool(n_desc))
+        if state.get('parent_id') or full:
+            add(clone_menu, "Como hijo independiente", lambda: self.clone_widget(widget_id, independent=True), enabled=bool(state.get('parent_id')))
+        menu.addMenu(clone_menu)
+
+        # ---- todos los widgets
+        if not from_tray:
+            add(menu, "Nuevo widget...", self.show_template_chooser)
+            if full:
+                add(menu, "Ocultar todos los widgets", lambda: self.set_all_visible(False))
+                add(menu, "Mostrar todos los widgets", lambda: self.set_all_visible(True))
+            else:
+                add(menu, "Ocultar todos los widgets" if self.all_visible else "Mostrar todos los widgets", self.toggle_all_visibility)
+
+        # ---- Eliminar (dentro de un submenu: un clic suelto no lo dispara)
+        rm_menu = QMenu("Eliminar", menu)
+        add(rm_menu, "Este widget... (sin confirmar: Ctrl+Alt+May\u00fas+click der.)", lambda: self._confirm_remove_widget(widget_id))
+        if n_desc or full:
+            add(rm_menu, "Con sus descendientes... (Ctrl+Alt+May\u00fas+Win+click der.)", lambda: self.confirm_remove_tree(widget_id),
+                tip=f"Elimina este widget y sus {n_desc} descendientes, pidiendo confirmaci\u00f3n", enabled=bool(n_desc))
+        menu.addMenu(rm_menu)
+        if not from_tray and getattr(self, 'hotkeys', None) is not None:
+            self.hotkeys.decorate(menu, "widget")
+        _style_menu(menu, self._widget_menu_groups(widget_id, state), _MENU_RULES_W, decorate=self._menu_style_on())       # [PACK78]
+        return menu
+
+    def toggle_console_visibility(self):
+        if not self.console_hwnd or not self.user32:
+            return
+
+        try:
+            if self.console_visible:
+                self.user32.ShowWindow(self.console_hwnd, self.SW_HIDE)
+                self.console_visible = False
+            else:
+                self.user32.ShowWindow(self.console_hwnd, self.SW_SHOW)
+                self.user32.SetForegroundWindow(self.console_hwnd)
+                self.console_visible = True
+        except Exception as e:
+            log_error("Manager", f"Fallo al alternar la visibilidad de la consola: {e}")
+
+    def _edit_widget_layer(self, widget_id, layer_num, new_type):
+        
+        parent_widget = self.widgets.get(widget_id) 
+        state = self.global_state[widget_id]
+        template_data = state['template_data']
+        layer_key = f"layer{layer_num}"
+        
+        if layer_key not in template_data:
+            template_data[layer_key] = {}
+            
+        current_content = template_data[layer_key].get('content', '')
+        current_type = template_data[layer_key].get('type', 'text' if layer_num == 1 else 'png')
+        
+        if new_type != current_type:
+            current_content = ""
+        
+        new_content = None
+        if new_type == 'text':
+            doc = QTextDocument()
+            doc.setHtml(current_content)
+            plain_text = doc.toPlainText()
+            
+            text, ok = QInputDialog.getMultiLineText(parent_widget, 
+                                                     f"Editar Texto Layer {layer_num} (Plano)", 
+                                                     "Contenido:", 
+                                                     text=plain_text)
+            if ok:
+                color = template_data[layer_key].get('color', 'white' if layer_num == 1 else 'black')
+                text_html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                text_html = text_html.replace('\n', '<br>')
+                new_content = f'<p style="color:{color};" align="center">{text_html}</p>'
+
+        elif new_type == 'png':
+            path, _ = QFileDialog.getOpenFileName(parent_widget, 
+                                                  f"Seleccionar Imagen Layer {layer_num}",
+                                                  self._layer_image_dir(layer_num),
+                                                  "Imagenes (*.png *.jpg *.jpeg *.webp)")
+            if path:
+                new_content = self._import_layer_image(path, layer_num)
+        elif new_type == 'web':
+            url, ok = QInputDialog.getText(parent_widget, 
+                                           f"Editar URL Layer {layer_num}", 
+                                           "URL:", 
+                                           text=current_content)
+            if ok:
+                new_content = url
+        
+        if new_content is not None:
+            template_data[layer_key]['type'] = new_type
+            template_data[layer_key]['content'] = new_content
+            
+            self.widgets[widget_id].load_template_data(template_data)
+            self.save_global_state() 
+            self.build_tray_menu()
+            
+    def _layer_image_dir(self, layer_num):
+        """[PACK51] Carpeta inicial del selector de imagen: capa 1 -> frames/, capa 2 -> images/."""
+        d = FRAMES_DIR if layer_num == 1 else IMAGES_DIR
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _import_layer_image(self, path, layer_num):
+        """[PACK51] Si la imagen elegida esta fuera de frames/, images/ y sticky/, se copia a la carpeta
+        de su capa (el conjunto queda empaquetable). Devuelve la ruta que se guardara en el widget."""
+        import shutil
+        import filecmp
+        try:
+            ap = os.path.normcase(os.path.abspath(path))
+            for d in (FRAMES_DIR, IMAGES_DIR, STICKY_DIR):
+                if ap.startswith(os.path.normcase(os.path.abspath(d)) + os.sep):
+                    return path
+            dest_dir = self._layer_image_dir(layer_num)
+            base = os.path.basename(path)
+            stem, ext = os.path.splitext(base)
+            dest = os.path.join(dest_dir, base)
+            n = 1
+            while os.path.exists(dest):
+                if filecmp.cmp(path, dest, shallow=False):
+                    return dest
+                dest = os.path.join(dest_dir, f"{stem}_{n}{ext}")
+                n += 1
+            shutil.copy2(path, dest)
+            log_info("Manager", f"Imagen copiada a {dest_dir} para que el conjunto sea portable: {os.path.basename(dest)}")
+            return dest
+        except Exception as e_im:
+            log_warn("Manager", f"No se pudo copiar la imagen a la carpeta de la capa: {e_im}")
+            return path
+
+    def _ensure_data_defaults(self):
+        """[PACK51] data/ trae siempre un conjunto por defecto (default_set.json) para el primer arranque."""
+        try:
+            if os.path.exists(DEFAULT_SET_FILE):
+                return
+            tdata = copy.deepcopy(self.get_default_template_data())
+            tdata.setdefault('geometry', {'x': 100, 'y': 100})
+            st = {"widget_default": {"enabled": True, "always_on_top": True,
+                                     "template_name": os.path.basename(DEFAULT_TEMPLATE_FILE),
+                                     "custom_name": "", "template_data": tdata}}
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(DEFAULT_SET_FILE, 'w', encoding='utf-8') as f:
+                json.dump(st, f, indent=4)
+        except Exception as e_df:
+            log_warn("Manager", f"No se pudo crear {DEFAULT_SET_FILE}: {e_df}")
+
+    def _first_run_default(self):
+        """[PACK51] Primer arranque (sin widget_set.json): crea los widgets de data/default_set.json
+        (o una nota normal si ese archivo no existe o esta danado)."""
+        try:
+            with open(DEFAULT_SET_FILE, 'r', encoding='utf-8') as f:
+                st = json.load(f)
+            items = [v for v in st.values() if isinstance(v, dict) and isinstance(v.get('template_data'), dict)]
+            if items:
+                for v in items:
+                    v = copy.deepcopy(v)
+                    v.pop('parent_id', None)
+                    self.add_new_widget(state=v)
+                return
+        except Exception as e_fr:
+            log_warn("Manager", f"default_set.json no utilizable ({e_fr}); se crea una nota normal.")
+        self.add_new_widget()
+
+    def _load_text_from_file(self, widget_id, layer_num):
+        parent_widget = self.widgets.get(widget_id) 
+        path, _ = QFileDialog.getOpenFileName(parent_widget, 
+                                              f"Cargar Texto desde .txt para Layer {layer_num}", 
+                                              DATA_DIR, 
+                                              "Archivos de Texto (*.txt)")
+        if not path:
+            return
+
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+            
+            layer_key = f"layer{layer_num}"
+            
+            color = self.global_state[widget_id]['template_data'][layer_key].get('color', 'white' if layer_num == 1 else 'black')
+            text_html = file_content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            text_html = text_html.replace('\n', '<br>')
+            html_content = f'<p style="color:{color};" align="center">{text_html}</p>'
+
+            self.global_state[widget_id]['template_data'][layer_key]['content'] = html_content
+            self.global_state[widget_id]['template_data'][layer_key]['type'] = 'text' 
+            
+            self.widgets[widget_id].load_template_data(self.global_state[widget_id]['template_data'])
+            self.save_global_state() 
+            self.build_tray_menu()
+            
+        except Exception as e:
+            print(f"ERROR: No se pudo cargar el archivo de texto {path}: {e}")
+            QMessageBox.critical(parent_widget, "Error al Cargar", f"No se pudo leer el archivo de texto:\n{e}")
+
+    def _edit_widget_font(self, widget_id, layer_num):
+        parent_widget = self.widgets.get(widget_id) 
+        state = self.global_state[widget_id]
+        template_data = state['template_data']
+        layer_key = f"layer{layer_num}"
+        
+        layer_data = template_data.setdefault(layer_key, {})
+        
+        current_font_family = layer_data.get('font_family', 'Inter')
+        current_font_size = layer_data.get('font_size', 14 if layer_num == 1 else 12)
+        current_font = QFont(current_font_family, current_font_size)
+        
+        ok, font = QFontDialog.getFont(current_font, parent_widget, f"Seleccionar Fuente para Layer {layer_num}")
+        
+        if ok and font:
+            layer_data['font_family'] = font.family()
+            layer_data['font_size'] = font.pointSize()
+            
+            self.widgets[widget_id].load_template_data(template_data)
+            self.save_global_state() 
+            self.build_tray_menu()
+            
+    def _edit_widget_image_effects(self, widget_id, layer_num):
+        parent_widget = self.widgets.get(widget_id) 
+        if not parent_widget:
+            return
+            
+        state = self.global_state[widget_id]
+        template_data = state['template_data']
+        layer_key = f"layer{layer_num}"
+        
+        layer_data = template_data.setdefault(layer_key, {})
+        
+        current_effects = layer_data.get('image_effects')
+        if not current_effects:
+            old_hue = layer_data.get('hue_target', 0)
+            current_effects = {
+                "hue": old_hue, "saturation": 0, "brightness": 0, "contrast": 0, "colorize": False
+            }
+
+        dialog = ImageEffectsDialog(current_effects, parent_widget,
+                                    base_hue=parent_widget._layer_base_hue_override(layer_num),
+                                    auto_base_hue=parent_widget._source_base_hue(layer_num),
+                                    source_image=(parent_widget.layer1_original_image if layer_num == 1
+                                                  else parent_widget.layer2_original_image))
+        
+        dialog.effects_changed.connect(
+            lambda effects_dict, w=parent_widget, l=layer_num: w.apply_preview_effects(l, effects_dict)
+        )
+        
+        if dialog.exec():
+            new_effects = dialog.get_effects()
+            new_base = dialog.get_base_hue()
+            if new_base is None:
+                layer_data.pop('base_hue', None)
+                layer_data.pop('base_hue_src', None)
+            else:
+                layer_data['base_hue'] = int(new_base)
+                layer_data['base_hue_src'] = layer_data.get('content')
+            
+            is_default = (
+                new_effects['hue'] == 0 and
+                new_effects['saturation'] == 0 and
+                new_effects['brightness'] == 0 and
+                new_effects['contrast'] == 0 and
+                not new_effects['colorize']
+            )
+            
+            if is_default:
+                if 'image_effects' in layer_data:
+                    layer_data.pop('image_effects')
+            else:
+                layer_data['image_effects'] = new_effects
+            
+            if 'hue_target' in layer_data:
+                layer_data.pop('hue_target')
+            
+            self.widgets[widget_id].load_template_data(template_data)
+            self.save_global_state()
+            self.build_tray_menu()
+        else:
+            parent_widget.revert_preview(layer_num)
+
+    def _toggle_layer_scaled_contents(self, widget_id, layer_num, is_checked):
+        
+        state = self.global_state[widget_id]
+        template_data = state['template_data']
+        layer_key = f"layer{layer_num}"
+        
+        layer_data = template_data.setdefault(layer_key, {})
+        layer_data['scaled_contents'] = is_checked
+        
+        self.widgets[widget_id].load_template_data(template_data)
+        self.save_global_state() 
+        self.build_tray_menu()
+
+    def _edit_widget_geometry(self, widget_id, layer_num):
+        parent_widget = self.widgets.get(widget_id) 
+        state = self.global_state[widget_id]
+        template_data = state['template_data']
+        layer_key = f"layer{layer_num}"
+        
+        if layer_key not in template_data:
+            template_data[layer_key] = {}
+        
+        main_geom = template_data.get('geometry', {'x':0, 'y':0, 'w':400, 'h':225})
+        default_geom = {'x': 0, 'y': 0, 'w': main_geom.get('width', 400), 'h': main_geom.get('height', 225)}
+        
+        geom = template_data[layer_key].get('geometry', default_geom)
+        
+        try:
+            x, okX = QInputDialog.getInt(parent_widget, f"Editar Geometria L{layer_num}", "Posicion X:", geom['x'])
+            if not okX: return
+            y, okY = QInputDialog.getInt(parent_widget, f"Editar Geometria L{layer_num}", "Posicion Y:", geom['y'])
+            if not okY: return
+            w, okW = QInputDialog.getInt(parent_widget, f"Editar Geometria L{layer_num}", "Ancho (Width):", geom['w'], 50)
+            if not okW: return
+            h, okH = QInputDialog.getInt(parent_widget, f"Editar Geometria L{layer_num}", "Alto (Height):", geom['h'], 50)
+            if not okH: return
+
+            new_geom = {'x': x, 'y': y, 'w': w, 'h': h}
+            template_data[layer_key]['geometry'] = new_geom
+            
+            self.widgets[widget_id].load_template_data(template_data)
+            self.save_global_state() 
+            self.build_tray_menu()
+            
+        except Exception as e:
+            print(f"ERROR: Fallo al editar geometria: {e}")
+
+    def _toggle_widget_always_on_top(self, widget_id, checked):
+        
+        if widget_id not in self.global_state:
+            return
+            
+        self.global_state[widget_id]['always_on_top'] = checked
+        
+        if widget_id in self.widgets:
+            self.widgets[widget_id].set_always_on_top(checked)
+            
+        self.save_global_state()
+        self.build_tray_menu()
+
+    def _change_widget_template(self, widget_id):
+        self.show_template_chooser(apply_to=widget_id)
+
+    def _change_widget_template_from_file(self, widget_id):
+        parent_widget = self.widgets.get(widget_id) 
+        path, _ = QFileDialog.getOpenFileName(parent_widget, "Seleccionar template (JSON)", DATA_DIR, "JSON (*.json)")
+        if not path:
+            return
+            
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                template_data = json.load(f)
+            
+            if 'geometry' not in template_data:
+                template_data['geometry'] = {}
+                
+            current_main_geom = self.global_state[widget_id]['template_data'].get('geometry', {'x': 100, 'y': 100})
+            if self.keep_content_on_apply():
+                self._carry_content(self.global_state[widget_id].get('template_data'), template_data)
+            template_data['geometry']['x'] = current_main_geom['x']
+            template_data['geometry']['y'] = current_main_geom['y']
+
+            self.global_state[widget_id]['template_data'] = template_data
+            self.global_state[widget_id]['template_name'] = os.path.basename(path)
+            
+            self.widgets[widget_id].load_template_data(template_data)
+            self.save_global_state() 
+            self.build_tray_menu()
+            
+        except Exception as e:
+            print(f"ERROR: No se pudo cargar el template desde {path}: {e}")
+            QMessageBox.critical(parent_widget, "Error de template", f"No se pudo cargar o leer el archivo JSON:\n{e}")
+
+    def _export_widget_template(self, widget_id):
+        parent_widget = self.widgets.get(widget_id) 
+        template_data = self.global_state[widget_id]['template_data']
+        default_name = f"{self.global_state[widget_id].get('template_name', 'exportado')}.json"
+        
+        path, _ = QFileDialog.getSaveFileName(parent_widget, "Exportar template de widget", os.path.join(DATA_DIR, default_name), "JSON (*.json)")
+        if not path:
+            return
+            
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(template_data, f, indent=4)
+            print(f"INFO [{widget_id}]: Plantilla exportada a {path}")
+        except Exception as e:
+            print(f"ERROR: No se pudo exportar el template a {path}: {e}")
+            QMessageBox.critical(parent_widget, "Error de exportaci\u00f3n", f"No se pudo guardar el archivo JSON:\n{e}")
+
+    def _copy_widget_template(self, widget_id):
+        """[PACK96] Copia al portapapeles el JSON del template (aspecto) de este widget."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict) or not isinstance(st.get('template_data'), dict):
+            return
+        try:
+            txt = json.dumps(st['template_data'], indent=2, ensure_ascii=False)
+        except (TypeError, ValueError) as e:
+            log_warn("Template", f"No se pudo copiar el template de {widget_id}: {e}")
+            return
+        QApplication.clipboard().setText(txt)
+        self._osd("JSON del template copiado")
+
+    @staticmethod
+    def _clip_widget_data():
+        """[PACK98] Template (dict) que hay en el portapapeles como JSON, o None si no hay uno con aspecto de template."""
+        txt = QApplication.clipboard().text()
+        if not txt or len(txt) > 4000000:
+            return None
+        try:
+            d = json.loads(txt.strip().lstrip('\ufeff'))
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(d, dict) or not any(isinstance(d.get(k), dict) for k in ('layer1', 'layer2', 'base_note')):
+            return None
+        return d
+
+    def _copy_widget_style(self, widget_id):
+        """[PACK98] Copia el estilo del widget (su template sin posicion ni texto) como JSON."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict) or not isinstance(st.get('template_data'), dict):
+            return
+        td = copy.deepcopy(st['template_data'])
+        if isinstance(td.get('geometry'), dict):
+            td['geometry'].pop('x', None)
+            td['geometry'].pop('y', None)
+        l1 = td.get('layer1')
+        if isinstance(l1, dict) and l1.get('type', 'text') == 'text':
+            l1['content'] = ''
+        if isinstance(td.get('base_note'), dict):
+            td['base_note'].pop('text', None)
+        try:
+            txt = json.dumps(td, indent=2, ensure_ascii=False)
+        except (TypeError, ValueError) as e:
+            log_warn("Template", f"No se pudo copiar el estilo de {widget_id}: {e}")
+            return
+
+        QApplication.clipboard().setText(txt)
+        self._osd("Estilo del widget copiado (JSON)")
+
+    def _paste_widget_data(self, widget_id, with_content):
+        """[PACK98] Pega el JSON del portapapeles en este widget. with_content=True: template completo (con su texto);
+        False: solo el estilo (el widget conserva su texto). La posicion no cambia. Si algo falla se deja el widget como estaba."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict) or not isinstance(st.get('template_data'), dict):
+            return False
+        data = self._clip_widget_data()
+        if data is None:
+            self._osd("El portapapeles no contiene un " + ("template" if with_content else "estilo") + " (JSON)", 2800)
+            return False
+        old = copy.deepcopy(st['template_data'])
+        new = copy.deepcopy(data)
+        og = old.get('geometry') if isinstance(old.get('geometry'), dict) else {}
+        g = new.get('geometry') if isinstance(new.get('geometry'), dict) else {}
+        g['x'], g['y'] = og.get('x', 100), og.get('y', 100)
+        new['geometry'] = g
+        params = None
+        if isinstance(new.get('base_note'), dict):
+            own = old.get('base_note') if isinstance(old.get('base_note'), dict) else {}
+            own_text = str(own.get('text', BASE_NOTE_DEFAULTS['text']))
+            params = dict(BASE_NOTE_DEFAULTS)
+            params['corners'], params['lifts'], params['cx'] = list(params['corners']), [], []
+            params['text'] = own_text
+            params.update(_bn_clean(new['base_note']))
+            if not with_content:
+                params['text'] = own_text
+            new['base_note'] = params
+
+        if not with_content:
+            self._carry_content(old, new)
+        try:
+            st['template_data'] = new
+            if params is not None:
+                self.apply_base_note(widget_id, params)           # regenera la imagen, ajusta las capas, carga y guarda
+            else:
+                if widget_id in self.widgets:
+                    self.widgets[widget_id].load_template_data(new)
+                self.save_global_state()
+                self.build_tray_menu()
+        except Exception as e:
+            st['template_data'] = old
+            try:
+                if widget_id in self.widgets:
+                    self.widgets[widget_id].load_template_data(old)
+            except Exception:
+                pass
+            log_warn("Template", f"No se pudo pegar en {widget_id}: {e}")
+            self._osd("No se pudo pegar: %s" % e, 3000)
+            return False
+
+        self._osd("Template pegado" if with_content else "Estilo pegado")
+        return True
+
+    def _confirm_remove_widget(self, widget_id):
+        parent_widget = self.widgets.get(widget_id) 
+        display_name = self._get_widget_display_name(widget_id)
+        reply = QMessageBox.question(parent_widget, "Confirmar Eliminacion",
+                                     f"Estas seguro de que quieres eliminar este widget ({display_name})?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.remove_widget(widget_id)
+
+    def confirm_remove_tree(self, widget_id):
+        """[PACK52] Elimina la nota y TODOS sus descendientes, previa confirmacion
+        (gesto Ctrl+Alt+Mayus+Win+click derecho)."""
+        if widget_id not in self.global_state:
+            return
+        desc = self.get_descendants(widget_id)
+        name = self._get_widget_display_name(widget_id)
+        if desc:
+            msg = f"\u00bfEliminar \u00ab{name}\u00bb y sus {len(desc)} descendientes ({len(desc) + 1} widgets en total)?"
+        else:
+            msg = f"\u00bfEliminar \u00ab{name}\u00bb? (no tiene descendientes)"
+        if not desc:
+            self.remove_widget(widget_id)       # sin hijos: no hace falta confirmar
+            return
+        box = QMessageBox(self.dialog_parent)
+        box.setWindowTitle("WidgetArena")
+        box.setIcon(QMessageBox.Warning)
+        box.setText(msg)
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        pos = QCursor.pos()
+        scr = QApplication.screenAt(pos) or QApplication.primaryScreen()
+        geo = scr.availableGeometry()
+        box.ensurePolished()
+        sz = box.sizeHint()
+        box.move(max(geo.left(), min(pos.x() - sz.width() // 2, geo.right() - sz.width())),
+                 max(geo.top(), min(pos.y() - sz.height() // 2, geo.bottom() - sz.height())))
+        if box.exec() != QMessageBox.Yes:
+            return
+        log_info("Manager", f"Eliminando {widget_id} y {len(desc)} descendientes.")
+        self._hist_begin()
+        try:
+            for wid in list(reversed(desc)) + [widget_id]:      # primero las hojas
+                if wid in self.widgets or wid in self.global_state:
+                    self.remove_widget(wid)
+        finally:
+            self._hist_end()
+
+    def _confirm_remove_all_widgets(self):
+        reply1 = QMessageBox.question(self.dialog_parent, "Confirmar eliminaci\u00f3n total",
+                                      "\u00bfEst\u00e1s seguro de que quieres eliminar TODOS los widgets?",
+                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply1 != QMessageBox.Yes:
+            return
+            
+        reply2 = QMessageBox.warning(self.dialog_parent, "Confirmaci\u00f3n final",
+                                     "Esta acci\u00f3n es irreversible y eliminar\u00e1 todos los widgets de la pantalla y del archivo de estado.\n\n\u00bfContinuar?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply2 == QMessageBox.Yes:
+            print("INFO: Eliminando todos los widgets.")
+            self._hist_begin()
+            try:
+                for widget_id in list(self.widgets.keys()):
+                    self.remove_widget(widget_id)
+            finally:
+                self._hist_end()
+
+    # --- [NUEVO] Notas jerarquicas (padre/hija) ---
+
+    def get_children(self, widget_id):
+        return [
+            wid for wid, st in self.global_state.items()
+            if isinstance(st, dict) and st.get('parent_id') == widget_id
+        ]
+
+    def get_descendants(self, widget_id):
+        result = []
+        for child_id in self.get_children(widget_id):
+            result.append(child_id)
+            result.extend(self.get_descendants(child_id))
+        return result
+
+    def get_position_followers(self, widget_id):
+        """Descendientes que se mueven CON widget_id al arrastrarlo: se excluyen los hijos marcados como
+        'posicion independiente' y toda su rama (esa rama sigue a su propio hijo, que se queda quieto)."""
+        result = []
+        for cid in self.get_children(widget_id):
+            st = self.global_state.get(cid, {})
+            if isinstance(st, dict) and st.get('pos_independent'):
+                continue
+            result.append(cid)
+            result.extend(self.get_position_followers(cid))
+        return result
+
+    def set_position_independent(self, widget_id, value):
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict):
+            return
+        if value and st.get('parent_id'):
+            st['pos_independent'] = True
+        else:
+            st.pop('pos_independent', None)
+        self.save_global_state()
+        self.build_tray_menu()
+
+    def _bind_independent_child_action(self, menu, action):
+        """Con Win pulsado (antes de elegir, o mientras el menu esta abierto) la opcion pasa a crear un hijo
+        INDEPENDIENTE; lo indica en la propia etiqueta."""
+        base = action.text()
+
+        def refresh():
+            on = bool(QApplication.keyboardModifiers() & Qt.MetaModifier)
+            if on:
+                action.setText(base.split(" (")[0] + " independiente")
+                action.setProperty("wa_on", True)
+            elif action.property("wa_on"):
+                action.setProperty("wa_on", False)
+                action.setText(base)
+                _menu_item_look(action, None, {}, [])
+
+        class _MetaWatch(QObject):
+            def eventFilter(self, obj, ev):
+                if ev.type() in (QEvent.KeyPress, QEvent.KeyRelease, QEvent.MouseMove, QEvent.Enter):
+                    refresh()
+                return False
+
+        watcher = _MetaWatch(menu)
+        menu.installEventFilter(watcher)
+        menu._meta_watch = watcher
+        refresh()
+
+    def get_ancestors(self, widget_id):
+        result = []
+        seen = {widget_id}
+        current_state = self.global_state.get(widget_id, {})
+        parent_id = current_state.get('parent_id') if isinstance(current_state, dict) else None
+        while parent_id and parent_id in self.global_state and parent_id not in seen:
+            result.append(parent_id)
+            seen.add(parent_id)
+            parent_state = self.global_state.get(parent_id, {})
+            parent_id = parent_state.get('parent_id') if isinstance(parent_state, dict) else None
+        return result
+
+    def set_parent_link(self, child_id, parent_id):
+        _cs = self.global_state.get(child_id)
+        if (isinstance(_cs, dict) and child_id != parent_id and parent_id in self.global_state
+                and _cs.get('parent_id') != parent_id):
+            _cs.pop('pos_independent', None)   # con un padre nuevo vuelve a seguirlo
+        if child_id == parent_id:
+            return False
+        _ps = self.global_state.get(parent_id)
+        if isinstance(_ps, dict) and _ps.get('collapsed') and not self.get_children(parent_id):
+            _ps['collapsed'] = False   # un padre sin hijas no puede estar plegado: la nota enlazada se ocultaria
+        if child_id not in self.global_state or parent_id not in self.global_state:
+            return False
+
+        if parent_id in self.get_descendants(child_id):
+            chain = [parent_id] + self.get_ancestors(parent_id)
+            for node_id in chain:
+                node_state = self.global_state.get(node_id)
+                if node_state and node_state.get('parent_id') == child_id:
+                    node_state['parent_id'] = None
+                    break
+
+        state = self.global_state[child_id]
+        state['parent_id'] = parent_id
+        self.save_global_state()
+        self._apply_collapse_visibility()
+        self.build_tray_menu()
+        self._refresh_connector_overlay()
+        log_info("Manager", f"Enlazado: {child_id} ahora es hija de {parent_id}.")
+        return True
+
+    def unlink_parent(self, widget_id):
+        _st = self.global_state.get(widget_id)
+        if isinstance(_st, dict):
+            _st.pop('pos_independent', None)   # sin padre no hay posicion "independiente"
+        state = self.global_state.get(widget_id)
+        if not state or not state.get('parent_id'):
+            return
+        state['parent_id'] = None
+        self.save_global_state()
+        self._apply_collapse_visibility()
+        self.build_tray_menu()
+        self._refresh_connector_overlay()
+
+    def toggle_collapsed(self, widget_id):
+        state = self.global_state.get(widget_id)
+        if not state:
+            return
+        state['collapsed'] = not state.get('collapsed', False)
+        self.save_global_state()
+        self._apply_collapse_visibility()
+        window = self.widgets.get(widget_id)
+        if window:
+            window._update_fold_badge()
+        self._refresh_connector_overlay()
+
+    def _is_hidden_by_collapsed_ancestor(self, widget_id):
+        for ancestor_id in self.get_ancestors(widget_id):
+            ancestor_state = self.global_state.get(ancestor_id, {})
+            if isinstance(ancestor_state, dict) and ancestor_state.get('collapsed', False):
+                return True
+        return False
+
+    def _apply_collapse_visibility(self):
+        for widget_id, state in self.global_state.items():
+            if not isinstance(state, dict):
+                continue
+            window = self.widgets.get(widget_id)
+            if not window:
+                continue
+            should_show = state.get('enabled', True) and not self._is_hidden_by_collapsed_ancestor(widget_id)
+            if should_show and not window.isVisible():
+                window.show()
+            elif not should_show and window.isVisible():
+                window.hide()
+            window._update_fold_badge()
+
+    def set_hierarchy_highlight(self, widget_id, active):
+        ids_to_highlight = [widget_id] + self.get_descendants(widget_id)
+        for wid in ids_to_highlight:
+            window = self.widgets.get(wid)
+            if window:
+                window._set_hierarchy_highlighted(active)
+
+    def build_hierarchy_tree_menu(self, widget_id, menu_owner, _visited=None):
+        if _visited is None:
+            _visited = set()
+        menu = QMenu(menu_owner)
+
+        if widget_id in _visited:
+            broken_action = QAction("(referencia circular, omitido)", menu_owner)
+            broken_action.setEnabled(False)
+            menu.addAction(broken_action)
+            return menu
+        _visited = _visited | {widget_id}
+
+        state = self.global_state.get(widget_id, {})
+        is_collapsed = state.get('collapsed', False)
+
+        self_toggle_text = "Desplegar estos hijos" if is_collapsed else "Plegar estos hijos"
+        self_toggle_action = QAction(self_toggle_text, menu_owner)
+        self_toggle_action.triggered.connect(lambda: self.toggle_collapsed(widget_id))
+        menu.addAction(self_toggle_action)
+        menu.addSeparator()
+
+        children = self.get_children(widget_id)
+        if not children:
+            empty_action = QAction("(sin hijos)", menu_owner)
+            empty_action.setEnabled(False)
+            menu.addAction(empty_action)
+            return menu
+
+        for child_id in children:
+            child_state = self.global_state.get(child_id, {})
+            name = self._get_widget_display_name(child_id, child_state)
+            grandchildren = self.get_children(child_id)
+
+            if grandchildren:
+                child_marker = "\u25b8" if child_state.get('collapsed', False) else "\u25be"
+                submenu = self.build_hierarchy_tree_menu(child_id, menu_owner, _visited)
+                submenu.setTitle(f"{child_marker} {name}  ({len(grandchildren)})")
+                menu.addMenu(submenu)
+            else:
+                leaf_action = QAction(name, menu_owner)
+                leaf_action.triggered.connect(lambda checked=False, cid=child_id: self._flash_widget(cid))
+                menu.addAction(leaf_action)
+
+        return menu
+
+    def _default_always_on_top(self):
+        """Los widgets nuevos nacen en la banda Z (siempre encima / normal) que usa la mayoria de los existentes:
+        mezclar bandas hace que los cables, que solo pueden ir por debajo de una banda, queden sobre las notas de la otra."""
+        vals = [bool(s.get('always_on_top', True)) for s in self.global_state.values() if isinstance(s, dict)]
+        return (sum(vals) * 2 >= len(vals)) if vals else True
+
+    def _flash_widget(self, widget_id):
+        window = self.widgets.get(widget_id)
+        if not window or not window.isVisible():
+            return
+        window.raise_()
+        window.activateWindow()
+        window._set_hierarchy_highlighted(True, window._TINT_PARENT)
+        QTimer.singleShot(700, lambda: window._set_hierarchy_highlighted(False))
+
+    CHILD_KINDS = (("clone", "Clon exacto del padre (contenido y aspecto)"),
+                   ("default", "Template predeterminado"),
+                   ("template", "Un template concreto"))
+
+    def child_gesture_cfg(self, with_win):
+        """[PACK62] Tipo de hija que crea el gesto Ctrl+Alt+Mayus (+Win): (clase, plantilla)."""
+        sfx = "_w" if with_win else ""
+        kind = self.global_state.get("child_kind" + sfx)
+        if kind not in dict(self.CHILD_KINDS):
+            kind = "default" if with_win else "clone"
+        return kind, str(self.global_state.get("child_tpl" + sfx) or "")
+
+    def child_gesture_label(self, with_win):
+        kind, tpl = self.child_gesture_cfg(with_win)
+        txt = dict(self.CHILD_KINDS)[kind].split(" (")[0]
+        return txt + (": " + os.path.splitext(tpl)[0] if kind == "template" and tpl else "")
+
+    def create_child_by_type(self, parent_id, with_win=False):
+        """Crea una HIJA de parent_id segun el tipo configurado para el gesto (ver edit_child_types)."""
+        ps = self.global_state.get(parent_id)
+        if not ps:
+            return
+        kind, tpl = self.child_gesture_cfg(with_win)
+        if kind == "clone":
+            return self.create_child_note(parent_id, exact=True)       # [PACK64] hija = clon fiel (capa 1 incluida)
+        tname = tpl if (kind == "template" and tpl in self.template_files()) else self.default_template_name()
+        tdata = self.load_template_by_name(tname)
+        pw = self.widgets.get(parent_id)
+        n = len(self.get_children(parent_id))
+        geom = tdata.setdefault('geometry', {'x': 100, 'y': 100})
+        bx, by = (pw.pos().x(), pw.pos().y()) if pw else (geom.get('x', 100), geom.get('y', 100))
+        geom['x'] = bx + 45 + n * 20
+        geom['y'] = by + 45 + n * 20
+        base = self._get_widget_display_name(parent_id, ps)
+        state = {"enabled": True, "always_on_top": ps.get('always_on_top', self._default_always_on_top()),
+                 "template_name": tname, "custom_name": f"{base} (hijo)", "template_data": tdata,
+                 "parent_id": parent_id, "collapsed": False}
+        self.add_new_widget(state=state)
+        self._apply_collapse_visibility()
+        self._refresh_connector_overlay()
+
+    def edit_child_types(self):
+        dlg = QDialog(self.dialog_parent)
+        dlg.setWindowTitle("Tipo de hijo al crear con el rat\u00f3n")
+        dlg.setMinimumWidth(430)
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("Ctrl+Alt+May\u00fas + pulsar (y arrastrar) crea un HIJO del widget. Elige de qu\u00e9 tipo:"))
+        groups = []
+        for with_win, title in ((False, "Ctrl+Alt+May\u00fas + pulsar"), (True, "Ctrl+Alt+May\u00fas + Win + pulsar")):
+            gb = QGroupBox(title)
+            gl = QVBoxLayout(gb)
+            kind, tpl = self.child_gesture_cfg(with_win)
+            rbs = {}
+            for k, lab in self.CHILD_KINDS:
+                rb = QRadioButton(lab)
+                rb.setChecked(k == kind)
+                gl.addWidget(rb)
+                rbs[k] = rb
+            cb = QComboBox()
+            self._fill_template_combo(cb, tpl)       # [PACK65] en uso primero, con miniatura
+            cb.setEnabled(rbs["template"].isChecked())
+            rbs["template"].toggled.connect(cb.setEnabled)
+            gl.addWidget(cb)
+            lay.addWidget(gb)
+            groups.append((with_win, rbs, cb))
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if not dlg.exec():
+            return
+        for with_win, rbs, cb in groups:
+            sfx = "_w" if with_win else ""
+            self.global_state["child_kind" + sfx] = next(k for k, r in rbs.items() if r.isChecked())
+            self.global_state["child_tpl" + sfx] = cb.currentData() or cb.currentText()       # [PACK65]
+        self.save_global_state(record_history=False)
+        self.build_tray_menu()
+        self._osd("Tipos de hijo guardados")
+
+    @staticmethod
+    def _blank_keep_format(html):
+        """[PACK64] Vacia el texto de una capa 1 CONSERVANDO su formato (alineacion, margenes, fuente, tamano, negrita,
+        color): ese formato vive dentro del HTML, y poner '' lo perdia todo."""
+        try:
+            if not isinstance(html, str) or not html.strip().startswith('<'):
+                return ''
+            d = QTextDocument()
+            d.setHtml(html)
+            c0 = QTextCursor(d)
+            c0.setPosition(0)
+            bf = c0.blockFormat()
+            nf = None
+            for i in range(min(d.characterCount() - 1, 300)):
+                p = QTextCursor(d)
+                p.setPosition(i)
+                p.setPosition(i + 1, QTextCursor.KeepAnchor)
+                if p.selectedText() == "\u2029":
+                    break
+                f = p.charFormat()
+                if not f.isAnchor() and not f.isImageFormat():
+                    nf = QTextCharFormat()
+                    nf.setFont(f.font())
+                    nf.setForeground(f.foreground())
+                    break
+            if nf is None:
+                nf = QTextCharFormat(c0.blockCharFormat())
+            c = QTextCursor(d)
+            c.select(QTextCursor.Document)
+            c.removeSelectedText()
+            c.setBlockFormat(bf)
+            c.setBlockCharFormat(nf)
+            c.setCharFormat(nf)
+            return d.toHtml()
+        except Exception:
+            return ''
+
+    def create_child_note(self, parent_id, independent=False, exact=False):
+        parent_state = self.global_state.get(parent_id)
+        if not parent_state:
+            return
+        parent_window = self.widgets.get(parent_id)
+
+        new_state = copy.deepcopy(parent_state)
+        new_state.pop('timer_target', None)  # la hija no hereda el temporizador
+        new_state['parent_id'] = parent_id
+        new_state['collapsed'] = False
+        if independent:
+            new_state['pos_independent'] = True     # su posicion no depende de la del padre
+        else:
+            new_state.pop('pos_independent', None)
+
+        template_data = new_state.setdefault('template_data', {})
+        l1 = template_data.setdefault('layer1', {})
+        if l1.get('type') == 'text':
+            if not exact:
+                l1['content'] = self._blank_keep_format(l1.get('content'))       # [PACK64] sin texto, pero con el formato de la capa 1
+
+        existing_children = self.get_children(parent_id)
+        cascade_index = len(existing_children)
+        if parent_window:
+            base_x, base_y = parent_window.pos().x(), parent_window.pos().y()
+        else:
+            geom = template_data.get('geometry', {})
+            base_x, base_y = geom.get('x', 100), geom.get('y', 100)
+
+        OFFSET = 45
+        new_geom = template_data.setdefault('geometry', {})
+        new_geom['x'] = base_x + OFFSET + (cascade_index * 20)
+        new_geom['y'] = base_y + OFFSET + (cascade_index * 20)
+
+        HUE_OFFSET = 40
+        l2 = template_data.setdefault('layer2', {})
+        effects = l2.setdefault('image_effects', {"hue": 0, "saturation": 0, "brightness": 0, "contrast": 0, "colorize": False})
+        if not exact:
+            effects['hue'] = (effects.get('hue', 0) + HUE_OFFSET) % 360
+
+        base_name = self._get_widget_display_name(parent_id, parent_state)
+        new_state['custom_name'] = f"{base_name} (hijo)"
+        if exact:
+            new_state['custom_name'] = f"{base_name}_clon"
+
+        self.add_new_widget(state=new_state)
+        self._apply_collapse_visibility()
+        self._refresh_connector_overlay()
+
+    def _cable_related_ids(self, widget_id):
+        if getattr(self, '_cable_preview_all', False):   # vista previa: todas las notas enlazadas
+            pids = set()
+            for k, s in self.global_state.items():
+                if isinstance(s, dict) and k in self.widgets and s.get('parent_id') in self.widgets:
+                    pids.update((k, s['parent_id']))
+            if pids:
+                return pids
+        ids = {widget_id}
+        try:
+            ids.update(self.get_descendants(widget_id))
+        except Exception:
+            pass
+        cur, seen = widget_id, set()
+        while cur and cur not in seen:
+            seen.add(cur)
+            parent = self.global_state.get(cur, {}).get('parent_id')
+            if parent and parent in self.widgets:
+                ids.add(parent)
+                cur = parent
+            else:
+                break
+        return ids
+
+    def _fit_connector_overlay(self, widget_id, keep=False):
+        """Para CADA pantalla calcula la parte del overlay que hace falta: solo las notas implicadas
+        (+margen) y nunca mas que esa pantalla, con histeresis para no redimensionar en cada pixel de
+        arrastre. Devuelve las overlays que deben estar visibles."""
+        rect = QRect()
+        for wid in self._cable_related_ids(widget_id):
+            w = self.widgets.get(wid)
+            if w is not None and w.isVisible():
+                rect = rect.united(w.geometry())
+        wanted = []
+        if rect.isNull():
+            return wanted
+        for screen, ov in self.connector_overlay.overlays.items():
+            sg = screen.geometry()
+            needed = rect.adjusted(-100, -100, 100, 100).intersected(sg)
+            if needed.isNull():
+                continue
+            cur = ov.geometry()
+            too_big = cur.width() > needed.width() + 800 or cur.height() > needed.height() + 800
+            if not cur.contains(needed) or too_big:
+                vis = ov.isVisible()
+                if vis:       # la ventana translucida conserva su ULTIMO bitmap: al moverla / redimensionarla se veria el dibujo
+                    ov.blank = True      # anterior (los cables del grupo de antes) en el sitio nuevo hasta el siguiente repintado
+                    ov.repaint()
+                ov.setGeometry(needed.adjusted(-200, -200, 200, 200).intersected(sg))
+                if vis:
+                    ov.repaint()          # el bitmap nuevo nace transparente
+                    ov.blank = False
+                    if keep:
+                        ov.repaint()      # misma nota (arrastre): se repinta ya con sus cables, sin hueco
+            wanted.append(ov)
+        return wanted
+
+    def _refresh_connector_overlay(self):
+        ov = getattr(self, 'connector_overlay', None)
+        if ov is not None and ov.isVisible():
+            tid = ov.drag_id or ov.source_id
+            if tid:
+                self.show_cables_for(tid, is_drag=bool(ov.drag_id), faint=ov.faint)
+
+    def _place_overlay_under(self, source_win, ov=None):
+        """Coloca el overlay en el orden Z justo DEBAJO de la nota mas baja de las IMPLICADAS en los cables (de su misma
+        banda: siempre-visible o normal): los cables quedan detras de las notas que unen, pero nunca detras de una
+        ventana que esas notas tienen detras. Se revisa de forma periodica mientras estan visibles."""
+        self._cable_z_arm()
+        if ov is None:
+            return
+        if sys.platform == 'win32' and source_win is not None:
+            try:
+                from ctypes import wintypes
+                user32 = _user32_cached()
+                user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                                ctypes.c_int, ctypes.c_int, wintypes.UINT]
+                user32.SetWindowPos.restype = wintypes.BOOL
+                user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+                user32.GetWindow.restype = wintypes.HWND
+                GW_HWNDNEXT = 2
+                SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+
+                # Solo notas de la misma banda que la de origen: cambiar de banda (topmost / normal)
+                # al colocar el overlay lo sacaria de su banda.
+                band = bool(source_win.always_on_top)
+                rel = self._cable_related_ids(getattr(source_win, 'widget_id', None))
+                sticker_hwnds = {int(w.winId()) for k, w in self.widgets.items()
+                                 if (k in rel or w is source_win) and w.isVisible() and bool(w.always_on_top) == band}
+                anchor = int(source_win.winId())
+                h = user32.GetWindow(anchor, GW_HWNDNEXT)
+                guard = 0
+                while h and guard < 10000:        # recorre el orden Z hacia abajo
+                    if int(h) in sticker_hwnds:
+                        anchor = int(h)           # la nota IMPLICADA mas baja encontrada hasta ahora
+                    h = user32.GetWindow(h, GW_HWNDNEXT)
+                    guard += 1
+                # Se baja ademas por la tanda de notas (no implicadas) que quedan justo debajo: los cables van detras de ellas.
+                # Se corta en la primera ventana ajena visible: ahi los cables se quedan por ENCIMA (no se esconden detras).
+                user32.IsWindowVisible.argtypes = [wintypes.HWND]
+                user32.IsWindowVisible.restype = wintypes.BOOL
+                all_notes = {int(w.winId()) for w in self.widgets.values() if w.isVisible() and bool(w.always_on_top) == band}
+                own = {int(o.winId()) for o in self.connector_overlay.overlays.values()}
+                if getattr(self, '_crown_win', None) is not None:
+                    own.add(int(self._crown_win.winId()))
+                h = user32.GetWindow(anchor, GW_HWNDNEXT)
+                guard = 0
+                while h and guard < 10000:
+                    hi = int(h)
+                    if hi in all_notes:
+                        anchor = hi
+                    elif hi in own or not user32.IsWindowVisible(h):
+                        pass
+                    else:
+                        break
+                    h = user32.GetWindow(h, GW_HWNDNEXT)
+                    guard += 1
+                if int(user32.GetWindow(anchor, GW_HWNDNEXT) or 0) == int(ov.winId()):
+                    return      # ya esta justo debajo: no se toca el orden Z
+                if user32.SetWindowPos(int(ov.winId()), anchor, 0, 0, 0, 0,
+                                       SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE):
+                    return
+            except Exception as e:
+                log_warn("Manager", f"No se pudo ordenar el overlay con SetWindowPos: {e}")
+        ov.lower()   # respaldo: al fondo de su banda, sin subir ninguna nota
+
+    def crown_sync(self, target_id, note_color, fade, base_op):
+        """Coloca y pinta la corona (ventana propia) sobre la nota mas ancestral de 'target_id'."""
+        import math
+        st = _crown_state(self, target_id, note_color, fade, base_op)
+        if st is None:
+            self.crown_hide()
+            return
+        win, gpt, angle, col, op = st
+        cw = getattr(self, '_crown_win', None)
+        if cw is None:
+            cw = self._crown_win = CrownWindow(self)
+            self._crown_keep = QTimer(self)
+            self._crown_keep.setInterval(120)
+            self._crown_keep.timeout.connect(self._crown_keep_z)
+        s = self.get_cable_param('_crown_size') / 100.0
+        w = max(0.3, self.cable_length_style(0.0)[1] * self.get_cable_param('_crown_width_pct') / 100.0)
+        R = int(math.ceil(23 * s + math.hypot(self.get_cable_param('_crown_dx'), self.get_cable_param('_crown_dy'))
+                          + w + 2 * self.get_cable_param('_cable_glow_size') + 6))
+        left, top = int(round(gpt.x() - R)), int(round(gpt.y() - R))
+        new_st = (col.rgba(), round(op, 3), round(gpt.x() - left, 2), round(gpt.y() - top, 2), round(angle, 2))
+        changed = new_st != getattr(cw, '_key', None)
+        if (cw.x(), cw.y(), cw.width(), cw.height()) != (left, top, 2 * R, 2 * R):
+            if cw.isVisible() and not cw.geometry().intersects(QRect(left, top, 2 * R, 2 * R)):
+                cw._st = None
+                cw.repaint()      # salto a otra nota: que no se vea el dibujo viejo en el sitio nuevo
+            cw.setGeometry(left, top, 2 * R, 2 * R)
+            changed = True
+        newly = not cw.isVisible()
+        if newly:
+            cw._st = None          # la exposicion sale transparente; se pinta cuando ya esta justo encima de la nota raiz
+            cw.show()
+            self._place_crown_above(win, cw, True)
+            QTimer.singleShot(40, self._crown_keep_z)
+        cw.set_state(col, op, gpt.x() - left, gpt.y() - top, angle)
+        cw._key = new_st
+        if changed or newly:
+            cw.repaint()       # pintado SINCRONO con el estado nuevo: nunca se ve el fotograma viejo (otro color / giro)
+        self._crown_root = win
+        self._place_crown_above(win, cw, newly)
+        if not self._crown_keep.isActive():
+            self._crown_keep.start()
+
+    def crown_hide(self):
+        cw = getattr(self, '_crown_win', None)
+        if getattr(self, '_crown_keep', None) is not None:
+            self._crown_keep.stop()
+        self._crown_root = None
+        if cw is not None and cw.isVisible():
+            cw._st = None
+            cw._key = None
+            cw.repaint()      # fotograma transparente antes de ocultar (ventana translucida)
+            cw.hide()
+
+    def _crown_keep_z(self):
+        """Si la nota raiz sube (clic) o cambia de banda, la corona la sigue justo encima."""
+        cw, win = getattr(self, '_crown_win', None), getattr(self, '_crown_root', None)
+        if cw is None or win is None or not cw.isVisible() or not win.isVisible():
+            return
+        self._place_crown_above(win, cw, False)
+
+    def _place_crown_above(self, win, cw, force_raise=False):
+        """Orden Z: la corona justo encima de la nota 'win' (en su misma banda: siempre-visible o normal)."""
+        if sys.platform == 'win32':
+            try:
+                from ctypes import wintypes
+                u = _user32_cached()
+                u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                           ctypes.c_int, ctypes.c_int, wintypes.UINT]
+                u.SetWindowPos.restype = wintypes.BOOL
+                u.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+                u.GetWindow.restype = wintypes.HWND
+                u.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+                u.GetWindowLongW.restype = ctypes.c_long
+                GW_HWNDPREV, GWL_EXSTYLE, WS_EX_TOPMOST = 3, -20, 0x8
+                FL = 0x0001 | 0x0002 | 0x0010          # NOSIZE | NOMOVE | NOACTIVATE
+                TOPMOST, NOTOPMOST = ctypes.c_void_p(-1).value, ctypes.c_void_p(-2).value
+                hn, hc = int(win.winId()), int(cw.winId())
+                is_top = lambda h: bool(u.GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOPMOST)
+                nt = is_top(hn)
+                prev = u.GetWindow(hn, GW_HWNDPREV)
+                if prev and int(prev) == hc:
+                    return
+                if is_top(hc) != nt:
+                    u.SetWindowPos(hc, TOPMOST if nt else NOTOPMOST, 0, 0, 0, 0, FL)
+                    prev = u.GetWindow(hn, GW_HWNDPREV)
+                    if prev and int(prev) == hc:
+                        return
+                after = int(prev) if (prev and is_top(int(prev)) == nt) else (TOPMOST if nt else 0)
+                if u.SetWindowPos(hc, after, 0, 0, 0, 0, FL):
+                    return
+            except Exception as e:
+                log_warn("Manager", f"No se pudo ordenar la corona con SetWindowPos: {e}")
+        if force_raise:
+            cw.raise_()
+
+    def show_cables_for_badge(self, widget_id):
+        """Hover sobre el control de plegar. Durante un arrastre (boton izquierdo pulsado y cables a opacidad plena) se
+        ignora: la nota se mueve bajo el cursor y el control entra/sale continuamente."""
+        grp = getattr(self, 'connector_overlay', None)
+        if grp is not None and grp.drag_id and (QApplication.mouseButtons() & Qt.LeftButton):
+            return
+        self.show_cables_for(widget_id)
+
+    def cable_overlay_poke(self):
+        """Repinta ya los cables / la corona (p. ej. mientras gira la capa 2 al editar el texto)."""
+        grp = getattr(self, 'connector_overlay', None)
+        if grp is None or not grp.isVisible():
+            return
+        for ov in grp._visible():
+            ov.update()
+
+    def show_cables_for(self, widget_id, is_drag=False, faint=False):
+        if not hasattr(self, 'connector_overlay'): return
+        grp = self.connector_overlay
+        prev_target = grp.drag_id or grp.source_id
+        source_win = self.widgets.get(widget_id)
+        flags = Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput
+        if source_win is not None and source_win.always_on_top:
+            flags |= Qt.WindowStaysOnTopHint
+
+        grp.faint = bool(faint) and not is_drag
+        if grp.faint:
+            _fi = self.get_cable_param('_cable_fade_in')
+            if not grp.isVisible() or (prev_target is not None and prev_target != widget_id):    # otra nota: sus cables nacen desde 0
+                grp.set_fade(0.0 if _fi > 0 else 1.0)    # el primer fotograma ya sale transparente
+            if _fi <= 0:
+                grp.set_fade(1.0)
+            elif grp._fade_target < 1.0:
+                grp.fade_to(1.0, _fi)
+        else:
+            grp.set_fade(1.0)                            # arrastre / control de plegar: opacidad plena al instante
+        # Los ids se fijan ANTES de mostrar: el primer pintado tras la exposicion ya es el correcto.
+        if is_drag:
+            grp.drag_id = widget_id
+            grp.source_id = None
+        else:
+            grp.source_id = widget_id
+            grp.drag_id = None
+
+        wanted = self._fit_connector_overlay(widget_id, prev_target == widget_id)
+        for ov in grp.overlays.values():
+            if ov not in wanted:
+                if ov.isVisible():
+                    grp.hide_overlay(ov)      # esa pantalla ya no tiene cables que pintar
+                continue
+            recreated = False
+            if source_win is not None and ov.windowFlags() != flags:
+                if ov.isVisible():
+                    ov.blank = True           # setWindowFlags recrea la ventana nativa conservando el bitmap
+                    ov.repaint()
+                ov.blank = True               # la exposicion de la ventana nueva sale TRANSPARENTE: aun no esta en su sitio del orden Z
+                ov.setWindowFlags(flags)
+                ov.show()
+                recreated = True
+            newly_shown = False
+            if not ov.isVisible():
+                ov.blank = True               # idem: Qt pinta al exponer y se veria por ENCIMA de las notas antes de colocarse
+                ov.show()
+                newly_shown = True
+            placed = newly_shown or recreated
+            if placed or prev_target != widget_id:     # tambien al cambiar de nota: las notas implicadas son otras
+                self._place_overlay_under(source_win, ov)
+            ov.blank = False
+            if placed or prev_target != widget_id:
+                ov.repaint()
+            if not placed:
+                if is_drag:
+                    ov.drag_refresh()
+                else:
+                    ov.update()
+
+    def _cable_z_arm(self):
+        t = getattr(self, '_cable_z_timer', None)
+        if t is None:
+            t = self._cable_z_timer = QTimer(self)
+            t.setInterval(150)
+            t.timeout.connect(self._cable_z_keep)
+        if not t.isActive():
+            t.start()
+
+    def _cable_z_keep(self):
+        """Si el usuario sube / baja ventanas con los cables visibles, se recoloca el overlay bajo las notas implicadas."""
+        if sys.platform != 'win32':
+            self._cable_z_timer.stop()
+            return
+        grp = getattr(self, 'connector_overlay', None)
+        if grp is None or not grp.isVisible():
+            self._cable_z_timer.stop()
+            return
+        tid = grp.drag_id or grp.source_id
+        win = self.widgets.get(tid) if tid else None
+        if win is None or not win.isVisible():
+            return
+        for ov in grp._visible():
+            self._place_overlay_under(win, ov)
+
+    def apply_base_note_to_widget(self, widget_id):
+        """Genera la capa 2 de un widget existente con el dialogo de nota base (forma, color, borde, sombra)."""
+        win, st = self.widgets.get(widget_id), self.global_state.get(widget_id)
+        if win is None or not isinstance(st, dict):
+            return
+        try:
+            start = json.loads(self.global_state.get('base_note_settings') or '{}')
+        except Exception:
+            start = {}
+        dlg = BaseNoteDialog(self, self.dialog_parent, start if isinstance(start, dict) else {})
+        dlg.setWindowTitle("Generar estilo de este widget (capa 2)")
+        try:      # el texto y el template no tienen sentido aqui: se conserva la capa 1 de la nota
+            fl = dlg.findChild(QFormLayout)
+            for i in range(fl.rowCount()):
+                it = fl.itemAt(i, QFormLayout.LabelRole)
+                lw = it.widget() if it is not None else None
+                if lw is dlg.chk_tpl or (isinstance(lw, QLabel) and lw.text().startswith(("Texto inicial", "Color y tama"))):
+                    fl.setRowVisible(i, False)
+        except Exception as e:
+            log_warn("Manager", f"No se pudieron ocultar las filas de texto del dialogo: {e}")
+        if not dlg.exec():
+            return
+
+        p = dlg.get_params()
+        self.global_state['base_note_settings'] = json.dumps(p)
+        img = render_base_note(p)
+        os.makedirs(STICKY_DIR, exist_ok=True)
+        path = os.path.join(STICKY_DIR, f"nota_base_{int(time.time() * 1000)}.png")
+        img.save(path, 'PNG')
+        try:
+            rel = _store_path(path)
+        except ValueError:
+            rel = path
+
+        td = st['template_data']
+        l2 = td.setdefault('layer2', {})
+        g = l2.get('geometry') or {}
+        W, H = img.width(), img.height()
+        cx = g.get('x', 0) + g.get('w', W) / 2.0
+        cy = g.get('y', 0) + g.get('h', H) / 2.0
+
+        l2.update({"type": "png", "content": rel, "background": "transparent", "image_effects": {},
+                   "geometry": {"x": int(round(cx - W / 2.0)), "y": int(round(cy - H / 2.0)), "w": W, "h": H},
+                   "scaled_contents": True})
+        l2.setdefault('rotation', 0)
+        td['upright_angle'] = 0.0
+
+        win._paper_frame_cache = None
+        win.load_template_data(td)
+        try:
+            win._recalculate_and_normalize()
+        except Exception as e:
+            log_warn(widget_id, f"No se pudo normalizar tras generar la capa 2: {e}")
+        win._save_changes_to_manager()
+        self.save_global_state()
+        self.build_tray_menu()
+        self._refresh_connector_overlay()
+
+    def edit_crown_style(self, widget_id):
+        """Dialogo de la corona de un widget (apagar, tono, saturacion, brillo, opacidad); se guarda en su JSON."""
+        win, st = self.widgets.get(widget_id), self.global_state.get(widget_id)
+        if win is None or not isinstance(st, dict):
+            return
+        orig_crown = copy.deepcopy(win.current_template_data.get('crown'))
+        dlg = CrownDialog(win, self.dialog_parent)
+        try:                                           # el dialogo a un lado de la nota para ver los cambios en ella
+            g = win.geometry()
+            scr = (win.screen() or QApplication.primaryScreen()).availableGeometry()
+            dlg.adjustSize()
+            x = g.right() + 24
+            if x + dlg.width() > scr.right():
+                x = max(scr.left(), g.left() - dlg.width() - 24)
+            y = max(scr.top(), min(g.top() - 40, scr.bottom() - dlg.height()))
+            dlg.move(x, y)
+        except Exception:
+            pass
+
+        def _live(cfg):
+            if cfg:
+                win.current_template_data['crown'] = cfg
+            else:
+                win.current_template_data.pop('crown', None)
+            self.cable_overlay_poke()
+
+        dlg.liveChanged.connect(_live)
+        self._cable_preview_active = True
+        self.show_cables_for(widget_id)                # la corona se dibuja con los cables: se muestran mientras dura el dialogo
+        try:
+            accepted = dlg.exec()
+        finally:
+            self._end_cable_preview()
+        if not accepted:
+            if orig_crown is None:
+                win.current_template_data.pop('crown', None)
+            else:
+                win.current_template_data['crown'] = orig_crown
+        if accepted:
+            cfg = dlg.config()
+            if cfg:
+                win.current_template_data['crown'] = cfg
+            else:
+                win.current_template_data.pop('crown', None)
+            st['template_data'] = win.current_template_data
+            self.save_global_state()
+            self._refresh_connector_overlay()
+
+    def edit_upright_angle(self, widget_id):
+        """Pregunta (con vista previa) la inclinacion de la imagen del widget y la guarda en su JSON."""
+        win, st = self.widgets.get(widget_id), self.global_state.get(widget_id)
+        if win is None or not isinstance(st, dict):
+            return
+        dlg = UprightDialog(win, self.dialog_parent)
+        if dlg.exec():
+            win.current_template_data['upright_angle'] = dlg.value()
+            st['template_data'] = win.current_template_data
+            win._paper_frame_cache = None
+            self.save_global_state()
+            self._refresh_connector_overlay()
+
+    def show_base_note_dialog(self):
+        try:
+            start = json.loads(self.global_state.get('base_note_settings') or '{}')
+        except Exception:
+            start = {}
+        dlg = BaseNoteDialog(self, self.dialog_parent, start if isinstance(start, dict) else {})
+        if dlg.exec():
+            self.create_base_note(dlg.get_params(), dlg.template_name())
+
+    def create_base_note(self, p, tpl_name=None):
+        """Genera la imagen de la nota con la forma elegida y crea el widget (y, opcional, un template)."""
+        self.global_state['base_note_settings'] = json.dumps(p)
+        img = render_base_note(p)
+        os.makedirs(STICKY_DIR, exist_ok=True)
+        path = os.path.join(STICKY_DIR, f"nota_base_{int(time.time() * 1000)}.png")
+        img.save(path, 'PNG')
+        try:
+            rel = _store_path(path)
+        except ValueError:
+            rel = path
+        W, H = img.width(), img.height()
+        pad = (W - int(p['w'])) // 2
+        _off = (len(self.widgets) % 10) * 30
+        text = str(p.get('text', '')).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        tdata = {
+            "geometry": {"x": 100 + _off, "y": 100 + _off},
+            "base_note": dict(p),       # [PACK67] parametros de la forma (identifica el tipo y permite editarla)
+            "upright_angle": 0.0,
+            "layer1": {
+                "type": "text",
+                "content": f'<p style="color:{p["text_color"]};" align="center">{text}</p>',
+                "background": "transparent", "font_family": "Inter", "font_size": int(p['font_size']),
+                "color": p['text_color'], "rotation": 0, "image_effects": {},
+                "geometry": {"x": pad + 10, "y": pad + 10, "w": int(p['w']) - 20, "h": int(p['h']) - 20},
+                "scaled_contents": False
+            },
+            "layer2": {
+                "type": "png", "content": rel, "background": "transparent", "rotation": 0,
+                "image_effects": {}, "geometry": {"x": 0, "y": 0, "w": W, "h": H}, "scaled_contents": True
+            }
+        }
+        tname = self.default_template_name()
+        if tpl_name:
+            safe = self._tpl_safe_name(tpl_name)
+            if safe:
+                self.save_template(safe, copy.deepcopy(tdata))
+                tname = safe
+        state = {"enabled": True, "always_on_top": self._default_always_on_top(),
+                 "template_name": tname, "custom_name": "", "template_data": tdata}
+        return self.add_new_widget(state=state)
+
+    @staticmethod
+    def _is_base_note(st):
+        td = st.get('template_data') if isinstance(st, dict) else None
+        if not isinstance(td, dict):
+            return False
+        return isinstance(td.get('base_note'), dict) or os.path.basename(str((td.get('layer2') or {}).get('content', ''))).startswith('nota_base_')
+
+    def edit_base_note(self, widget_id):
+        """[PACK68] Reabre el dialogo de la nota base con los parametros de ESTA nota y regenera su imagen."""
+        st = self.global_state.get(widget_id)
+        if not self._is_base_note(st):
+            return
+        start = st['template_data'].get('base_note')
+        if not isinstance(start, dict):
+            try:
+                start = json.loads(self.global_state.get('base_note_settings') or '{}')
+            except Exception:
+                start = {}
+        win = self.widgets.get(widget_id)
+        live_state = {'on': False}
+
+        def live(params):                # [PACK80] pinta los cambios en la nota real; None = volver a como estaba
+            if params is None:
+                if live_state['on'] and win is not None:
+                    win.load_template_data(st['template_data'])
+                    live_state['on'] = False
+                return
+            self.preview_base_note(widget_id, params)
+            live_state['on'] = True
+        dlg = BaseNoteDialog(self, self.dialog_parent, start if isinstance(start, dict) else {}, editing=True, live=live)
+        try:
+            ok = dlg.exec()
+        finally:
+            self._live_cleanup()
+        if ok:
+            self.apply_base_note(widget_id, dlg.get_params())
+        else:
+            live(None)
+
+    def preview_base_note(self, widget_id, p):
+        """[PACK80] Vista en vivo: pinta la nota real con los parametros del dialogo sin guardar nada
+        (la imagen es temporal y el estado no cambia; al cancelar se vuelve a cargar el original)."""
+        st, win = self.global_state.get(widget_id), self.widgets.get(widget_id)
+        if not isinstance(st, dict) or win is None or not isinstance(st.get('template_data'), dict):
+            return
+        img = render_base_note(p)
+        d = os.path.join(STICKY_DIR, '_vivo')
+        os.makedirs(d, exist_ok=True)
+        self._live_n = getattr(self, '_live_n', 0) + 1
+        path = os.path.join(d, f"vivo_{self._live_n}.png")
+        img.save(path, 'PNG')
+        try:
+            rel = _store_path(path)
+        except ValueError:
+            rel = path
+        W = img.width()
+        pad = (W - int(p['w'])) // 2
+        td = copy.deepcopy(st['template_data'])
+        td.setdefault('layer2', {}).update({"type": "png", "content": rel, "scaled_contents": True, "geometry": {"x": 0, "y": 0, "w": W, "h": img.height()}})
+        td.setdefault('layer1', {})['geometry'] = {"x": pad + 10, "y": pad + 10, "w": int(p['w']) - 20, "h": int(p['h']) - 20}
+        win.load_template_data(td)
+
+    def _live_cleanup(self):
+        shutil.rmtree(os.path.join(STICKY_DIR, '_vivo'), ignore_errors=True)
+
+    def apply_base_note(self, widget_id, p):
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict):
+            return
+        img = render_base_note(p)
+        os.makedirs(STICKY_DIR, exist_ok=True)
+        path = os.path.join(STICKY_DIR, f"nota_base_{int(time.time() * 1000)}.png")
+        img.save(path, 'PNG')
+        try:
+            rel = _store_path(path)
+        except ValueError:
+            rel = path
+        W, H = img.width(), img.height()
+        pad = (W - int(p['w'])) // 2
+        td = st['template_data']
+        l2 = td.setdefault('layer2', {})
+        l2.update({"type": "png", "content": rel, "scaled_contents": True, "geometry": {"x": 0, "y": 0, "w": W, "h": H}})
+        l1 = td.setdefault('layer1', {})
+
+        l1['geometry'] = {"x": pad + 10, "y": pad + 10, "w": int(p['w']) - 20, "h": int(p['h']) - 20}
+        td['base_note'] = dict(p)
+        if widget_id in self.widgets:
+            self.widgets[widget_id].load_template_data(td)
+        self.save_global_state()
+        self.build_tray_menu()
+
+    @staticmethod
+    def _norm_td(td):
+        d = copy.deepcopy(td) if isinstance(td, dict) else {}
+        d.pop('base_note', None)
+        g = d.get('geometry')
+        if isinstance(g, dict):
+            g.pop('x', None)
+            g.pop('y', None)
+        l1 = d.get('layer1')
+        if isinstance(l1, dict) and l1.get('type') == 'text':
+            l1['content'] = ''
+        return json.dumps(d, sort_keys=True, default=str)
+
+    def save_widget_as_template(self, widget_id, name=None):
+        """[PACK68] Guarda el aspecto de un widget como template (sin su texto, con su formato). Sin nombre, lo pregunta."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict):
+            return None
+        if name is None:
+            name, ok = QInputDialog.getText(self.dialog_parent, "Guardar como template", "Nombre del template:",
+                                            text=self._get_widget_display_name(widget_id, st))
+            if not ok:
+                return None
+        n = self._tpl_safe_name(name)
+        if not n:
+            self._osd("Nombre de template no v\u00e1lido")
+            return None
+        cand, i = n, 1
+        while os.path.exists(os.path.join(TEMPLATES_DIR, cand)):
+            i += 1
+            cand = f"{n[:-5]}_{i}.json"
+
+        data = copy.deepcopy(st['template_data'])
+        l1 = data.get('layer1')
+        if isinstance(l1, dict) and l1.get('type') == 'text':
+            l1['content'] = self._blank_keep_format(l1.get('content'))
+        data.setdefault('geometry', {})['x'], data['geometry']['y'] = 100, 100
+        self.save_template(cand, data)
+        st['template_name'] = cand        # el widget pasa a ser de ese template
+        tb = getattr(self, 'template_browser', None)
+        if tb is not None:
+            tb.reload()
+        self._osd("Template guardado: " + cand[:-5])
+        return cand
+
+    def _template_for_widget(self, widget_id):
+        """Template que reproduce este widget: el suyo si no ha cambiado; si no, se guarda uno nuevo."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict):
+            return None
+        tn = os.path.basename(str(st.get('template_name') or ''))
+        mine = self._norm_td(st.get('template_data'))
+        files = self.template_files()
+        for cand in ([tn] if tn in files else []) + [f for f in files if f != tn]:      # primero el suyo; si no, cualquiera igual
+            if self._norm_td(self.load_template_by_name(cand)) == mine:
+                return cand
+        return self.save_widget_as_template(widget_id, name=self._get_widget_display_name(widget_id, st))
+
+    def set_widget_as_default(self, widget_id, slot=1):
+        """Slot 1: template por defecto de la nota nueva. Slot 2: el de la nota nueva 'tipo 2' (gesto con Win)."""
+        n = self._template_for_widget(widget_id)
+        if not n:
+            return
+        if slot == 1:
+            self.set_default_template(n)
+            msg = "Widget nuevo: template por defecto = " + n[:-5]
+        else:
+            self.global_state['child_kind_w'] = 'template'
+            self.global_state['child_tpl_w'] = n
+            self.save_global_state(record_history=False)
+            msg = "Hijo con +Win: template = " + n[:-5]
+        self.build_tray_menu()
+        tb = getattr(self, 'template_browser', None)
+        if tb is not None:
+            tb.reload()
+        self._osd(msg)
+
+    def keep_content_on_apply(self):
+        return bool(self.global_state.get('tpl_keep_content', True))
+
+    def set_keep_content_on_apply(self, on):
+        self.global_state['tpl_keep_content'] = bool(on)
+        self.save_global_state(record_history=False)
+
+    @staticmethod
+    def _carry_content(old, new):
+        """[PACK71] Al cambiar el template de una nota existente: su CONTENIDO (texto de la capa 1, con su formato, o su
+        imagen / pagina) pasa al template nuevo; solo cambia el aspecto."""
+        try:
+            o1, n1 = (old or {}).get('layer1') or {}, (new or {}).get('layer1') or {}
+            if o1 and n1 and o1.get('type', 'text') == n1.get('type', 'text') and 'content' in o1:
+                n1['content'] = o1['content']
+        except Exception:
+            pass
+
+    def _base_note_tdata(self, p, stable=False):
+        """Datos de template de una nota base con los parametros p (genera y guarda su imagen).
+        stable=True: el nombre de la imagen sale de los parametros (copiar el mismo template otra vez no crea otro archivo)."""
+        img = render_base_note(p)
+        os.makedirs(STICKY_DIR, exist_ok=True)
+        tag = hashlib.md5(json.dumps(p, sort_keys=True, default=str).encode('utf-8')).hexdigest()[:16] if stable else str(int(time.time() * 1000))
+        path = os.path.join(STICKY_DIR, f"nota_base_{tag}.png")
+        img.save(path, 'PNG')
+        try:
+            rel = _store_path(path)
+        except ValueError:
+            rel = path
+        W, H = img.width(), img.height()
+        pad = (W - int(p['w'])) // 2
+        text = str(p.get('text', '')).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        return {
+            "geometry": {"x": 100, "y": 100},
+            "base_note": dict(p),
+            "upright_angle": 0.0,
+            "layer1": {
+                "type": "text",
+                "content": f'<p style="color:{p["text_color"]};" align="center">{text}</p>',
+                "background": "transparent", "font_family": "Inter", "font_size": int(p['font_size']),
+                "color": p['text_color'], "rotation": 0, "image_effects": {},
+                "geometry": {"x": pad + 10, "y": pad + 10, "w": int(p['w']) - 20, "h": int(p['h']) - 20},
+                "scaled_contents": False
+            },
+            "layer2": {
+                "type": "png", "content": rel, "background": "transparent", "rotation": 0,
+                "image_effects": {}, "geometry": {"x": 0, "y": 0, "w": W, "h": H}, "scaled_contents": True
+            }
+        }
+
+    def base_note_templates(self):
+        """[PACK71] [(nombre.json, parametros)] de los templates creados con el editor de forma de la nota base."""
+        out = []
+        for n in self.template_files():
+            try:
+                with open(os.path.join(TEMPLATES_DIR, n), 'r', encoding='utf-8') as f:
+                    d = json.load(f)
+            except Exception:
+                continue
+            bp = d.get('base_note') if isinstance(d, dict) else None
+            if isinstance(bp, dict):
+                out.append((n, bp))
+        return out
+
+    def save_base_note_template(self, name, p):
+        safe = self._tpl_safe_name(name)
+        if not safe:
+            return None
+        self.save_template(safe, self._base_note_tdata(p))
+        tb = getattr(self, 'template_browser', None)
+        if tb is not None:
+            tb.reload(select=safe)
+        self.build_tray_menu()
+        self._osd("Estilo guardado: " + safe[:-5])
+        return safe
+
+    def edit_base_note_template(self, name):
+        """Edita en el editor de forma un template de nota base y lo guarda con el mismo nombre."""
+        d = self.load_template_by_name(name)
+        bp = d.get('base_note') if isinstance(d, dict) else None
+        if not isinstance(bp, dict):
+            return
+        dlg = BaseNoteDialog(self, self.dialog_parent, bp, editing=True)
+        if dlg.exec():
+            self.save_base_note_template(name, dlg.get_params())
+
+    def get_show_crown(self):
+        return bool(self.global_state.get('show_crown', True))
+
+    def set_show_crown(self, on):
+        self.global_state['show_crown'] = bool(on)
+        self.save_global_state(record_history=False)
+        for w in self.widgets.values():
+            w._update_crown_badge()
+        self._refresh_connector_overlay()
+        self.build_tray_menu()
+
+    def get_cable_hover_opacity_pct(self):
+        try:
+            return max(5, min(100, int(self.global_state.get('_cable_hover_opacity', 35))))
+        except (ValueError, TypeError):
+            return 35
+
+    def get_cable_hover_opacity(self):
+        return self.get_cable_hover_opacity_pct() / 100.0
+
+    # Ajustes de los cables segun su longitud. clave -> (defecto, minimo, maximo)
+    CABLE_LENGTH_PARAMS = {
+        '_cable_op_near': (300, 0, 6000),       # px: hasta aqui el cable es 'corto' PARA LA OPACIDAD
+        '_cable_op_far': (1500, 50, 10000),     # px: desde aqui el cable es 'largo' para la opacidad
+        '_cable_w_near': (300, 0, 6000),        # px: hasta aqui el cable es 'corto' PARA EL GROSOR
+        '_cable_w_far': (1500, 50, 10000),      # px: desde aqui el cable es 'largo' para el grosor
+        '_cable_grad_start': (35, 0, 50),       # % del cable de color puro en CADA extremo (padre e hijo); el degradado ocupa el resto
+        '_cable_grad_width': (30, 0, 100),      # % del cable que ocupa el degradado
+        '_cable_wgrad_start': (10, 0, 50),      # % del cable con grosor pleno en CADA extremo (padre e hijo); el resto se afina hacia el centro
+        '_cable_opacity_max': (100, 5, 100),    # % de opacidad de los cables cortos
+        '_cable_opacity_min': (60, 5, 100),     # % de opacidad de los cables largos
+        '_cable_width_max': (2.5, 0.3, 10.0),   # grosor (px) de los cables cortos
+        '_cable_width_min': (1.0, 0.3, 10.0),   # (antiguo, px) ahora derivado de _cable_wctr_pct
+        '_cable_wctr_pct': (40, 5, 100),        # grosor del CENTRO de un cable largo, % del grosor de un cable corto
+        '_cable_ograd_start': (10, 0, 50),      # % del cable con opacidad plena en CADA extremo (padre e hijo)
+        '_cable_octr_pct': (100, 5, 100),       # opacidad del CENTRO de un cable largo, % de la de sus extremos
+        '_cable_glow': (0, 0, 100),             # intensidad del resplandor de los cables (0 = apagado: coste cero)
+        '_cable_glow_size': (6, 1, 24),         # alcance del resplandor (px a cada lado)
+        '_cable_curve': (100, 0, 400),          # % de curvatura (0 = recta, 100 = curva en S, 400 = muy marcada)
+        '_cable_fx_weight': (0, 0, 300),        # [PACK99] % del efecto peso (forma de U; 0 = apagado)
+        '_cable_fx_weight_px': (40, 0, 400),    # px de caida del peso en un cable muy cercano
+        '_cable_fx_spring': (0, 0, 300),        # % del efecto resorte (onda sinusoidal; 0 = apagado)
+        '_cable_fx_spring_px': (12, 0, 150),    # px de amplitud del resorte en un cable cercano
+        '_cable_fx_f_near': (1.5, 0.5, 30.0),   # ondas del resorte en un cable cercano
+        '_cable_fx_f_far': (4.0, 0.5, 30.0),    # ondas del resorte en un cable lejano
+        '_cable_fx_near': (200, 0, 6000),       # px: hasta esta distancia entre widgets los efectos son plenos
+        '_cable_fx_far': (1200, 50, 10000),     # px: desde esta distancia el cable es 'lejano' para los efectos
+        '_cable_fx_far_pct': (0, 0, 100),       # % del efecto que conserva un cable lejano
+        '_rope_amount': (100, 0, 300),          # [PACK100] % de cuerda con fisica (0 = el cable de siempre, sin fisica)
+        '_rope_sag_px': (50, 0, 400),           # px de caida (cuerda que sobra) en un cable cercano
+        '_rope_weight': (100, 20, 400),         # % de peso (gravedad): mas peso = vuelve antes a su sitio y se columpia mas al mover
+        '_rope_elastic': (30, 0, 100),          # % de elasticidad: 0 = cuerda, 100 = goma que rebota
+        '_rope_damp': (45, 0, 100),             # % de amortiguacion: mas = se queda quieta antes
+        '_rope_life': (40, 0, 300),             # % de vida: balanceo suave permanente (0 = solo se mueve al mover los widgets)
+        '_rope_near': (200, 0, 6000),           # px: hasta esta distancia entre widgets la cuerda cae lo maximo
+        '_rope_far': (1200, 50, 10000),         # px: desde esta distancia el cable es 'lejano'
+        '_rope_far_pct': (20, 0, 100),          # % de la caida que conserva un cable lejano (siempre cae algo: 3 % de su longitud)
+        '_rope_fps': (30, 5, 60),               # [PACK101] fotogramas por segundo maximos de la animacion de las cuerdas
+        '_rope_stiff': (20, 0, 100),            # [PACK103] % de rigidez: 0 = cuerda blanda, 100 = alambre (sale recto del widget y se mueve poco)
+        '_rope_inertia': (100, 0, 300),         # [PACK103] % de reaccion al mover un widget (0 = la cuerda no se columpia)
+        '_cable_quality': (0, 0, 3),            # [PACK103] 0 automatica, 1 maxima, 2 ligera, 3 minima [PACK109]
+        '_cable_c_near': (300, 0, 6000),        # px: hasta aqui el cable es 'corto' PARA LA CURVATURA (curvatura plena)
+        '_cable_c_far': (1500, 50, 10000),      # px: desde aqui el cable es 'largo' para la curvatura
+        '_cable_cfar_pct': (50, 0, 400),        # % de la curvatura que conserva un cable largo
+        '_cable_dash_len': (1.5, 0.3, 30.0),     # px: longitud de cada trazo del cable punteado
+        '_cable_dash_gap': (4.5, 0.3, 60.0),     # px: hueco entre trazos del cable punteado
+        '_cable_fade_in': (150, 0, 3000),         # ms: fundido de entrada de los cables de hover
+        '_cable_fade_out': (220, 0, 3000),        # ms: fundido de salida de los cables de hover
+        '_crown_size': (100, 30, 300),            # % del tamano de la corona
+        '_crown_width_pct': (100, 20, 400),       # % del grosor de un cable corto
+        '_crown_opacity_mode': (0, 0, 3),         # 0 como los cables en cada momento, 1 como hover, 2 plena, 3 personalizada
+        '_crown_opacity': (60, 5, 100),           # % de opacidad personalizada
+        '_crown_dx': (0, -300, 300),              # px: desplazamiento horizontal (en el sistema del papel)
+        '_crown_dy': (0, -300, 300),              # px: desplazamiento vertical (+ hacia arriba)
+        '_cable_hover_delay': (80, 0, 1000),    # ms que el cursor debe reposar sobre una nota antes de mostrar sus cables
+    }
+
+    # Claves nuevas que, mientras no existan, heredan el valor de las antiguas (ajustes ya guardados)
+    CABLE_PARAM_FALLBACK = {'_cable_op_near': '_cable_len_near', '_cable_op_far': '_cable_len_far',
+                            '_cable_w_near': '_cable_len_near', '_cable_w_far': '_cable_len_far'}
+
+    def get_cable_param(self, key):
+        """[PACK109] Con un repintado en curso (paintEvent del overlay) cada ajuste se lee una sola vez."""
+        m = getattr(self, '_cparam_memo', None)
+        if m is None:
+            return self._get_cable_param_raw(key)
+        v = m.get(key)
+        if v is None:
+            v = m[key] = self._get_cable_param_raw(key)
+        return v
+
+    def _get_cable_param_raw(self, key):
+        default, lo, hi = self.CABLE_LENGTH_PARAMS[key]
+        raw = self.global_state.get(key)
+        if raw is None and key in self.CABLE_PARAM_FALLBACK:
+            raw = self.global_state.get(self.CABLE_PARAM_FALLBACK[key])
+        try:
+            if key == '_cable_width_min':        # ahora se define como % del grosor de un cable corto
+                _p = self.global_state.get('_cable_wctr_pct')
+                if _p is not None:
+                    return max(lo, min(hi, self.get_cable_param('_cable_width_max') * max(5.0, min(100.0, float(_p))) / 100.0))
+            elif key == '_cable_wctr_pct' and raw is None:     # ajustes antiguos (grosor en px) -> %
+                _wm = self.get_cable_param('_cable_width_max')
+                _old = self.global_state.get('_cable_width_min')
+                raw = (100.0 * float(_old) / _wm) if (_old is not None and _wm > 0) else None
+            return max(lo, min(hi, float(default if raw is None else raw)))
+        except (ValueError, TypeError):
+            return float(default)
+
+    def cable_length_style(self, length):
+        """(factor de opacidad 0-1, grosor en px) de un cable segun su longitud: interpolacion suave entre
+        'corto' (maximos) y 'largo' (minimos). Opacidad y grosor tienen sus PROPIAS distancias corto/largo."""
+        def ramp(near_key, far_key):
+            near = self.get_cable_param(near_key)
+            far = max(self.get_cable_param(far_key), near + 50.0)
+            t = max(0.0, min(1.0, (length - near) / (far - near)))
+            return t * t * (3.0 - 2.0 * t)
+        t_op = ramp('_cable_op_near', '_cable_op_far')
+        t_w = ramp('_cable_w_near', '_cable_w_far')
+        o_max = self.get_cable_param('_cable_opacity_max')
+        o_min = self.get_cable_param('_cable_opacity_min')
+        w_max = self.get_cable_param('_cable_width_max')
+        w_min = self.get_cable_param('_cable_width_min')
+        return (o_max + (o_min - o_max) * t_op) / 100.0, w_max + (w_min - w_max) * t_w
+
+    def _poll_hover_cables(self):
+        """Cables tenues al pasar el raton sobre una nota con conexiones (sondeo de posicion)."""
+        ov = getattr(self, 'connector_overlay', None)
+        if ov is None or getattr(self, '_cable_preview_active', False):
+            return
+        if ov.isVisible() and (ov.drag_id or ov.source_id) and not ov.faint:
+            return   # cables a opacidad plena (control de plegar / arrastre): no tocar
+        if QApplication.mouseButtons() != Qt.NoButton:
+            return
+        pos = QCursor.pos()
+        hit = self._note_hit_at(pos)       # [PACK70] solo una nota realmente visible bajo el cursor
+        if hit is not None:
+            st = self.global_state.get(hit, {})
+            linked = (isinstance(st, dict) and st.get('parent_id') in self.widgets) or bool(self.get_children(hit))
+            if not linked:
+                hit = None
+        cur = ov.source_id if (ov.isVisible() and ov.faint and not ov.fading_out) else None
+        if hit is not None and hit == ov.source_id and ov.fading_out:
+            self.show_cables_for(hit, faint=True)   # el cursor vuelve a la nota mientras se desvanecen: reaparecen sin espera
+            return
+        if hit == cur:
+            self._hover_cand = None
+            return
+        if cur is not None:
+            self._fade_out_cables()
+        if hit is None:
+            self._hover_cand = None
+            return
+        # Los cables solo aparecen cuando el cursor REPOSA sobre la nota (0,22 s): al pasar de largo o al
+        # entrar para agarrarla no se muestra ni se repinta ninguna ventana (eso retrasaba el arrastre).
+        now = time.monotonic()
+        cand = getattr(self, '_hover_cand', None)
+        if cand is None or cand[0] != hit:
+            self._hover_cand = (hit, now)
+            return
+        if now - cand[1] >= self.get_cable_param('_cable_hover_delay') / 1000.0:
+            self._hover_cand = None
+            _t0 = time.perf_counter()
+            self.show_cables_for(hit, faint=True)
+            _ms = (time.perf_counter() - _t0) * 1000
+            if _ms > 25:
+                log_info("Manager", f"[rendimiento] cables tenues tardaron {_ms:.0f} ms")
+
+    def _linked_note_at(self, pos):
+        """Id de la nota con conexiones bajo 'pos' (visible de verdad: mascara y orden Z), o None."""
+        hit = self._note_hit_at(pos)
+        if hit is not None:
+            st = self.global_state.get(hit, {})
+            if not ((isinstance(st, dict) and st.get('parent_id') in self.widgets) or self.get_children(hit)):
+                hit = None
+        return hit
+
+    def release_cables(self, force=False):
+        """Hover fuera del control de plegar o fin de arrastre. Mientras dura un arrastre (boton pulsado) no hace nada:
+        solo el soltar (force=True) cambia de modo."""
+        grp = getattr(self, 'connector_overlay', None)
+        if not force and grp is not None and grp.drag_id and (QApplication.mouseButtons() & Qt.LeftButton):
+            return
+        self._release_cables_now()
+
+    def _release_cables_now(self):
+        """Fin de un arrastre o del hover sobre el control de plegar: si el cursor sigue sobre una nota con
+        conexiones, los cables pasan DIRECTAMENTE al modo tenue de hover, sin ocultarse y volver a aparecer."""
+        hit = None
+        try:
+            if getattr(self, 'connector_overlay', None) is not None and not getattr(self, '_cable_preview_active', False):
+                hit = self._linked_note_at(QCursor.pos())
+        except Exception:
+            hit = None
+        if hit is None:
+            self._fade_out_cables()
+            return
+        self._hover_cand = None
+        self.show_cables_for(hit, faint=True)
+
+    def _fade_out_cables(self):
+        """Oculta los cables con un fundido de salida (o de golpe si su duracion es 0)."""
+        grp = getattr(self, 'connector_overlay', None)
+        ms = self.get_cable_param('_cable_fade_out')
+        if grp is None or ms <= 0 or not grp.isVisible() or getattr(self, '_cable_preview_active', False):
+            self.hide_cables()
+            return
+        grp.fade_to(0.0, ms)
+
+    def hide_cables(self):
+        self.crown_hide()
+        if hasattr(self, 'connector_overlay'):
+            ov = self.connector_overlay
+            ov.source_id = None
+            ov.set_fade(1.0)
+            ov.drag_id = None
+            if ov.isVisible():
+                # update() no se ejecuta en una ventana que se va a ocultar: se pinta un
+                # fotograma transparente de forma sincrona para que el bitmap que conserva
+                # la ventana quede VACIO y no reaparezca en el siguiente show().
+                ov.repaint()
+                ov.hide()
+
+    def clone_widget(self, source_widget_id, independent=False, parent_override=None):
+        log_info("Manager", f"Clonando widget: {source_widget_id}")
+        source_state = self.global_state.get(source_widget_id)
+        if not source_state:
+            log_error("Manager", f"No se encontro el widget {source_widget_id} para clonar.")
+            return
+
+        new_state = copy.deepcopy(source_state)
+        new_state.pop('timer_target', None)  # un clon no hereda el temporizador
+        if parent_override:
+            new_state['parent_id'] = parent_override   # clonado de arbol: el clon cuelga del clon de su padre
+        if independent and new_state.get('parent_id'):
+            new_state['pos_independent'] = True   # clon con Win: hijo de posicion independiente
+        
+        source_window = self.widgets.get(source_widget_id)
+        if source_window:
+            current_pos = source_window.pos()
+            new_pos_x = current_pos.x() + 30 
+            new_pos_y = current_pos.y() + 30
+            
+            if 'geometry' not in new_state['template_data']:
+                new_state['template_data']['geometry'] = {}
+                
+            new_state['template_data']['geometry']['x'] = new_pos_x
+            new_state['template_data']['geometry']['y'] = new_pos_y
+        
+        base_name = self._get_widget_display_name(source_widget_id, source_state)
+        while base_name.endswith('_clon'):
+            base_name = base_name[:-len('_clon')]
+        new_state['custom_name'] = f"{base_name}_clon"
+        
+        self.add_new_widget(state=new_state)
+
+
+    def clone_tree(self, source_widget_id):
+        self._hist_begin()
+        try:
+            return self._clone_tree_impl(source_widget_id)
+        finally:
+            self._hist_end()
+
+    def _clone_tree_impl(self, source_widget_id):
+        """Clona el widget y TODOS sus descendientes: ids nuevos, jerarquia replicada (cada clon cuelga del clon
+        de su padre), contenido y marcas (posicion independiente, plegado...) copiados. La raiz del clon
+        conserva el padre del original."""
+        if source_widget_id not in self.global_state:
+            return None
+        log_info("Manager", f"Clonando arbol desde: {source_widget_id}")
+        id_map = {}
+        for old_id in [source_widget_id] + self.get_descendants(source_widget_id):
+            old_state = self.global_state.get(old_id)
+            if not isinstance(old_state, dict):
+                continue
+            override = None
+            if old_id != source_widget_id:
+                override = id_map.get(old_state.get('parent_id'))
+                if not override:
+                    continue          # su padre no se pudo clonar
+            self._last_added_id = None
+            self.clone_widget(old_id, parent_override=override)
+            if self._last_added_id:
+                id_map[old_id] = self._last_added_id
+        self._apply_collapse_visibility()
+        self._refresh_connector_overlay()
+        self._focus_pending = id_map.get(source_widget_id) or getattr(self, '_focus_pending', None)
+        return id_map.get(source_widget_id)
+
+    def add_new_widget(self, state=None, template_name=None):
+        widget_id_base = f"widget_{int(datetime.datetime.now().timestamp())}"
+        _suffix = 0
+        _stem = widget_id_base
+        while widget_id_base in self.global_state or widget_id_base in self.widgets or widget_id_base in self._resident_ids():
+            _suffix += 1      # varios widgets en el mismo segundo (clonar arbol): id unico
+            widget_id_base = f"{_stem}_{_suffix}"
+
+        _fresh = not state
+        if _fresh:
+            widget_id = widget_id_base
+            tname = template_name if (isinstance(template_name, str) and template_name) else self.default_template_name()
+            tdata = self.load_template_by_name(tname)
+            state = {
+                "enabled": True,
+                "always_on_top": self._default_always_on_top(),
+                "template_name": tname,
+                "custom_name": "",
+                "template_data": tdata
+            }
+            geom = tdata.setdefault('geometry', {'x': 100, 'y': 100})
+            _off = (len(self.widgets) % 10) * 30       # cada widget nuevo, algo desplazado (sin salirse de pantalla)
+            geom['x'] = geom.get('x', 100) + _off
+            geom['y'] = geom.get('y', 100) + _off
+        else:
+            widget_id = widget_id_base
+
+        log_info("Manager", f"Agregando nuevo widget: {widget_id} (total: {len(self.widgets) + 1})")
+        self.global_state[widget_id] = state
+        self._last_added_id = widget_id
+        self._focus_pending = widget_id        # el navegador de widgets lo deja seleccionado al refrescarse
+        if _fresh:
+            QTimer.singleShot(450, lambda w=widget_id: self._flash_widget(w))
+        
+        window = StickerWindow(self, widget_id, state)
+        self.widgets[widget_id] = window
+        window.show()
+        
+        self.save_global_state() 
+        self.build_tray_menu()
+        return widget_id
+
+    def remove_widget(self, widget_id, from_close_event=False):
+        log_info("Manager", f"Eliminando widget: {widget_id} (restantes: {len(self.widgets) - 1})")
+        if from_close_event and getattr(self, "_restoring_history", False):      # [PACK54] cierre por deshacer/rehacer: no toca el estado
+            self.widgets.pop(widget_id, None)
+            return
+        
+        window = self.widgets.get(widget_id)
+        
+        if window and not from_close_event:
+            window.close() 
+            return
+        
+        if widget_id in self.widgets:
+            self.widgets.pop(widget_id)
+        if widget_id in self.global_state:
+            self.global_state.pop(widget_id)
+
+        for child_id in self.get_children(widget_id):
+            child_state = self.global_state.get(child_id)
+            if child_state:
+                child_state['parent_id'] = None
+
+        self.save_global_state() 
+        self.build_tray_menu()
+        self._apply_collapse_visibility()
+        self._refresh_connector_overlay()
+        
+    def update_widget_state(self, widget_id, template_data_dict):
+        if widget_id not in self.global_state:
+            return
+        self.global_state[widget_id]['template_data'] = template_data_dict
+        self._pending_disk_write = True
+
+    def _idle_ready(self, rest=0.8):
+        """[PACK108] True si no hay botones pulsados y el cursor lleva 'rest' segundos quieto (el usuario no esta arrastrando)."""
+        now = time.monotonic()
+        if QApplication.mouseButtons() != Qt.NoButton:
+            self._idle_t = now
+            return False
+        pos = QCursor.pos()
+        if pos != getattr(self, '_idle_pos', None):
+            self._idle_pos = pos
+            self._idle_t = now
+            return False
+        return now - getattr(self, '_idle_t', 0.0) >= rest
+
+    def defer_idle(self, key=None, fn=None):
+        """[PACK108] Encola trabajo pesado (historial, guardado en disco) para cuando el usuario deje de mover el raton. Antes se hacia
+        al SOLTAR un arrastre y al cambiar de foco, dentro del propio evento: el bucle quedaba bloqueado (y el siguiente clic con el)."""
+        if fn is not None:
+            self.__dict__.setdefault('_idle_tasks', {})[key] = fn
+            self._idle_t = time.monotonic()          # una tarea nueva (p. ej. soltar un arrastre) cuenta como actividad: se espera el reposo a partir de ahora
+        t = self.__dict__.get('_idle_timer')
+        if t is None:
+            t = self._idle_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.timeout.connect(self._idle_tick)
+        if not t.isActive():
+            if not self.__dict__.get('_idle_since'):
+                self._idle_since = time.monotonic()
+            t.start(300)
+
+    def _idle_tick(self):
+        if not (self._idle_ready(0.8) or time.monotonic() - (self.__dict__.get('_idle_since') or time.monotonic()) > 30.0):
+            self._idle_timer.start(300)
+            return
+        self._idle_since = None
+        self.run_deferred_now(True)
+
+    def run_deferred_now(self, flush=False):
+        tasks = self.__dict__.get('_idle_tasks') or {}
+        self._idle_tasks = {}
+        for fn in list(tasks.values()):
+            try:
+                fn()
+            except Exception as e_dt:
+                log_warn("Manager", f"Tarea aplazada: {e_dt}")
+        if flush:
+            self._flush_now()
+
+    def flush_pending_save(self, now=False):
+        if now:
+            self._flush_now()
+        elif self._pending_disk_write:
+            self.defer_idle()
+
+    def _flush_now(self):
+        if self._pending_disk_write:
+            # Guardar posiciones/contenido no cambia el menu del tray: reconstruirlo aqui costaba decenas de ms
+            # en cada cambio de foco. Los cambios que SI lo afectan ya llaman a build_tray_menu() por su cuenta.
+            self.save_global_state(record_history=False)
+            self._pending_disk_write = False
+
+    def _periodic_autosave(self):
+        self.flush_pending_save()       # [PACK108] aplazado hasta que el raton este quieto
+
+    def toggle_widget_enabled(self, widget_id, force_state=None):
+        if widget_id not in self.global_state:
+            return
+            
+        if force_state is None:
+            is_enabled = not self.global_state[widget_id].get('enabled', True)
+        else:
+            is_enabled = force_state
+            
+        self.global_state[widget_id]['enabled'] = is_enabled
+        
+        if widget_id in self.widgets:
+            self.widgets[widget_id].is_enabled = is_enabled
+            if is_enabled:
+                self.widgets[widget_id].show()
+            else:
+                self.widgets[widget_id].hide()
+        
+        self.save_global_state() 
+        self.build_tray_menu()
+
+    def toggle_all_visibility(self):
+        self.all_visible = not self.all_visible
+            
+        for widget_id, window in self.widgets.items():
+            if self.global_state[widget_id].get('enabled', True):
+                if self.all_visible:
+                    window.show()
+                else:
+                    window.hide()
+                    
+        self.build_tray_menu()
+        
+    def reload_all_widgets(self):
+        log_info("Manager", f"Recargando plantillas para {len(self.widgets)} widgets...")
+        for widget in self.widgets.values():
+            try:
+                widget._force_web_reload = True
+                widget.load_template_data(widget.current_template_data)
+            except Exception as e:
+                print(f"ERROR: No se pudo recargar el widget {widget.widget_id}: {e}")
+
+    def save_global_state(self, force_backup=False, record_history=True):
+        log_debug("Manager", "Guardando estado global...")
+
+        if not hasattr(self, '_global_history'):
+            self._global_history = []
+            self._global_history_idx = -1
+            self._global_undoing = False
+            self._global_redoing = False
+            self._last_backup_time = 0.0
+
+        try:
+            timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            backup_filename = f"widget_set.{timestamp}.bak.json"
+            backup_filepath = os.path.join(BACKUP_DIR, backup_filename)
+
+            _txt = json.dumps(self.global_state)      # [PACK108] un solo volcado con el codificador rapido (json.dump + indent usa el lento de Python)
+            if force_backup or (time.time() - (self._last_backup_time or 0)) > 60:
+                _write_text_atomic(backup_filepath, _txt)
+                self._last_backup_time = time.time()
+                self._preview_enqueue(backup_filepath, os.path.join(PREVIEW_DIR, backup_filename + '.png'))
+
+            self._purge_old_backups()
+            self._full_backup()          # [PACK60] copia completa (todos los sets), como maximo cada 15 min y solo si algo cambio
+
+        except Exception as e:
+            print(f"ERROR [Manager]: No se pudo crear el backup del estado global: {e}")
+
+        try:
+            _write_text_atomic(GLOBAL_STATE_FILE, locals().get('_txt') or json.dumps(self.global_state))
+        except Exception as e:
+            log_error("Manager", f"CRITICO: No se pudo guardar el estado global! {e}")
+
+        self._record_global_history(record_history)      # [PACK54] historial nuevo (ver _push_global_snapshot)
+        self._preview_actual_later()                     # [PACK87] captura de lo actual (en segundo plano)
+        self._purge_old_previews()
+        if False:      # codigo anterior, ya sin uso
+            snapshot = copy.deepcopy(self.global_state)
+            hist = self._global_history
+            if self._global_history_idx < len(hist) - 1:
+                del hist[self._global_history_idx + 1:]
+            hist.append(snapshot)
+            self._global_history_idx = len(hist) - 1
+            if len(hist) > 50:
+                del hist[0]
+                self._global_history_idx = len(hist) - 1
+            
+    # --- [PACK54] Historial global (Ctrl+Alt+Z deshacer / Ctrl+Alt+Y rehacer) ---
+    # Guarda copias de las NOTAS (no de los ajustes). Hay un estado inicial, no se repiten estados iguales y las
+    # operaciones de varias notas (eliminar/clonar un arbol...) cuentan como UN solo paso.
+
+    def _history_snapshot(self):
+        return {k: copy.deepcopy(v) for k, v in self.global_state.items()
+                if isinstance(v, dict) and isinstance(v.get('template_data'), dict)}
+
+    @staticmethod
+    def _canon_state(st):
+        """Estado de una nota sin lo que solo cambia al normalizar su ventana: la posicion de la ventana y la de sus
+        capas se suman (el reajuste desplaza una y compensa la otra, el aspecto es el mismo)."""
+        c = copy.deepcopy(st)
+        td = c.get('template_data')
+        if isinstance(td, dict):
+            wg = td.get('geometry') if isinstance(td.get('geometry'), dict) else {}
+            gx, gy = wg.get('x', 0) or 0, wg.get('y', 0) or 0
+            for k in ('layer1', 'layer2'):
+                g = (td.get(k) or {}).get('geometry')
+                if isinstance(g, dict) and 'x' in g and 'y' in g:
+                    g['x'] = g['x'] + gx
+                    g['y'] = g['y'] + gy
+            td['geometry'] = {}
+        return c
+
+    def _state_same(self, a, b):
+        if a == b:
+            return True
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            return False
+        try:
+            return self._canon_state(a) == self._canon_state(b)
+        except Exception:
+            return False
+
+    def _hist_equal(self, A, B):
+        if A.keys() != B.keys():
+            return False
+        return all(self._state_same(A[k], B[k]) for k in A)
+
+    UNDO_FILE_NAME = "undo_history.json"
+
+    def open_backup_folder(self):
+        os.makedirs(FULL_BACKUP_DIR, exist_ok=True)
+        __import__("PySide6.QtGui", fromlist=["QDesktopServices"]).QDesktopServices.openUrl(QUrl.fromLocalFile(FULL_BACKUP_DIR))
+
+    def list_backups(self):
+        """[PACK71] Copias disponibles: zip completas (backups/full) y copias automaticas del set activo (backups)."""
+        out = []
+        for d, pref, suf, kind in ((FULL_BACKUP_DIR, 'widget_arena_completo.', '.zip', 'Completa'),
+                                   (BACKUP_DIR, 'widget_set.', '.bak.json', 'Autom\u00e1tica (perfil activo)')):
+            try:
+                files = sorted((f for f in os.listdir(d) if f.startswith(pref) and f.endswith(suf)), reverse=True)
+            except OSError:
+                files = []
+            for f in files:
+                st = f[len(pref):-len(suf)]
+                out.append({'path': os.path.join(d, f), 'kind': kind,
+                            'label': "%s \u00b7 %s %s" % (kind, st[:10], st[11:].replace('-', ':'))})
+        out.sort(key=lambda b: b['label'].split('\u00b7')[1], reverse=True)
+        return out
+
+    @staticmethod
+    def _only_notes(d):
+        return {k: v for k, v in (d or {}).items() if isinstance(v, dict) and isinstance(v.get('template_data'), dict)}
+
+    def read_backup(self, path):
+        import zipfile
+        out = {'notes': None, 'profiles': {}, 'templates': {}}
+        try:
+            if path.lower().endswith('.zip'):
+                with zipfile.ZipFile(path) as z:
+                    for n in z.namelist():
+                        try:
+                            raw = z.read(n).decode('utf-8')
+                            base = os.path.basename(n)
+                            if n == 'data/widget_set.json':
+                                out['notes'] = self._only_notes(json.loads(raw))
+                            elif n.startswith('profiles/') and n.lower().endswith('.json'):
+                                out['profiles'][base[:-5]] = json.loads(raw)
+                            elif n.startswith('sets_en_memoria/') and n.lower().endswith('.json'):
+                                out['profiles'][base[:-5] + ' (en memoria)'] = json.loads(raw)
+                            elif n.startswith('templates/') and n.lower().endswith('.json'):
+                                out['templates'][base] = raw
+                        except Exception as e_n:
+                            log_warn("Manager", f"Copia: {n}: {e_n}")
+            else:
+                with open(path, 'r', encoding='utf-8') as f:
+                    out['notes'] = self._only_notes(json.load(f))
+        except Exception as e:
+            log_warn("Manager", f"No se pudo leer la copia {path}: {e}")
+
+        return out
+
+    def restore_backup(self, data, active=False, profiles=(), templates=False):
+        """[PACK71] Restaura lo elegido de una copia (leida con read_backup). Devuelve un resumen."""
+        msg = []
+        if active and data.get('notes'):
+            self._sync_windows_to_state()
+            self._full_backup(manual=True)                     # red de seguridad: lo actual queda en una copia completa
+            notes = copy.deepcopy(data['notes'])
+            self._hist_begin()
+            try:
+                for wid in list(self.widgets.keys()):
+                    self.remove_widget(wid)
+                self.global_state = {k: v for k, v in self.global_state.items() if not isinstance(v, dict)}
+                for wid, st in notes.items():
+                    self.global_state[wid] = st
+                    win = StickerWindow(self, wid, st)
+                    self.widgets[wid] = win
+                    if st.get('enabled', True):
+                        win.show()
+            finally:
+                self._hist_end()
+            self.save_global_state()
+            self._apply_collapse_visibility()
+            self._refresh_connector_overlay()
+            msg.append("perfil activo: %d widgets" % len(notes))
+
+        done = []
+        for name in profiles:
+            prof = (data.get('profiles') or {}).get(name)
+            safe = HotkeyManager.safe_profile_name(name)
+            if not isinstance(prof, dict) or not safe:
+                continue
+            os.makedirs(PROFILES_DIR, exist_ok=True)
+            target = safe
+            if os.path.exists(self._profile_path(target)):
+                target = "%s (restaurado %s)" % (safe, datetime.datetime.now().strftime('%Y-%m-%d_%H-%M'))
+            with open(self._profile_path(target), 'w', encoding='utf-8') as f:
+                json.dump(prof, f, indent=2, ensure_ascii=False)
+            done.append(target)
+        if done:
+            msg.append("perfiles: " + ", ".join(done))
+        if templates:
+            n = 0
+            os.makedirs(TEMPLATES_DIR, exist_ok=True)
+            for t, raw in (data.get('templates') or {}).items():
+                p = os.path.join(TEMPLATES_DIR, t)
+                if not os.path.exists(p):
+                    with open(p, 'w', encoding='utf-8') as f:
+                        f.write(raw)
+                    n += 1
+            msg.append("templates: %d" % n)
+
+        self.build_tray_menu()
+        tb = getattr(self, 'template_browser', None)
+        if tb is not None:
+            tb.reload()
+        return "Restaurado -> " + ("; ".join(msg) if msg else "nada")
+
+    def _build_data_menu(self, parent, with_delete=True):
+        """[PACK72] Submenu 'Importar y exportar': en Ajustes y, el mismo, dentro de Perfiles."""
+        data_menu = QMenu("Importar y exportar", parent)
+        hub_action = QAction("Centro de guardar y cargar (todo en un sitio)...", self)
+        hub_action.triggered.connect(lambda: self.show_data_hub())
+        data_menu.addAction(hub_action)
+        any_action = QAction("Cargar un archivo (se detecta solo)...", self)
+        any_action.triggered.connect(lambda: self.load_anything_dialog())
+        data_menu.addAction(any_action)
+        data_menu.addSeparator()
+        import_menu = QMenu("Importar", data_menu)
+        import_add = QAction("Agregar widgets desde un archivo...", self)
+        import_add.triggered.connect(lambda: self.import_state(replace=False))
+        import_menu.addAction(import_add)
+        import_replace = QAction("Reemplazar todos los widgets desde un archivo...", self)
+        import_replace.triggered.connect(lambda: self.import_state(replace=True))
+        import_menu.addAction(import_replace)
+        data_menu.addMenu(import_menu)
+
+        export_action = QAction("Exportar todos los widgets a un archivo...", self)
+        export_action.triggered.connect(self.export_state)
+        data_menu.addAction(export_action)
+        restore_cfg_action = QAction("Restaurar configuraci\u00f3n previa...", self)
+        restore_cfg_action.triggered.connect(self.restore_config_backup)
+        data_menu.addAction(restore_cfg_action)
+        restore_bk_action = QAction("Restaurar copia de seguridad...", self)       # [PACK71]
+        restore_bk_action.triggered.connect(self.show_backup_restore)
+        data_menu.addAction(restore_bk_action)
+        full_bk_action = QAction("Copia de seguridad completa ahora (todos los perfiles)", self)       # [PACK60]
+        full_bk_action.triggered.connect(self._full_backup_now)
+        data_menu.addAction(full_bk_action)
+        open_bk_action = QAction("Abrir la carpeta de copias de seguridad", self)
+        open_bk_action.triggered.connect(self.open_backup_folder)
+        data_menu.addAction(open_bk_action)
+        if with_delete:
+            data_menu.addSeparator()
+            delete_all_action = QAction("Eliminar todos los widgets...", self)
+            delete_all_action.triggered.connect(self._confirm_remove_all_widgets)
+            data_menu.addAction(delete_all_action)
+
+        return data_menu
+
+    def open_folder(self, path):
+        os.makedirs(path, exist_ok=True)
+        __import__("PySide6.QtGui", fromlist=["QDesktopServices"]).QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def show_data_hub(self, section=None):
+        h = getattr(self, 'data_hub', None)
+        if h is None:
+            h = self.data_hub = DataHubWindow(self)
+        if isinstance(section, str):
+            h.select(section)
+        h.refresh()
+        h.show()
+        h.raise_()
+        h.activateWindow()
+
+    def save_everything_now(self):
+        """Guarda de una vez: set activo, perfil activo, configuracion, historial y una copia completa."""
+        _q = self.app_is_quitting
+        try:
+            self.force_save_all_states()
+        finally:
+            self.app_is_quitting = _q
+        self._sync_windows_to_state()
+        parts = ["perfil activo"]
+        name = self.current_profile_name
+        if name:
+            self._write_profile_file(name)
+            parts.append("perfil \u00ab%s\u00bb" % name)
+        if self._backup_config():
+            parts.append("configuraci\u00f3n")
+        self._persist_history()
+        parts.append("historial")
+        if self._full_backup(manual=True):
+            parts.append("copia completa")
+
+        msg = "Guardado: " + ", ".join(parts)
+        self._osd(msg, 2200)
+        return msg
+
+    def clear_saved_history(self):
+        try:
+            with open(self._undo_file(), 'r', encoding='utf-8') as f:
+                allh = json.load(f)
+            allh.get('sets', {}).pop(self.current_profile_name or '', None)
+            with open(self._undo_file(), 'w', encoding='utf-8') as f:
+                json.dump(allh, f)
+        except Exception:
+            pass
+        self._seed_global_history_core()
+        self._osd("Historial olvidado")
+
+    def _ask_choice(self, title, text, options):
+        """Pregunta con botones propios; devuelve el indice elegido o None."""
+        box = QMessageBox(self.dialog_parent)
+        box.setWindowTitle(title)
+        box.setText(text)
+        btns = [box.addButton(o, QMessageBox.AcceptRole) for o in options]
+        box.addButton("Cancelar", QMessageBox.RejectRole)
+        box.exec()
+        return btns.index(box.clickedButton()) if box.clickedButton() in btns else None
+
+    @staticmethod
+    def _sniff_file(raw):
+        """Que contiene un .json: 'template', 'config', 'set' o None."""
+        if not isinstance(raw, dict):
+            return None
+        notes = {k: v for k, v in raw.items() if isinstance(v, dict) and isinstance(v.get('template_data'), dict)}
+        if notes:
+            return 'set'
+        if isinstance(raw.get('layer1'), dict) or isinstance(raw.get('layer2'), dict):
+            return 'template'
+        if isinstance(raw.get('settings'), dict) or isinstance(raw.get('hotkeys'), dict):
+            return 'config'
+        return None
+
+    def load_anything_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(self.dialog_parent, "Cargar un archivo", DATA_DIR,
+                                              "Todo lo que se puede cargar (*.json *.zip);;Todos (*)")
+        if path:
+            return self.load_anything(path)
+        return None
+
+    def load_anything(self, path):
+        """Carga un archivo sea lo que sea: set / perfil, template (o nota base), configuracion o copia de seguridad .zip."""
+        import zipfile
+        parent = self.dialog_parent
+        path = str(path)
+        name = os.path.splitext(os.path.basename(path))[0]
+        if path.lower().endswith('.zip'):
+            if not zipfile.is_zipfile(path):
+                QMessageBox.warning(parent, "Cargar archivo", "El .zip no es una copia de seguridad v\u00e1lida.")
+                return None
+            dlg = BackupRestoreDialog(self, parent)
+            dlg.add_backup(path)
+            dlg.exec()
+            return 'copia'
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                raw = json.load(f)
+        except Exception as e:
+            QMessageBox.warning(parent, "Cargar archivo", f"No se pudo leer el archivo:\n{e}")
+            return None
+
+        kind = self._sniff_file(raw)
+        if kind == 'template':
+            bp = raw.get('base_note')
+            l2 = (raw.get('layer2') or {}).get('content', '')
+            if isinstance(bp, dict) and not os.path.exists(_resolve_stored(str(l2))):
+                raw['layer2'] = self._base_note_tdata(bp)['layer2']       # la imagen no viaja en el .json: se regenera
+            safe = self._tpl_safe_name(name) or "template.json"
+            dest, i = safe, 2
+            while os.path.exists(os.path.join(TEMPLATES_DIR, dest)):
+                dest = safe[:-5] + " %d.json" % i
+                i += 1
+            self.save_template(dest, raw)
+            self.show_template_chooser(select=dest)
+            self._osd("Template cargado: " + dest[:-5])
+            return 'template'
+        if kind == 'config':
+            if QMessageBox.question(parent, "Cargar configuraci\u00f3n",
+                                    "Este archivo es una configuraci\u00f3n (ajustes y atajos). \u00bfCargarla?\n\nAntes se guarda una copia de la actual.",
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return None
+            self._apply_config(raw, backup=True, exact=True)
+            self._osd("Configuraci\u00f3n cargada")
+            return 'config'
+
+        if kind == 'set':
+            notes = self._only_notes(raw)
+            ch = self._ask_choice("Cargar widgets", "El archivo contiene %d widgets. \u00bfQu\u00e9 quieres hacer con ellas?" % len(notes),
+                                  ["Agregarlos a mis widgets", "Guardarlos como perfil nuevo", "Reemplazar mi perfil activo"])
+            if ch is None:
+                return None
+            if ch == 0:
+                self._hist_begin()
+                try:
+                    for nid, st in self._remap_set(notes).items():
+                        self.global_state[nid] = st
+                        win = StickerWindow(self, nid, st)
+                        self.widgets[nid] = win
+                        if st.get('enabled', True):
+                            win.show()
+                finally:
+                    self._hist_end()
+                self.save_global_state()
+                self.build_tray_menu()
+                self._apply_collapse_visibility()
+                self._refresh_connector_overlay()
+                self._osd("%d widgets agregados" % len(notes))
+            elif ch == 1:
+                dest = self._unique_profile_name(name)
+                os.makedirs(PROFILES_DIR, exist_ok=True)
+                with open(self._profile_path(dest), 'w', encoding='utf-8') as f:
+                    json.dump({k: v for k, v in raw.items() if k != '__config__'}, f, indent=2, ensure_ascii=False)
+                self.build_tray_menu()
+                self._osd("Perfil guardado: " + dest)
+            else:
+                self.restore_backup({'notes': notes}, active=True)
+                self._osd("Perfil reemplazado (se puede deshacer)")
+            return 'set'
+
+        QMessageBox.warning(parent, "Cargar archivo", "No reconozco este archivo: no parece un perfil, un template, una configuraci\u00f3n ni una copia.")
+        return None
+
+    def show_backup_restore(self):
+        BackupRestoreDialog(self, self.dialog_parent).exec()
+
+    # ---- [PACK71] el historial de deshacer sobrevive entre sesiones (un archivo, una entrada por set)
+    def _undo_file(self):
+        return os.path.join(DATA_DIR, self.UNDO_FILE_NAME)
+
+    def _schedule_history_persist(self):
+        if getattr(self, '_hist_persist_pending', False):
+            return
+        self._hist_persist_pending = True
+        QTimer.singleShot(4000, self._persist_history_now)
+
+    def _persist_history_now(self):
+        self._hist_persist_pending = False
+        self._persist_history()
+
+    def _persist_history(self):
+        try:
+            hist = getattr(self, '_global_history', None)
+            if not hist:
+                return
+            try:
+                with open(self._undo_file(), 'r', encoding='utf-8') as f:
+                    allh = json.load(f)
+                sets = allh.get('sets') if isinstance(allh.get('sets'), dict) else {}
+            except Exception:
+                sets = {}
+            steps, idx = list(hist), int(self._global_history_idx)
+            for _ in range(5):
+                sets[self.current_profile_name or ''] = {'idx': idx, 'steps': steps, 't': time.time()}
+                while len(sets) > 12:
+                    sets.pop(min(sets, key=lambda k: sets[k].get('t', 0)))
+                txt = json.dumps({'version': 1, 'sets': sets}, ensure_ascii=False, separators=(',', ':'), default=str)
+                if len(txt) < 40_000_000 or len(steps) <= 5:
+                    break
+                cut = len(steps) // 2
+                steps, idx = steps[cut:], max(0, idx - cut)
+            with open(self._undo_file() + '.tmp', 'w', encoding='utf-8') as f:
+                f.write(txt)
+            os.replace(self._undo_file() + '.tmp', self._undo_file())
+        except Exception as e:
+            log_warn("Manager", f"No se pudo guardar el historial de deshacer: {e}")
+
+    def _load_persisted_history(self):
+        """Recupera los pasos de la sesion anterior de este set (si lo actual coincide con su ultimo paso; si no, se
+        anade lo actual como paso nuevo, de modo que Ctrl+Z vuelve a como se cerro)."""
+        try:
+            with open(self._undo_file(), 'r', encoding='utf-8') as f:
+                ent = (json.load(f).get('sets') or {}).get(self.current_profile_name or '')
+            steps = ent.get('steps') if isinstance(ent, dict) else None
+            if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) for s in steps):
+                return
+            idx = min(max(int(ent.get('idx', len(steps) - 1)), 0), len(steps) - 1)
+            cur = self._global_history[0]
+            if self._hist_equal(steps[idx], cur):
+                hist = steps
+            else:
+                hist, idx = steps[:idx + 1] + [cur], idx + 1
+            if len(hist) > 60:
+                idx -= len(hist) - 60
+                hist = hist[-60:]
+            self._global_history, self._global_history_idx = hist, max(0, idx)
+            log_info("Manager", f"Historial de deshacer recuperado: {len(hist)} pasos.")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            log_warn("Manager", f"Historial de deshacer anterior ilegible: {e}")
+
+    def _seed_global_history(self):
+        self._seed_global_history_core()
+        self._load_persisted_history()
+
+    def _seed_global_history_core(self):
+        self._global_history = [self._history_snapshot()]
+        self._global_history_idx = 0
+        self._global_undoing = False
+        self._global_redoing = False
+        self._restoring_history = False
+        self._hist_depth = 0
+        self._hist_pending = False
+        if not hasattr(self, '_last_backup_time'):
+            self._last_backup_time = 0.0
+
+    def _hist_begin(self):
+        self._hist_depth = getattr(self, '_hist_depth', 0) + 1
+
+    def _hist_end(self):
+        self._hist_depth = max(0, getattr(self, '_hist_depth', 1) - 1)
+        if self._hist_depth == 0 and getattr(self, '_hist_pending', False):
+            self._hist_pending = False
+            self._push_global_snapshot()
+
+    def _record_global_history(self, rec=True):
+        if not rec or self._global_undoing or self._global_redoing or getattr(self, '_restoring_history', False):
+            return
+        if getattr(self, '_hist_depth', 0) > 0:
+            self._hist_pending = True
+            return
+        self._push_global_snapshot()
+
+    def _push_global_snapshot(self):
+        r = self._push_global_snapshot_core()
+        if r:
+            self._schedule_history_persist()
+        return r
+
+    def _push_global_snapshot_core(self):
+        hist = self._global_history
+        idx = self._global_history_idx
+        snap = self._history_snapshot()
+        if 0 <= idx < len(hist) and self._hist_equal(hist[idx], snap):
+            return False                      # nada cambio: no se crea un paso vacio
+        del hist[idx + 1:]
+        _prev = hist[idx] if 0 <= idx < len(hist) else {}
+        if _prev.keys() != snap.keys() or any(_prev[k].get("parent_id") != snap[k].get("parent_id") for k in snap):
+            self._struct_t = time.time()          # [PACK55] hubo un cambio de estructura (crear / eliminar / vincular)
+        self.__dict__.setdefault("_undo_kinds", []).clear()
+        hist.append(snap)
+        if len(hist) > 60:
+            del hist[0]
+        self._global_history_idx = len(hist) - 1
+        return True
+
+    def _restore_global_snapshot(self, idx):
+        """Restaura el paso idx tocando SOLO las notas que cambian (las demas ni se cierran ni parpadean)."""
+        snap = copy.deepcopy(self._global_history[idx])
+        old = self.global_state
+
+        ids_old = {k for k, v in old.items() if isinstance(v, dict) and isinstance(v.get('template_data'), dict)}
+        self._restoring_history = True
+        try:
+            for wid in list(self.widgets.keys()):
+                new_st = snap.get(wid)
+                if new_st is None or not self._state_same(old.get(wid), new_st):
+                    win = self.widgets.get(wid)
+                    if win is not None:
+                        win.close()
+                    self.widgets.pop(wid, None)
+            ns = {k: v for k, v in old.items() if k not in ids_old}      # ajustes: se conservan tal cual
+            ns.update(snap)
+            self.global_state = ns
+            self._global_history_idx = idx
+            self._schedule_history_persist()
+            for wid, st in snap.items():
+                win = self.widgets.get(wid)
+                if win is None:
+                    win = StickerWindow(self, wid, st)
+                    self.widgets[wid] = win
+                    if st.get('enabled', True):
+                        win.show()
+                else:
+                    win.current_template_data = st['template_data']
+        finally:
+            self._restoring_history = False
+        self.build_tray_menu()
+        self.save_global_state(record_history=False)
+        self._apply_collapse_visibility()
+        for w in list(self.widgets.values()):
+            try:
+                w._update_fold_badge()
+            except Exception:
+                pass
+        self._refresh_connector_overlay()
+
+    def _history_step(self, direction):
+        self.run_deferred_now()              # [PACK108]
+        self._hist_depth = 0
+        self._hist_pending = False
+        try:
+            self._push_global_snapshot()          # recoge lo que aun no se hubiera registrado
+        except Exception as e_ps:
+            log_warn("Manager", f"Historial: {e_ps}")
+        hist = self._global_history
+        target = self._global_history_idx + direction
+        if target < 0 or target >= len(hist):
+            self._osd("Nada que deshacer" if direction < 0 else "Nada que rehacer", 900)
+            return
+        flag = '_global_undoing' if direction < 0 else '_global_redoing'
+        setattr(self, flag, True)
+        try:
+            self._restore_global_snapshot(target)
+        finally:
+            setattr(self, flag, False)
+        log_info("Manager", f"{'Deshacer' if direction < 0 else 'Rehacer'}: paso {target + 1} de {len(hist)}.")
+        QTimer.singleShot(0, lambda: self._focus_any_note(None))
+        self._osd(f"{'Deshacer' if direction < 0 else 'Rehacer'} \u00b7 paso {target + 1}/{len(hist)}", 900)
+
+    def smart_undo(self, win=None):
+        """[PACK55] Ctrl+Z: primero los cambios de la nota enfocada (si son mas recientes que el ultimo cambio de
+        estructura: crear, eliminar o vincular notas); si no los hay, el historial global."""
+        kinds = self.__dict__.setdefault('_undo_kinds', [])
+        try:
+            if (win is not None and win._local_step_target(-1) is not None
+                    and getattr(win, '_hist_t', 0.0) >= getattr(self, '_struct_t', 0.0)):
+                win._undo_widget_changes()
+                kinds.append('local')
+                self._osd("Deshacer \u00b7 cambio del widget", 900)
+                return
+        except Exception as e_su:
+            log_warn("Manager", f"Deshacer local: {e_su}")
+        before = self._global_history_idx
+        self.undo_global()
+        if self._global_history_idx != before:
+            kinds.append('global')
+
+    def smart_redo(self, win=None):
+        kinds = self.__dict__.setdefault('_undo_kinds', [])
+        kind = kinds.pop() if kinds else None
+        try:
+            if kind != 'global' and win is not None and win._local_step_target(1) is not None:
+                win._redo_widget_changes()
+                self._osd("Rehacer \u00b7 cambio del widget", 900)
+                return
+        except Exception as e_sr:
+            log_warn("Manager", f"Rehacer local: {e_sr}")
+        self.redo_global()
+
+    def _focus_any_note(self, prefer=None):
+        """Tras eliminar o deshacer, ninguna ventana puede quedar con el foco y Ctrl+Z (que lo necesita) no llegaria."""
+        try:
+            if getattr(self, '_restoring_history', False) or self.app_is_quitting:
+                return
+            if QApplication.activeWindow() is not None:
+                return
+            w = self.widgets.get(prefer) if prefer else None
+            if w is None or not w.isVisible():
+                w = next((x for x in self.widgets.values() if x.isVisible()), None)
+            if w is not None:
+                w.activateWindow()
+                w.setFocus()
+        except Exception:
+            pass
+
+    def undo_global(self):
+        self._history_step(-1)
+
+    def redo_global(self):
+        self._history_step(1)
+
+    def _bulk_edit_base_hue(self):
+        reply = QMessageBox.question(self.dialog_parent, "Color base global",
+                                     "\u00bfQuieres fijar un color de referencia (Color Base) para TODOS los widgets de imagen (S\u00ed) o restablecerlos a autom\u00e1tico (No)?",
+                                     QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+        if reply == QMessageBox.Cancel:
+            return
+            
+        new_hue = None
+        if reply == QMessageBox.Yes:
+            c = QColorDialog.getColor(Qt.white, self.dialog_parent, "Elegir color base para TODOS los widgets de imagen")
+            if not c.isValid():
+                return
+            if c.hsvHue() < 0:
+                QMessageBox.information(self.dialog_parent, "Color sin tono", "El color elegido es gris y no tiene tono.")
+                return
+            new_hue = int(c.hsvHue())
+            
+        changed = False
+        for widget_id, window in self.widgets.items():
+            state = self.global_state.get(widget_id)
+            if not state: continue
+            td = state.get('template_data', {})
+            for layer_num in (1, 2):
+                layer_key = f'layer{layer_num}'
+                ld = td.get(layer_key, {})
+                if ld.get('type') == 'png':
+                    if new_hue is not None:
+                        ld['base_hue'] = new_hue
+                        ld['base_hue_src'] = ld.get('content')
+                    else:
+                        ld.pop('base_hue', None)
+                        ld.pop('base_hue_src', None)
+                    changed = True
+            
+            if changed:
+                # Actualiza la referencia sin alterar el shift relativo actual
+                window.load_template_data(td)
+                
+        if changed:
+            self.save_global_state()
+            self.build_tray_menu()
+
+    def _bulk_edit_base_hue(self):
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        dlg = QDialog(self.dialog_parent)
+        dlg.setWindowTitle("Color base de varias im\u00e1genes")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("Selecciona los widgets de imagen a modificar:"))
+
+        lst = QListWidget()
+        lay.addWidget(lst)
+
+        for wid, window in self.widgets.items():
+            st = self.global_state.get(wid, {})
+            td = st.get('template_data', {})
+            if any(td.get(f'layer{i}', {}).get('type') == 'png' for i in (1, 2)):
+                name = self._get_widget_display_name(wid, st)
+                it = QListWidgetItem(name)
+                it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+                it.setCheckState(Qt.Unchecked)
+                it.setData(Qt.UserRole, wid)
+                lst.addItem(it)
+
+        if lst.count() == 0:
+            QMessageBox.information(self.dialog_parent, "Sin imágenes", "No hay widgets de imagen activos.")
+            return
+
+        opt_lay = QHBoxLayout()
+        btn_color = QPushButton("Elegir color...")
+        btn_auto = QPushButton("Automático")
+        opt_lay.addWidget(btn_color)
+        opt_lay.addWidget(btn_auto)
+        lay.addLayout(opt_lay)
+
+        self._bulk_hue = None
+        self._bulk_action = None
+
+        def pick_color():
+            c = QColorDialog.getColor(Qt.white, dlg, "Elegir color base")
+            if c.isValid():
+                if c.hsvHue() < 0:
+                    QMessageBox.information(dlg, "Color sin tono", "El color elegido es gris (sin matiz).")
+                    return
+                self._bulk_hue = int(c.hsvHue())
+                self._bulk_action = 'color'
+                dlg.accept()
+
+        def set_auto():
+            self._bulk_action = 'auto'
+            dlg.accept()
+
+        btn_color.clicked.connect(pick_color)
+        btn_auto.clicked.connect(set_auto)
+        
+        btn_cancel = QPushButton("Cancelar")
+        btn_cancel.clicked.connect(dlg.reject)
+        lay.addWidget(btn_cancel)
+
+        if dlg.exec():
+            selected_ids = [lst.item(i).data(Qt.UserRole) for i in range(lst.count()) if lst.item(i).checkState() == Qt.Checked]
+            if not selected_ids: return
+
+            changed = False
+            for wid in selected_ids:
+                st = self.global_state.get(wid)
+                if not st: continue
+                td = st.get('template_data', {})
+                wid_changed = False
+                for layer_num in (1, 2):
+                    lk = f'layer{layer_num}'
+                    ld = td.get(lk, {})
+                    if ld.get('type') == 'png':
+                        if self._bulk_action == 'color':
+                            ld['base_hue'] = self._bulk_hue
+                            ld['base_hue_src'] = ld.get('content')
+                        else:
+                            ld.pop('base_hue', None)
+                            ld.pop('base_hue_src', None)
+                        wid_changed = True
+                        changed = True
+                
+                if wid_changed and wid in self.widgets:
+                    self.widgets[wid].load_template_data(td)
+            
+            if changed:
+                self.save_global_state()
+                self.build_tray_menu()
+
+    def _edit_predefined_hues(self):
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        hues = self.get_predefined_hues()
+        dlg = QDialog(self.dialog_parent)
+        dlg.setWindowTitle("Tonos predefinidos (Ctrl+rueda)")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("Hues por los que salta Ctrl+rueda (se guardan como grados 0-359).\n"
+                             "Ctrl+Shift+rueda = ajuste fino de 1 grado."))
+        lst = QListWidget()
+        lst.setMinimumHeight(180)
+        lay.addWidget(lst)
+
+        def refill():
+            lst.clear()
+            for h in hues:
+                pm = QPixmap(22, 22)
+                pm.fill(QColor.fromHsv(h, 255, 255))
+                it = QListWidgetItem(QIcon(pm), f"{h}\u00b0")
+                it.setData(Qt.UserRole, h)
+                lst.addItem(it)
+
+        def pick(initial):
+            c = QColorDialog.getColor(QColor.fromHsv(initial, 255, 255), dlg, "Elegir color (se guarda su hue)")
+            if not c.isValid():
+                return None
+            if c.hsvHue() < 0:
+                QMessageBox.information(dlg, "Color sin tono",
+                                        "Ese color es gris/blanco/negro y no tiene hue. Elige uno con matiz.")
+                return None
+            return int(c.hsvHue())
+
+        def add_color():
+            h = pick(0)
+            if h is not None and h not in hues:
+                hues.append(h)
+                hues.sort()
+                refill()
+
+        def edit_color():
+            it = lst.currentItem()
+            if it is None:
+                return
+            old = it.data(Qt.UserRole)
+            h = pick(old)
+            if h is not None:
+                hues.remove(old)
+                if h not in hues:
+                    hues.append(h)
+                hues.sort()
+                refill()
+
+        def remove_color():
+            it = lst.currentItem()
+            if it is not None:
+                hues.remove(it.data(Qt.UserRole))
+                refill()
+
+        def add_degrees():
+            h = spin.value()
+            if h not in hues:
+                hues.append(h)
+                hues.sort()
+                refill()
+
+        row = QHBoxLayout()
+        b_add = QPushButton("A\u00f1adir con selector...")
+        b_edit = QPushButton("Cambiar...")
+        b_del = QPushButton("Quitar")
+        for b in (b_add, b_edit, b_del):
+            row.addWidget(b)
+        lay.addLayout(row)
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("O grados exactos:"))
+        spin = QSpinBox()
+        spin.setRange(0, 359)
+        b_deg = QPushButton("A\u00f1adir")
+        row2.addWidget(spin)
+        row2.addWidget(b_deg)
+        row2.addStretch(1)
+        lay.addLayout(row2)
+        b_add.clicked.connect(add_color)
+        b_edit.clicked.connect(edit_color)
+        b_del.clicked.connect(remove_color)
+        b_deg.clicked.connect(add_degrees)
+        lst.itemDoubleClicked.connect(lambda _it: edit_color())
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        refill()
+        if dlg.exec():
+            self.global_state['_predefined_hues'] = list(hues)
+            self.save_global_state(record_history=False)
+            log_info("Manager", f"Predefinidos de hue actualizados: {hues}")
+
+    @staticmethod
+    def _hue_from_any(v):
+        """Hue 0-359 desde un numero (grados) o, por compatibilidad, desde un color '#rrggbb'."""
+        s = str(v).replace('\u00b0', '').strip()
+        try:
+            return int(round(float(s))) % 360
+        except (ValueError, TypeError):
+            pass
+        c = QColor(s)
+        if c.isValid() and c.hsvHue() >= 0:
+            return int(c.hsvHue())
+        return None
+
+    def get_predefined_hues(self):
+        raw = self.global_state.get('_predefined_hues', [])
+        out = set()
+        if isinstance(raw, list):
+            for v in raw:
+                h = self._hue_from_any(v)
+                if h is not None:
+                    out.add(h)
+        return sorted(out)
+
+    def _full_backup(self, manual=False, on_quit=False):
+        """[PACK60] Copia COMPLETA en backups/full/*.zip: set activo + TODOS los perfiles + sets apartados en
+        memoria + plantillas + atajos (se descomprime sobre widget_arena_data para restaurar). Solo se hace si
+        algo cambio desde la ultima y, mientras se trabaja, como maximo cada 15 minutos."""
+        import zipfile
+        try:
+            now = time.time()
+            if not (manual or on_quit) and now - getattr(self, '_last_full_backup', 0) < 900:
+                return None
+            prof = []
+            if os.path.isdir(PROFILES_DIR):
+                for f in sorted(os.listdir(PROFILES_DIR)):
+                    if f.lower().endswith('.json'):
+                        st = os.stat(os.path.join(PROFILES_DIR, f))
+                        prof.append((f, st.st_mtime_ns, st.st_size))
+            cur = json.dumps(self.global_state, indent=2, ensure_ascii=False, default=str)
+            res = {}
+            for name, r in getattr(self, '_resident', {}).items():
+                data = dict(r.get('scalars', {}))
+                data.update(r.get('notes', {}))
+                res[name] = json.dumps(data, indent=2, ensure_ascii=False, default=str)
+            sig = hashlib.md5((cur + repr(prof) + "".join(res.values())).encode('utf-8', 'replace')).hexdigest()
+            self._last_full_backup = now
+            if not manual and sig == getattr(self, '_last_full_sig', None):
+                return None
+            os.makedirs(FULL_BACKUP_DIR, exist_ok=True)
+            path = os.path.join(FULL_BACKUP_DIR, "widget_arena_completo." + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + ".zip")
+            with zipfile.ZipFile(path + '.tmp', 'w', zipfile.ZIP_DEFLATED) as z:
+                z.writestr('data/widget_set.json', cur)
+                if os.path.exists(HOTKEYS_FILE):
+                    z.write(HOTKEYS_FILE, 'data/hotkeys.json')
+                for f, _m, _s in prof:
+                    z.write(os.path.join(PROFILES_DIR, f), 'profiles/' + f)
+                for name, txt in res.items():
+                    z.writestr('sets_en_memoria/' + (HotkeyManager.safe_profile_name(name) or 'set') + '.json', txt)
+                if os.path.isdir(TEMPLATES_DIR):
+                    for f in sorted(os.listdir(TEMPLATES_DIR)):
+                        if f.lower().endswith('.json'):
+                            z.write(os.path.join(TEMPLATES_DIR, f), 'templates/' + f)
+            os.replace(path + '.tmp', path)
+            self._preview_enqueue(path, os.path.join(PREVIEW_DIR, os.path.basename(path) + '.png'))
+            self._last_full_sig = sig
+            olds = sorted(f for f in os.listdir(FULL_BACKUP_DIR) if f.startswith('widget_arena_completo.') and f.endswith('.zip'))
+            for f in olds[:-MAX_FULL_BACKUPS]:
+                try:
+                    os.remove(os.path.join(FULL_BACKUP_DIR, f))
+                except OSError:
+                    pass
+            log_info("Manager", f"Copia completa: {os.path.basename(path)} ({len(prof)} perfiles, {len(res)} sets en memoria)")
+            return path
+        except Exception as e:
+            log_warn("Manager", f"No se pudo hacer la copia completa: {e}")
+            return None
+
+    def _full_backup_now(self):
+        self._sync_windows_to_state()
+        p = self._full_backup(manual=True)
+        self._osd("Copia completa guardada en backups/full" if p else "No se pudo hacer la copia completa", 1800)
+
+    # --- [PACK92] Vistas previas del mapa completo: se dibujan AQUI, de una en una, sin competir con un arrastre y sin repetir
+    #     dibujos iguales (si el contenido ya esta dibujado en otra vista, se copia el PNG).
+    def _preview_enqueue(self, src, out, notes=None):
+        q = self.__dict__.setdefault('_pv_queue', [])
+        q[:] = [j for j in q if j[1] != out]              # un trabajo pendiente para la misma salida se sustituye
+        q.append((src, out, notes))
+        self._preview_pump()
+
+    def _preview_pump(self, delay=150):
+        t = self.__dict__.get('_pv_poll')
+        if t is None:
+            t = self._pv_poll = QTimer(self)
+            t.setSingleShot(True)
+            t.timeout.connect(self._preview_step)
+        if self.__dict__.get('_pv_queue') and not t.isActive():
+            t.start(delay)
+
+    def _preview_step(self):
+        q = self.__dict__.get('_pv_queue')
+        if not q:
+            return
+        if QApplication.mouseButtons() != Qt.NoButton or getattr(self, '_cable_preview_active', False) or not self._idle_ready(2.5):
+            self._preview_pump(700)                       # se espera a que acabe el arrastre / el dialogo
+            return
+        src, out, notes = q.pop(0)
+        try:
+            self._preview_render(_pv_read_notes(src) if notes is None else notes, out)
+        except Exception as e:
+            log_warn("Manager", f"No se pudo dibujar la vista previa: {e}")
+        if q:
+            self._preview_pump()
+
+    def _preview_render(self, notes, out):
+        sig = hashlib.md5(json.dumps({k: (v.get('template_data'), v.get('parent_id'), v.get('enabled', True)) for k, v in sorted(notes.items())},
+                                     sort_keys=True, default=str).encode('utf-8', 'replace')).hexdigest()
+        outs = self.__dict__.setdefault('_pv_out_sig', {})
+        if outs.get(out) == sig and os.path.isfile(out):
+            return                                        # ya esta dibujada con este contenido
+        same = next((o for o, s in outs.items() if s == sig and o != out and os.path.isfile(o)), None)
+        if same:
+            os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+            shutil.copyfile(same, out)                    # mismo contenido que otra vista: se copia, no se vuelve a dibujar
+        elif not pv_save_preview(notes, out):
+            return
+        outs.pop(out, None)
+        outs[out] = sig
+        while len(outs) > 60:
+            outs.pop(next(iter(outs)))
+
+    def _preview_actual_later(self):
+        t = getattr(self, '_pv_timer', None)
+        if t is None:
+            t = self._pv_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.timeout.connect(self._preview_actual_now)
+        t.start(3000)                                     # tras la ultima modificacion
+
+    def _preview_actual_now(self):
+        try:
+            os.makedirs(PREVIEW_DIR, exist_ok=True)
+            self._preview_enqueue(None, os.path.join(PREVIEW_DIR, 'actual.png'), _pv_notes_of(self._history_snapshot()))
+        except Exception as e:
+            log_warn("Manager", f"Vista previa de lo actual: {e}")
+
+    def _purge_old_previews(self):
+        if time.time() - getattr(self, '_pv_purged', 0) < 120:
+            return
+        self._pv_purged = time.time()
+        try:
+            keep = set(os.listdir(BACKUP_DIR)) | (set(os.listdir(FULL_BACKUP_DIR)) if os.path.isdir(FULL_BACKUP_DIR) else set())
+            for f in os.listdir(PREVIEW_DIR):
+                if (f.lower().endswith('.png') and f != 'actual.png' and f[:-4] not in keep) or f == 'actual.json':
+                    os.remove(os.path.join(PREVIEW_DIR, f))
+        except OSError:
+            pass
+
+    def _purge_old_backups(self):
+        try:
+            files = [f for f in os.listdir(BACKUP_DIR) if f.startswith('widget_set.') and f.endswith('.bak.json')]
+            
+            if len(files) <= MAX_BACKUPS:
+                return 
+                
+            files.sort()
+            
+            files_to_delete = files[:-MAX_BACKUPS] 
+            
+            for f_del in files_to_delete:
+                try:
+                    os.remove(os.path.join(BACKUP_DIR, f_del))
+                except Exception as e_del:
+                    print(f"ERROR [Manager]: No se pudo eliminar el backup antiguo {f_del}: {e_del}")
+                    
+        except Exception as e:
+            print(f"ERROR [Manager]: Fallo durante la purga de backups: {e}")
+
+    def load_global_state(self):
+        log_info("Manager", f"Cargando estado global desde: {GLOBAL_STATE_FILE}")
+        try:
+            if not os.path.exists(GLOBAL_STATE_FILE):
+                self.global_state = {} 
+                return
+
+            with open(GLOBAL_STATE_FILE, 'r', encoding='utf-8') as f:
+                self.global_state = json.load(f)
+            # Migracion: 'hierarchy_settings' era un dict y se cargaba como nota fantasma.
+            if isinstance(self.global_state, dict):
+                hs_old = self.global_state.get('hierarchy_settings')
+                if isinstance(hs_old, dict):
+                    self.global_state['hierarchy_settings'] = json.dumps(
+                        {k: v for k, v in hs_old.items() if k in HIERARCHY_DEFAULTS})
+                for k_ghost in [k for k, v in self.global_state.items()
+                                if str(k).startswith('hierarchy_settings_') and isinstance(v, dict)]:
+                    self.global_state.pop(k_ghost, None)
+            
+            if not self.global_state:
+                 return
+
+            names_cleaned = False
+            for widget_id, state in self.global_state.items():
+                if not isinstance(state, dict):
+                    continue
+                template_name = state.get('template_name', '') or ''
+                if template_name.count('_clon') > 1 and not (state.get('custom_name') or '').strip():
+                    clean_name = template_name
+                    while clean_name.endswith('_clon'):
+                        clean_name = clean_name[:-len('_clon')]
+                    state['custom_name'] = f"{clean_name}_clon"
+                    names_cleaned = True
+            if names_cleaned:
+                log_info("Manager", "Nombres de widgets clonados normalizados (bug de _clon_clon_clon...).")
+                self.save_global_state()
+
+            for widget_id, state in list(self.global_state.items()):
+                if not isinstance(state, dict):
+                    continue
+                window = StickerWindow(self, widget_id, state)
+                self.widgets[widget_id] = window
+                if state.get('enabled', True):
+                    window.show()
+                    
+        except json.JSONDecodeError as e:
+            print(f"CRITICO: El archivo de estado global esta corrupto! {e}")
+            self.global_state = {}
+            try:
+                corrupt_name = f"{GLOBAL_STATE_FILE}.corrupt.{int(datetime.datetime.now().timestamp())}.json"
+                os.rename(GLOBAL_STATE_FILE, corrupt_name)
+            except Exception as re:
+                print(f"ERROR: No se pudo renombrar el archivo corrupto: {re}")
+                
+        except Exception as e:
+            print(f"CRITICO: No se pudo cargar el estado global! {e}")
+            self.global_state = {}
+
+    def _config_snapshot(self):
+        """Configuracion (no son notas): ajustes globales (cables, jerarquia, matices...) + atajos de teclado."""
+        st = {k: copy.deepcopy(v) for k, v in self.global_state.items()
+              if not isinstance(v, dict) and not str(k).startswith('telegram')}
+        return {"settings": st, "hotkeys": self.hotkeys.cfg_snapshot()}
+
+    def _backup_config(self):
+        """Copia de la configuracion actual en config_backups/ (se conservan las 30 ultimas)."""
+        try:
+            d = os.path.join(ROOT_DATA_DIR, "config_backups")
+            os.makedirs(d, exist_ok=True)
+            p = os.path.join(d, "config_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".json")
+            with open(p, 'w', encoding='utf-8') as f:
+                json.dump(self._config_snapshot(), f, indent=2, ensure_ascii=False)
+            for old in sorted(n for n in os.listdir(d) if n.startswith("config_"))[:-30]:
+                os.remove(os.path.join(d, old))
+            return p
+        except Exception as e:
+            log_error("Manager", f"No se pudo guardar la copia de la configuracion: {e}")
+            return None
+
+    def _apply_config(self, cfg, backup=True, exact=False):
+        if backup:
+            self._backup_config()
+        sets = cfg.get('settings') if isinstance(cfg.get('settings'), dict) else {}
+        sets = {k: v for k, v in sets.items() if not isinstance(v, dict) and not str(k).startswith('telegram')}
+        if exact:
+            for k in [k for k, v in self.global_state.items() if not isinstance(v, dict)
+                      and not str(k).startswith('telegram') and k not in sets]:
+                self.global_state.pop(k, None)
+        self.global_state.update(sets)
+        if isinstance(cfg.get('hotkeys'), dict):
+            self.hotkeys.set_cfg(cfg['hotkeys'])
+            self.hotkeys.save()
+            self.hotkeys.apply()
+        self.save_global_state()
+        self.build_tray_menu()
+        self._refresh_connector_overlay()
+
+    def restore_config_backup(self):
+        parent_widget = self.dialog_parent
+        d = os.path.join(ROOT_DATA_DIR, "config_backups")
+        os.makedirs(d, exist_ok=True)
+        path, _ = QFileDialog.getOpenFileName(parent_widget, "Restaurar configuracion previa", d, "JSON (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            if not isinstance(cfg, dict) or not ('settings' in cfg or 'hotkeys' in cfg):
+                raise ValueError("no es una copia de configuracion")
+            self._apply_config(cfg, backup=True, exact=True)
+        except Exception as e:
+            QMessageBox.critical(parent_widget, "Error", f"No se pudo restaurar la configuracion:\n{e}")
+
+    def _remap_set(self, raw):
+        """Renombra los ids de un conjunto importado y reapunta parent_id (conserva los enlaces)."""
+        stamp = int(datetime.datetime.now().timestamp())
+        taken = set(self.global_state) | set(self.widgets) | self._resident_ids()
+        id_map = {}
+        for old, st in raw.items():
+            if not isinstance(st, dict):
+                continue
+            nid = f"{old}_{stamp}"
+            k = 1
+            while nid in taken:
+                nid = f"{old}_{stamp}_{k}"
+                k += 1
+            taken.add(nid)
+            id_map[old] = nid
+        out = {}
+        for old, nid in id_map.items():
+            st = copy.deepcopy(raw[old])
+            if st.get('parent_id'):
+                st['parent_id'] = id_map.get(st['parent_id'])
+            out[nid] = st
+        used = {st.get('parent_id') for st in out.values()}
+        for nid, st in out.items():
+            if st.get('collapsed') and nid not in used:
+                st['collapsed'] = False      # plegada sin hijas (restos de enlaces perdidos): ocultaria a las que se le enlacen
+        return out
+
+    def import_state(self, replace=False):
+        parent_widget = self.dialog_parent
+        path, _ = QFileDialog.getOpenFileName(parent_widget, "Agregar widgets desde un archivo", DATA_DIR, "JSON (*.json)")
+        if not path:
+            return
+
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                new_state = json.load(f)
+            if not isinstance(new_state, dict):
+                raise ValueError("el archivo no contiene widgets")
+            cfg = new_state.pop('__config__', None)
+            legacy = {k: v for k, v in new_state.items()
+                      if not isinstance(v, dict) and not str(k).startswith('telegram')}
+            if not isinstance(cfg, dict) and legacy:
+                cfg = {'settings': legacy}      # conjuntos antiguos: los ajustes iban sueltos
+            new_state = {k: v for k, v in new_state.items()
+                         if isinstance(v, dict) and not str(k).startswith('hierarchy_settings')}
+
+            if replace:
+                reply = QMessageBox.question(parent_widget, "Confirmar sustituci\u00f3n",
+                                     "\u00bfEst\u00e1s seguro de que quieres eliminar TODOS los widgets actuales y sustituirlos por los del archivo?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if reply != QMessageBox.Yes:
+                    return
+            load_cfg = False
+            if isinstance(cfg, dict) and (cfg.get('settings') or cfg.get('hotkeys')):
+                load_cfg = QMessageBox.question(
+                    parent_widget, "Configuraci\u00f3n incluida",
+                    "Este archivo incluye configuraci\u00f3n (atajos de teclado, cables, jerarqu\u00eda, matices...).\n\n"
+                    "\u00bfCargarla tambi\u00e9n? Antes se guardar\u00e1 una copia de la configuraci\u00f3n actual "
+                    "(Guardar y cargar > Configuraci\u00f3n y atajos > Restaurar una configuraci\u00f3n previa).",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+            if replace:
+                for widget_id in list(self.widgets.keys()):
+                    self.remove_widget(widget_id)
+                # Los ajustes globales (no son notas) se conservan.
+                self.global_state = {k: v for k, v in self.global_state.items() if not isinstance(v, dict)}
+            if load_cfg:
+                self._apply_config(cfg, backup=True)
+
+            for new_widget_id, state in self._remap_set(new_state).items():
+                self.global_state[new_widget_id] = state
+                window = StickerWindow(self, new_widget_id, state)
+                self.widgets[new_widget_id] = window
+                if state.get('enabled', True):
+                    window.show()
+
+            self.save_global_state()
+            self.build_tray_menu()
+            self._apply_collapse_visibility()
+            self._refresh_connector_overlay()
+
+        except Exception as e:
+            print(f"ERROR: No se pudo importar el estado desde {path}: {e}")
+            QMessageBox.critical(parent_widget, "Error de importaci\u00f3n", f"No se pudo cargar o leer el archivo JSON:\n{e}")
+
+    def export_state(self):
+        parent_widget = self.dialog_parent
+        path, _ = QFileDialog.getSaveFileName(parent_widget, "Exportar todos los widgets a un archivo", DATA_DIR, "JSON (*.json)")
+        if not path:
+            return
+
+        try:
+            data = {k: v for k, v in self.global_state.items() if isinstance(v, dict)}
+            if QMessageBox.question(parent_widget, "Exportar widgets",
+                                    "\u00bfIncluir tambi\u00e9n la configuraci\u00f3n (atajos de teclado, cables, jerarqu\u00eda, matices...)?\n\n"
+                                    "Al importar el archivo se podr\u00e1 elegir si cargarla. Nunca incluye datos de Telegram.",
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes:
+                data['__config__'] = self._config_snapshot()
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"ERROR: No se pudo exportar los widgets a {path}: {e}")
+            QMessageBox.critical(parent_widget, "Error de exportaci\u00f3n", f"No se pudo guardar el archivo JSON:\n{e}")
+
+    def get_default_template_data(self):
+        try:
+            _dp = self.default_template_path()
+            if os.path.exists(_dp):
+                with open(_dp, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            log_warn("Manager", f"No se pudo leer {DEFAULT_TEMPLATE_FILE}. {e}")
+        
+        default_geom = {"x": 0, "y": 0, "w": 250, "h": 250}
+        
+        default_data = {
+            "geometry": {"x": 100, "y": 100}, 
+            
+            "layer1": {
+                "type": "text", 
+                "content": '<p style="color:#1f2737;" align="center">Clic derecho para opciones<br>Doble clic para ocultar</p>',
+                "background": "transparent",
+                "font_family": "Inter", 
+                "font_size": 14,
+                "color": "#1f2737",
+                "rotation": 0, 
+                "image_effects": {}, 
+                "geometry": default_geom.copy(),
+                "scaled_contents": False
+            },
+            "layer2": {
+                "type": "text", 
+                "content": '<p style="color:#1f2737;" align="center">Post-it</p>', 
+                "background": "#fef08a",
+                "font_family": "Inter", 
+                "font_size": 24,
+                "color": "#1f2737",
+                "rotation": 0, 
+                "image_effects": {}, 
+                "geometry": default_geom.copy(),
+                "scaled_contents": True
+            }
+        }
+        try:
+            os.makedirs(TEMPLATES_DIR, exist_ok=True) 
+            with open(DEFAULT_TEMPLATE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(default_data, f, indent=4)
+        except Exception as e:
+            print(f"ADVERTENCIA: No se pudo guardar el template predeterminado en {DEFAULT_TEMPLATE_FILE}. {e}")
+            
+        return default_data
+
+    def force_save_all_states(self):
+        log_info("Manager", "La aplicacion esta a punto de salir. Forzando guardado...")
+        
+        self.app_is_quitting = True 
+        
+        if not self.widgets:
+            self.save_global_state() 
+            return
+
+        try:
+            for widget_id, window in self.widgets.items():
+                if widget_id in self.global_state:
+                    self.global_state[widget_id]['always_on_top'] = window.always_on_top
+                    self.global_state[widget_id]['template_data'] = window.current_template_data
+                    if window.isVisible():
+                        # Red de seguridad: la posicion solo se guardaba al soltar un arrastre.
+                        _g = window.current_template_data.setdefault('geometry', {})
+                        _g['x'], _g['y'] = window.pos().x(), window.pos().y()
+            
+            self.save_global_state()
+            
+        except Exception as e:
+            log_error("Manager", f"CRITICO: Fallo al forzar el guardado final: {e}")
+            
+    # --- Perfiles (conjuntos completos de widgets) ---
+
+    def _list_profiles(self):
+        paths = []
+        try:
+            for f in os.listdir(PROFILES_DIR):
+                if f.lower().endswith('.json'):
+                    paths.append(os.path.join(PROFILES_DIR, f))
+        except Exception as e:
+            log_error("Manager", f"No se pudieron listar perfiles: {e}")
+        paths.sort(key=lambda p: os.path.basename(p).lower())
+        return paths
+
+    def _save_profile(self, name):
+        if not name:
+            return
+        _q = self.app_is_quitting
+        self.force_save_all_states()
+        self.app_is_quitting = _q      # guardar un perfil NO es salir: sin esto se dejaban de guardar los cambios y de cerrar notas
+        profile_path = os.path.join(PROFILES_DIR, f"{name}.json")
+        try:
+            with open(profile_path, 'w', encoding='utf-8') as f:
+                json.dump(self.global_state, f, indent=4)
+            self._set_current_profile(name)
+            self._drop_resident(name)
+            log_info("Manager", f"Perfil guardado: {name}")
+            self.build_tray_menu()
+        except Exception as e:
+            log_error("Manager", f"Error al guardar perfil '{name}': {e}")
+
+    @property
+    def current_profile_name(self):
+        return self.global_state.get('current_profile') or None
+
+    def _set_current_profile(self, name):
+        self.global_state['current_profile'] = name or ''
+
+    def _profile_autosave(self):
+        return bool(self.global_state.get('profile_autosave', True))
+
+    def _profile_preload(self):
+        return bool(self.global_state.get('profile_preload', True))
+
+    RESIDENT_MAX = 6          # sets mantenidos vivos (ocultos) para cambiar al instante
+
+    def _resident_ids(self):
+        ids = set()
+        for r in getattr(self, '_resident', {}).values():
+            ids.update(r['notes'])
+        return ids
+
+    def _profile_path(self, name):
+        return os.path.join(PROFILES_DIR, f"{name}.json")
+
+    def _sync_windows_to_state(self):
+        """Vuelca a global_state lo que solo vive en las ventanas (posicion, always_on_top, plantilla)."""
+        for wid, w in self.widgets.items():
+            if wid in self.global_state:
+                self.global_state[wid]['always_on_top'] = w.always_on_top
+                self.global_state[wid]['template_data'] = w.current_template_data
+                if w.isVisible():
+                    g = w.current_template_data.setdefault('geometry', {})
+                    g['x'], g['y'] = w.pos().x(), w.pos().y()
+
+    def _write_profile_file(self, name):
+        os.makedirs(PROFILES_DIR, exist_ok=True)
+        path = self._profile_path(name)
+        with open(path + '.tmp', 'w', encoding='utf-8') as f:
+            json.dump(self.global_state, f, indent=4)
+        os.replace(path + '.tmp', path)
+
+    def _autosave_current_profile(self):
+        """Al salir: el set activo vuelve a su perfil (si el guardado automatico esta activo)."""
+        name = self.current_profile_name
+        if name and self._profile_autosave():
+            try:
+                self._sync_windows_to_state()
+                self._write_profile_file(name)
+            except Exception as e:
+                log_error("Manager", f"No se pudo guardar automaticamente el perfil '{name}': {e}")
+
+    def _osd(self, text, ms=1100):
+        """Aviso breve y discreto arriba en la pantalla (sin robar el foco)."""
+        lbl = getattr(self, '_osd_lbl', None)
+        if lbl is None:
+            lbl = self._osd_lbl = QLabel()
+            lbl.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowTransparentForInput)
+            lbl.setAttribute(Qt.WA_ShowWithoutActivating)
+            lbl.setAttribute(Qt.WA_TranslucentBackground)
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet("QLabel{background:rgba(24,28,40,225);color:#fff;border-radius:10px;"
+                              "padding:10px 22px;font:600 15px 'Segoe UI';}")
+            self._osd_timer = QTimer(self)
+            self._osd_timer.setSingleShot(True)
+            self._osd_timer.timeout.connect(lbl.hide)
+        lbl.setText(text)
+        lbl.adjustSize()
+        scr = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        g = scr.availableGeometry()
+        lbl.move(g.center().x() - lbl.width() // 2, g.top() + 60)
+        lbl.show()
+        self._osd_timer.start(ms)
+
+    def _apply_profile_scalars(self, scalars):
+        for k, v in scalars.items():
+            if str(k).startswith('telegram') or k in ('profile_slots', 'profile_autosave', 'profile_preload', 'current_profile', 'gesture_hints'):
+                continue
+            self.global_state[k] = v        # ajustes del perfil (cables...)
+
+    def _close_quiet(self, windows):
+        _q = self.app_is_quitting
+        self.app_is_quitting = True         # closeEvent no toca el estado global
+        try:
+            for w in windows:
+                w.close()
+                w.deleteLater()
+        finally:
+            self.app_is_quitting = _q
+
+    @staticmethod
+    def _win_alive(w):
+        try:
+            from shiboken6 import isValid
+            return bool(isValid(w))
+        except Exception:
+            return True
+
+    def _prune_dead_windows(self):
+        """[PACK86] Quita de la lista las ventanas cuyo objeto C++ ya no existe (evita errores en bucle)."""
+        dead = [k for k, w in self.widgets.items() if not self._win_alive(w)]
+        for k in dead:
+            self.widgets.pop(k, None)
+            log_warn("Manager", f"Ventana de '{k}' ya no existe: se quita de la lista")
+
+    def _drop_resident(self, name):
+        res = getattr(self, '_resident', {}).pop(name, None)
+        if res:
+            self._close_quiet(res['windows'].values())
+
+    def _stash_current_set(self):
+        """Aparta el set activo: sus ventanas quedan VIVAS pero ocultas (se vuelve a el al instante)."""
+        key = self.current_profile_name or 'sin_nombre'
+        self.hide_cables()
+        self._sync_windows_to_state()
+        notes = {k: v for k, v in self.global_state.items() if isinstance(v, dict)}
+        scalars = {k: v for k, v in self.global_state.items() if not isinstance(v, dict)}
+        windows = dict(self.widgets)
+        if self._profile_autosave() or not self.current_profile_name:
+            try:
+                self._write_profile_file(key)
+            except Exception as e:
+                log_error("Manager", f"No se pudo guardar el set '{key}' al apartarlo: {e}")
+        for w in windows.values():
+            w.hide()
+        self.widgets.clear()
+        for k in notes:
+            self.global_state.pop(k, None)
+        if key in self._resident:               # [PACK86] una copia vieja (precargada) del mismo set: la actual la sustituye
+            self._drop_resident(key)
+        self._resident[key] = {'notes': notes, 'windows': windows, 'scalars': scalars}
+        while len(self._resident) > self.RESIDENT_MAX:
+            old = next((k for k in self._resident if k != key), None)
+            if old is None:
+                break
+            self._drop_resident(old)
+
+    def _cold_register(self, raw, show):
+        """Crea las notas de un perfil guardado y las registra en el manager (visibles u ocultas)."""
+        scalars = {k: v for k, v in raw.items() if not isinstance(v, dict)}
+        notes = self._remap_set({k: v for k, v in raw.items()
+                                 if isinstance(v, dict) and not str(k).startswith('hierarchy_settings')})
+        windows = {}
+        for wid, st in notes.items():
+            self.global_state[wid] = st
+            w = StickerWindow(self, wid, st)
+            self.widgets[wid] = w
+            windows[wid] = w
+            if show and st.get('enabled', True):
+                w.show()
+        return notes, windows, scalars
+
+    def _read_profile(self, name):
+        with open(self._profile_path(name), 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            raise ValueError("formato de perfil no valido")
+        return raw
+
+    def _load_profile(self, name):
+        if not name or name == self.current_profile_name:
+            return
+        res = self._resident.get(name)
+        if res is not None and not all(self._win_alive(w) for w in res['windows'].values()):
+            self._resident.pop(name, None)       # [PACK86] set residente con ventanas ya destruidas: se carga de nuevo desde el archivo
+            log_warn("Manager", f"El set residente '{name}' estaba da\u00f1ado: se carga desde su archivo")
+            res = None
+        raw = None
+        if res is None:
+            try:
+                raw = self._read_profile(name)
+            except Exception as e:
+                log_error("Manager", f"No se pudo leer el perfil '{name}': {e}")
+                self._osd(f"El perfil \u00ab{name}\u00bb no se puede abrir")
+                return
+        t0 = time.perf_counter()
+        try:
+            self._persist_history()
+            if res is not None:
+                self._resident.pop(name, None)       # [PACK86] ANTES de apartar el set actual: si no, la limpieza de residentes podia destruir justo este set
+            self._stash_current_set()
+            if res is not None:
+                self.global_state.update(res['notes'])
+                self.widgets.update(res['windows'])
+                self._apply_profile_scalars(res['scalars'])
+            else:
+                notes, windows, scalars = self._cold_register(raw, True)
+                self._apply_profile_scalars(scalars)
+            self._set_current_profile(name)
+            self.all_visible = True
+            self._apply_collapse_visibility()
+            self._seed_global_history()
+            self._refresh_connector_overlay()
+            QTimer.singleShot(0, self._after_set_swap)
+            ms = (time.perf_counter() - t0) * 1000
+            log_info("Manager", f"Perfil activado: {name} ({'residente' if res is not None else 'carga'}, {ms:.0f} ms)")
+            self._osd(f"\u00ab{name}\u00bb")
+        except Exception as e:
+            log_error("Manager", f"Error al cargar perfil '{name}': {e}")
+            if res is not None and name not in self._resident and all(self._win_alive(w) for w in res['windows'].values()) \
+                    and not any(k in self.widgets for k in res['windows']):
+                self._resident[name] = res             # [PACK86] el set que no se pudo activar no se pierde
+
+    def _after_set_swap(self):
+        """Trabajo que no hace falta para ver el cambio: se hace justo despues (guardado, menu, precarga)."""
+        self.save_global_state(record_history=False)
+        self.build_tray_menu()
+        self._schedule_preload(400)
+
+    def _schedule_preload(self, ms=2500):
+        if self._profile_preload():
+            QTimer.singleShot(ms, self._preload_next)
+
+    def _preload_next(self):
+        """Crea, ocultos y de uno en uno, los sets con tecla asignada: asi la primera vez tambien es instantaneo."""
+        if not self._profile_preload() or self.app_is_quitting:
+            return
+        for n in range(1, 11):
+            name = self._slots().get(str(n))
+            if not name or name == self.current_profile_name or name in self._resident:
+                continue
+            if not os.path.exists(self._profile_path(name)) or len(self._resident) >= self.RESIDENT_MAX:
+                continue
+            try:
+                notes, windows, scalars = self._cold_register(self._read_profile(name), False)
+                for k in notes:
+                    self.global_state.pop(k, None)
+                    self.widgets.pop(k, None)
+                self._resident[name] = {'notes': notes, 'windows': windows, 'scalars': scalars}
+                log_info("Manager", f"Set precargado: {name}")
+            except Exception as e:
+                log_error("Manager", f"No se pudo precargar el set '{name}': {e}")
+            QTimer.singleShot(300, self._preload_next)
+            return
+
+    def _slots(self):
+        try:
+            d = json.loads(self.global_state.get('profile_slots') or '{}')
+        except Exception:
+            d = {}
+        return {str(k): str(v) for k, v in d.items()} if isinstance(d, dict) else {}
+
+    def _store_slots(self, d):
+        self.global_state['profile_slots'] = json.dumps(d, ensure_ascii=False)
+        self._pending_disk_write = True
+
+    def hotkey_load_slot(self, n, alpha=False):
+        if alpha and not self._slots().get(str(n)):      # Ctrl+cifra sin ranura asignada: el perfil n.N de la lista (como antes)
+            names = [os.path.splitext(os.path.basename(p))[0] for p in self._list_profiles()]
+            if n - 1 < len(names):
+                self._load_profile(names[n - 1])
+                return
+        """Alt+N: activa el set de la ranura N."""
+        name = self._slots().get(str(n))
+        if not name:
+            self._osd(f"Ranura {n}: vac\u00eda  (Ctrl+Alt+{n % 10} guarda aqu\u00ed el perfil activo)", 1800)
+        elif name == self.current_profile_name:
+            self._osd(f"Ranura {n}: \u00ab{name}\u00bb (ya activo)")
+        else:
+            self._load_profile(name)
+
+    def hotkey_save_slot(self, n):
+        """Ctrl+Alt+N: guarda el set actual en la ranura N."""
+        d = self._slots()
+        cur = self.current_profile_name
+        name = d.get(str(n))
+        if not name:
+            name = cur if (cur and cur not in d.values()) else f"Perfil {n}"
+        if cur and cur != name and self._profile_autosave():
+            try:
+                self._sync_windows_to_state()
+                self._write_profile_file(cur)       # el set de origen no pierde sus cambios
+            except Exception as e:
+                log_error("Manager", f"No se pudo guardar '{cur}': {e}")
+        d[str(n)] = name
+        self._store_slots(d)
+        self._save_profile(name)
+        self._osd(f"Ranura {n}: perfil guardado como \u00ab{name}\u00bb")
+
+    def _unique_profile_name(self, base):
+        base = HotkeyManager.safe_profile_name(base) or "Perfil"
+        name, i = base, 2
+        while os.path.exists(self._profile_path(name)):
+            name = f"{base} {i}"
+            i += 1
+        return name
+
+    def _clone_set_do(self, name, slot=None, switch=False):
+        """[PACK59] Guarda una copia del set activo como perfil NUEVO (nunca sobrescribe uno existente) y,
+        si se pide, la asigna a una ranura (Alt+N la carga) y/o cambia a ella."""
+        name = self._unique_profile_name(name)
+        _q = self.app_is_quitting
+        self.force_save_all_states()
+        self.app_is_quitting = _q
+        self._sync_windows_to_state()
+        if slot:
+            d = self._slots()
+            d[str(slot)] = name
+            self._store_slots(d)
+        self._write_profile_file(name)
+        self.build_tray_menu()
+        info = f"  \u00b7  ranura {slot % 10} (Alt+{slot % 10})" if slot else ""
+        if switch:
+            self._load_profile(name)
+        self._osd(f"Perfil duplicado como \u00ab{name}\u00bb{info}", 2200)
+        log_info("Manager", f"Set clonado: {name} (ranura {slot or '-'})")
+        return name
+
+    def clone_current_set(self, slot=None):
+        """Dialogo para clonar el set activo: nombre, ranura (si no viene fijada) y si se cambia al clon."""
+        cur = self.current_profile_name or "Perfil"
+        dlg = QDialog(self.dialog_parent)
+        dlg.setWindowTitle("Duplicar el perfil activo")
+        dlg.setMinimumWidth(420)
+        lay = QFormLayout(dlg)
+        ed = QLineEdit(self._unique_profile_name(cur + " copia"))
+        lay.addRow("Nombre del clon:", ed)
+        cb = None
+        slots = self._slots()
+        if slot is None:
+            cb = QComboBox()
+            cb.addItem("(sin ranura)", 0)
+            for n in range(1, 11):
+                occ = slots.get(str(n))
+                cb.addItem(f"{n % 10}  \u00b7  Alt+{n % 10} carga, Ctrl+Alt+{n % 10} guarda" + (f"   [ocupada por \u00ab{occ}\u00bb]" if occ else "   [libre]"), n)
+            for i in range(1, cb.count()):
+                if not slots.get(str(cb.itemData(i))):
+                    cb.setCurrentIndex(i)
+                    break
+            lay.addRow("Asignar a la ranura:", cb)
+        else:
+            lay.addRow("Ranura:", QLabel(f"{slot % 10}  (Alt+{slot % 10})"))
+        sw = QCheckBox("Cambiar al clon ahora")
+        lay.addRow(sw)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addRow(bb)
+        if not dlg.exec() or not ed.text().strip():
+            return None
+        n_slot = slot if slot is not None else (int(cb.currentData() or 0) if cb is not None else 0)
+        return self._clone_set_do(ed.text().strip(), n_slot or None, sw.isChecked())
+
+    def _build_profiles_menu(self, menu):
+        pm = QMenu("Perfiles", menu)
+        a_save = QAction("Guardar perfil activo...", self)
+        a_save.triggered.connect(self._save_profile_dialog)
+        pm.addAction(a_save)
+        a_clone = QAction("Duplicar el perfil activo como perfil nuevo...", self)       # [PACK59]
+        a_clone.triggered.connect(lambda: self.clone_current_set())
+        pm.addAction(a_clone)
+        auto = QAction("Guardar el perfil activo al cambiar de perfil", self)
+        auto.setCheckable(True)
+        auto.setChecked(self._profile_autosave())
+        auto.toggled.connect(lambda on: self.global_state.__setitem__('profile_autosave', bool(on)))
+        pm.addAction(auto)
+        pre = QAction("Precargar los perfiles con tecla (cambio instant\u00e1neo)", self)
+        pre.setCheckable(True)
+        pre.setChecked(self._profile_preload())
+        pre.toggled.connect(lambda on: (self.global_state.__setitem__('profile_preload', bool(on)), on and self._schedule_preload(200)))
+        pm.addAction(pre)
+        pm.addSeparator()
+        a_next = QAction("Perfil siguiente", self)
+        a_next.triggered.connect(lambda: self.cycle_profile(1))
+        pm.addAction(a_next)
+        a_prev = QAction("Perfil anterior", self)
+        a_prev.triggered.connect(lambda: self.cycle_profile(-1))
+        pm.addAction(a_prev)
+        pm.addSeparator()
+        slots = self._slots()
+        inv = {v: k for k, v in slots.items()}
+        names = [os.path.splitext(os.path.basename(p))[0] for p in self._list_profiles()]
+        cur = self.current_profile_name
+        for name in names:
+            tag = f"   [ranura {int(inv[name]) % 10}]" if name in inv else ""
+            act = QAction(name + tag + ("  \u25cf" if name in self._resident else ""), self)
+            act.setCheckable(True)
+            act.setChecked(name == cur)
+            act.triggered.connect(lambda checked, n=name: self._load_profile_dialog(n))
+            pm.addAction(act)
+        if not names:
+            none = QAction("(sin perfiles guardados)", self)
+            none.setEnabled(False)
+            pm.addAction(none)
+        pm.addSeparator()
+        sm = QMenu("Ranuras de teclado (Alt+N carga, Ctrl+Alt+N guarda)", pm)
+        for n in range(1, 11):
+            cur_name = slots.get(str(n))
+            empty = "(vac\u00eda)"
+            sub = QMenu(f"{n % 10}:  {cur_name or empty}", sm)
+            a_here = QAction(f"Guardar aqu\u00ed el perfil activo (Ctrl+Alt+{n % 10})", self)
+            a_here.triggered.connect(lambda checked, k=n: self.hotkey_save_slot(k))
+            sub.addAction(a_here)
+            a_cl = QAction("Duplicar aqu\u00ed el perfil activo como perfil nuevo...", self)
+            a_cl.triggered.connect(lambda checked, k=n: self.clone_current_set(k))
+            sub.addAction(a_cl)
+            asg = QMenu("Asignar un perfil existente", sub)
+            for name in names:
+                a = QAction(name, self)
+                a.triggered.connect(lambda checked, k=n, nm=name: (self._store_slots({**self._slots(), str(k): nm}),
+                                                                   self.build_tray_menu(), self._schedule_preload(200)))
+                asg.addAction(a)
+            sub.addMenu(asg)
+            if cur_name:
+                a_del = QAction("Quitar asignaci\u00f3n", self)
+                a_del.triggered.connect(lambda checked, k=n: (self._store_slots({a: b for a, b in self._slots().items() if a != str(k)}),
+                                                              self.build_tray_menu()))
+                sub.addAction(a_del)
+            sm.addMenu(sub)
+        pm.addMenu(sm)
+        pm.addSeparator()
+        pm.addMenu(self._build_data_menu(pm, with_delete=False))       # [PACK72] importar / exportar / copias, tambien desde aqui
+        menu.addMenu(pm)
+
+    def _load_profile_dialog(self, name):
+        if self._profile_autosave():      # el set actual no se pierde: queda apartado y guardado
+            self._load_profile(name)
+        else:
+            self._load_profile_dialog_confirm(name)
+
+    def _save_profile_dialog(self):
+        name, ok = QInputDialog.getText(self.dialog_parent, "Guardar perfil",
+                                        "Nombre del perfil:", text=self.current_profile_name or "")
+        if ok and name.strip():
+            self._save_profile(name.strip())
+
+    def _load_profile_dialog_confirm(self, name):
+        reply = QMessageBox.question(self.dialog_parent, "Cargar perfil",
+                                     f"Se reemplazar谩n TODOS los widgets actuales por el perfil '{name}'.\n\n驴Continuar?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self._load_profile(name)
+
+    def safe_quit(self):
+        log_info("Manager", "Iniciando cierre seguro (safe_quit)...")
+        self.force_save_all_states()
+        self._full_backup(on_quit=True)
+        self.app.quit()
+
+
+# --- Main Execution ---
+if __name__ == '__main__':
+
+    import ctypes
+    try:
+        if os.environ.get("WIDGET_ARENA_DPI_SYSTEM", "0") == "1":   # ver el comentario del inicio del archivo
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+
+    if '--previews' in sys.argv[1:]:           # [PACK92] rellena las vistas previas de las copias y sale (sin abrir la aplicacion)
+        if os.name != 'nt':
+            os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        sys.exit(_previews_cli(sys.argv))
+
+    console_hwnd = None
+    try:
+        kernel32 = ctypes.WinDLL('kernel32')
+        user32 = ctypes.WinDLL('user32')
+        console_hwnd = kernel32.GetConsoleWindow()
+        if console_hwnd:
+            GWL_EXSTYLE = -20
+            WS_EX_TOOLWINDOW = 0x00000080
+            
+            try:
+                ex_style = user32.GetWindowLongW(console_hwnd, GWL_EXSTYLE)
+                user32.SetWindowLongW(console_hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW)
+            except AttributeError:
+                ex_style = user32.GetWindowLongA(console_hwnd, GWL_EXSTYLE)
+                user32.SetWindowLongA(console_hwnd, GWL_EXSTYLE, ex_style | WS_EX_TOOLWINDOW)
+
+            user32.ShowWindow(console_hwnd, 0)
+    except Exception as e:
+        print(f"INFO: No se pudo obtener/ocultar la consola: {e}")
+
+    class Logger(object):
+        def __init__(self, log_file="debug.log"):
+            self.terminal = sys.__stdout__
+            self.log_file_path = log_file
+            try:
+                self.log = open(log_file, 'a', encoding='utf-8')
+                self.log.write(f"\n--- Nueva Sesion Iniciada: {datetime.datetime.now()} ---\n")
+                self.log.flush()
+            except Exception as e:
+                self.terminal.write(f"ERROR: No se pudo abrir el archivo de log en {log_file}. Error: {e}\n")
+                self.log = None
+
+        def write(self, message):
+            self.terminal.write(message)
+            if self.log:
+                self.log.write(message)
+                self.log.flush()
+
+        def flush(self):
+            self.terminal.flush()
+            if self.log:
+                self.log.flush()
+
+    os.makedirs(DATA_DIR, exist_ok=True) 
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    
+    try:
+        sys.stdout = Logger(LOG_FILE_PATH)
+        sys.stderr = sys.stdout 
+    except Exception as e:
+        print(f"ERROR: No se pudo iniciar el logger: {e}")
+        pass
+
+    
+    try:
+        import faulthandler
+        _CRASH_FH = open(os.path.join(LOG_DIR, "widget_arena_crash.log"), "a", buffering=1)
+        _CRASH_FH.write(f"\n--- sesion {datetime.datetime.now()} ---\n")
+        faulthandler.enable(file=_CRASH_FH, all_threads=True)   # un cierre brusco deja aqui su traza
+        from PySide6.QtCore import qInstallMessageHandler
+        def _qt_msg(mode, ctx, msg):
+            print(f"[Qt][{getattr(mode, 'name', mode)}] {msg}")
+        qInstallMessageHandler(_qt_msg)                          # avisos de Qt al log normal
+    except Exception as e_diag:
+        print(f"No se pudo activar el diagnostico de cierres: {e_diag}")
+
+    if 'Fusion' in QStyleFactory.keys():
+        QApplication.setStyle('Fusion')
+    
+    app = QApplication(sys.argv)
+    
+    _ensure_app_icon()
+    app_icon = QIcon()
+    if os.path.exists(APP_ICON_PATH_ICO):
+        app_icon.addFile(APP_ICON_PATH_ICO)
+    elif os.path.exists(APP_ICON_PATH_PNG):
+        app_icon.addFile(APP_ICON_PATH_PNG)
+    
+    if app_icon.isNull():
+        app_icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DesktopIcon)
+        
+    app.setWindowIcon(app_icon)
+    
+    app.setQuitOnLastWindowClosed(False) 
+    
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        dummy_parent_for_error = QWidget()
+        dummy_parent_for_error.setWindowFlags(Qt.Tool)
+        QMessageBox.critical(dummy_parent_for_error, "Error Critico", "El sistema no soporta QSystemTrayIcon. La aplicacion no puede iniciarse.")
+        sys.exit(1)
+
+    manager = WidgetManager(app, console_hwnd)
+    try:
+        manager._stall_watch = _start_stall_watch()       # [PACK108]
+    except Exception as e_sw:
+        print(f"No se pudo activar el vigilante de rendimiento: {e_sw}")
+    
+    sys.exit(app.exec())

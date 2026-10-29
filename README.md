@@ -1,2 +1,88 @@
-# widget-arena
-Desktop notes and widgets linked with physics-based cables. One-click installer for Windows, macOS and Linux (PySide6/Qt)
+# Widget Arena
+
+**Notas y widgets en tu escritorio, muy usables y configurables, pensados para el uso diario.**
+Conecta las notas con cables, jerarquízalas en padres e hijos y pliega o despliega grupos enteros para ordenar la vista.
+Funciona en Windows, macOS y Linux, con instalación de un clic.
+
+*Desktop notes and widgets, highly usable and configurable, built for daily use. Link notes with cables, organise them as parents and children, and collapse or expand whole groups. Windows, macOS and Linux, one-click install.*
+
+## Qué puedes hacer
+
+- **Notas y widgets flotantes** sobre el escritorio: texto, imágenes y páginas web, cada uno con sus capas, fuente, color, giro y tamaño.
+- **Conectar**: enlaza una nota con otra y los dos widgets quedan unidos por un cable, que cuelga como una cuerda con física y se balancea al moverlos.
+- **Jerarquizar**: padres, hijos, nietos… Los hijos pueden seguir al padre cuando lo arrastras, y puedes mover una rama entera.
+- **Plegar y desplegar**: oculta los hijos de una nota (o de todas) para ver solo lo que importa, y recupéralos cuando quieras.
+- **Perfiles**: guarda conjuntos completos de widgets y cambia entre ellos al instante con el teclado.
+- **Configurable a fondo**: cables (grosor, opacidad, degradado, cuerda, calidad de dibujo), estilos de nota, templates, atajos de teclado y gestos del icono de bandeja.
+- **Rápido y ligero**: la calidad de dibujo de los cables se adapta sola al ordenador.
+- **Tus datos son tuyos**: todo se guarda en archivos JSON en tu carpeta de usuario, con copias de seguridad.
+
+## Instalar (un clic)
+
+Entra en la página del proyecto y pulsa el botón: detecta tu sistema y descarga el instalador que toca.
+No hace falta tener Python ni ser administrador: el instalador prepara su propio Python y las librerías,
+instala el programa **solo para tu usuario**, crea los accesos directos con su icono y lo abre.
+
+| Sistema | Qué haces |
+|---|---|
+| **Windows** 10/11 (64 bits) | Abre `install-windows.cmd`. Si SmartScreen avisa: *Más información → Ejecutar de todas formas*. |
+| **macOS** 12+ | Abre `install-macos.zip` y haz doble clic en `Widget Arena.command` (si avisa: clic derecho → *Abrir*). |
+| **Linux** (glibc) | `curl -fsSL <URL de la página>/dl/install-linux.sh \| bash` |
+
+La primera vez descarga unos cientos de MB (Qt). Volver a ejecutar el instalador **actualiza** el programa y conserva tus notas.
+
+**Desinstalar:** en Windows, *Configuración → Aplicaciones → Widget Arena*. En Linux/macOS, `bash ~/.local/share/WidgetArena/uninstall.sh`
+(macOS: `~/Library/Application Support/WidgetArena/uninstall.sh`). Te pregunta si quieres borrar también tus datos.
+
+### Por qué el sistema avisa
+Los instaladores no están firmados con un certificado de pago, así que Windows y macOS avisan ante cualquier archivo descargado que no conocen.
+Todo el código está en este repositorio (`installers/`) para que puedas leerlo antes de ejecutarlo.
+
+## Primer arranque
+
+La primera vez que se abre aparece un conjunto de notas de bienvenida enlazadas entre sí, que te enseña los gestos y las opciones principales
+(mover, enlazar, plegar, estilos, perfiles). Además queda guardado un perfil de ejemplo de uso diario, «Ejemplo - semana», para que veas cómo se organiza
+un tablero real; cámbialo con **Ctrl + 2** o desde el menú del icono de bandeja → *Perfiles*. Puedes borrarlos cuando quieras: no vuelven a aparecer.
+
+## Gestos y atajos más útiles
+
+| Gesto | Qué hace |
+|---|---|
+| Clic derecho en una nota | Menú del widget: capas, aspecto, relaciones, clonar, eliminar |
+| Arrastrar | Mover el widget (los hijos con posición ligada lo siguen) |
+| **Ctrl** + arrastrar sobre otra nota | Enlazar: pasa a ser **hija** de la nota donde sueltas |
+| **Alt** + arrastrar sobre otra nota | Enlazar: pasa a ser **padre** de la nota donde sueltas |
+| **Ctrl + Alt + Win** + arrastrar | Mover el widget con todos sus descendientes |
+| **Ctrl + Alt + Mayús** + arrastrar | Crear un hijo bajo el cursor |
+| Doble clic | Ocultar el widget (pide confirmación) |
+| **Ctrl + 1…0** | Cargar el perfil número N |
+| **Ctrl + Alt + B** | Navegador de todos tus widgets |
+| **F1** | Guía de gestos y atajos completa |
+
+Mantén **Ctrl**, **Alt**, **Mayús** o **Win** sobre una nota y aparece un recuadro con lo que hace cada gesto.
+Los atajos se pueden cambiar en *icono de bandeja → Ajustes → Atajos de teclado*.
+
+## Ejecutar sin instalar (para desarrollo)
+
+```bash
+python widget_arena.py        # Python 3.12 o superior
+```
+
+La primera vez comprueba que están `numpy` y `PySide6` y ofrece instalarlos. `herramientas.py` (también por doble clic) instala, desinstala,
+compila un ejecutable o deja el programa en modo portable.
+
+## Cómo está montado
+
+- `widget_arena.py`: el programa (un solo archivo).
+- `herramientas.py`: instalar / desinstalar / compilar / librerías de cualquier `.py` de la carpeta.
+- `defaults/`: lo que se copia en el primer arranque (notas de bienvenida, perfil de ejemplo, estilo de nota).
+- `installers/`: `install-windows.cmd` (con PowerShell dentro) e `install-unix.sh` (Linux y macOS). Descargan `uv`, un Python 3.12 propio, y llaman a `herramientas.py install`.
+- `site/` y `tools/build_site.sh`: la página con el botón único y el montaje de lo que se publica.
+- `.github/workflows/pages.yml`: publica la página en GitHub Pages en cada cambio; calcula las URLs solo.
+
+### Activar la página (una sola vez)
+En el repositorio: **Settings → Pages → Build and deployment → Source: GitHub Actions**. Después, cada `push` a `main` la publica.
+
+## Licencia
+
+MIT. Ver [LICENSE](LICENSE).
