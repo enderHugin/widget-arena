@@ -3,7 +3,7 @@ name: Publicar página e instaladores
 on:
   push:
     branches: [main]
-    paths: ['site/**', 'installers/**', 'assets/**', 'tools/**', 'defaults/**', 'widget_arena.py', 'herramientas.py', 'VERSION', '.github/workflows/pages.yml']
+    paths: ['site/**', 'installers/**', 'assets/**', 'tools/**', 'defaults/**', 'docs/**', 'widget_arena.py', 'herramientas.py', 'VERSION', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:

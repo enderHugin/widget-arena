@@ -499,6 +499,8 @@ def _store_path(path):
 def _resolve_stored(p):
     """Inversa de _store_path: ruta absoluta de lo que hay guardado en una nota o template."""
     p = str(p)
+    if os.sep == '/':
+        p = p.replace('\\', '/')              # [PACK112] rutas guardadas en Windows (widget_arena_data\sticky\...)
     if os.path.isabs(p):
         return p
     parts = os.path.normpath(p).split(os.sep)
@@ -523,12 +525,13 @@ IMAGES_DIR = os.path.join(ROOT_DATA_DIR, "images")
 STICKY_DIR = os.path.join(ROOT_DATA_DIR, "sticky")
 TEMPLATES_DIR = os.path.join(ROOT_DATA_DIR, "templates")
 PROFILES_DIR = os.path.join(ROOT_DATA_DIR, "profiles")
+PACKS_DIR = os.path.join(ROOT_DATA_DIR, "packs")          # [PACK112] packs de estilos (.wapack) instalados
 
 # Crear carpetas
 for d in (
     DATA_DIR, BACKUP_DIR, CACHE_DIR, LOG_DIR, BUTTONS_DIR, LAYERS_CACHE_DIR, WEB_DATA_DIR,
     FRAMES_DIR, IMAGES_DIR, STICKY_DIR, TEMPLATES_DIR,
-    PROFILES_DIR
+    PROFILES_DIR, PACKS_DIR
 ):
     os.makedirs(d, exist_ok=True)
 
@@ -568,6 +571,27 @@ def _seed_first_run():
 
 
 _seed_first_run()
+
+
+def _seed_example_packs():
+    """[PACK112] Una sola vez: deja en packs/ los packs de ejemplo que trae el programa (carpeta defaults/packs), tambien a quien ya lo usaba.
+    Nunca sobrescribe y, si luego borras uno, no vuelve a aparecer."""
+    marker = os.path.join(DATA_DIR, ".packs_seed_done")
+    if os.path.exists(marker):
+        return
+    src = os.path.join(APP_DIR, "defaults", "packs")
+    try:
+        if os.path.isdir(src):
+            for f in os.listdir(src):
+                if f.lower().endswith(".wapack") and not os.path.exists(os.path.join(PACKS_DIR, f)):
+                    shutil.copy2(os.path.join(src, f), os.path.join(PACKS_DIR, f))
+        with open(marker, 'w', encoding='utf-8') as _f:
+            _f.write("ok\n")
+    except OSError:
+        pass
+
+
+_seed_example_packs()
 
 
 def _migrate_data_layout():
@@ -2259,7 +2283,7 @@ class StickerWindow(QMainWindow):
         path_exists = os.path.exists(final_path)
 
         if not path_exists:
-            fallback_filename = os.path.basename(local_path) 
+            fallback_filename = os.path.basename(local_path.replace('\\', '/'))      # [PACK112] tambien rutas con barras de Windows
             if not fallback_filename:
                  print(f"ERROR [{layer_name}]: Path original no existe y no se pudo extraer un nombre de archivo para el fallback.")
             else:
@@ -2621,6 +2645,7 @@ class StickerWindow(QMainWindow):
 
     def load_template_data(self, data):
         log_debug(self.widget_id, "Cargando template data...")
+        _ensure_generated_layer(data)          # [PACK112] la imagen de una nota base no viaja en los estilos: si falta, se dibuja de nuevo
         self.current_template_data = data
         self.set_content(data) 
         self._update_selection_borders() 
@@ -7620,7 +7645,7 @@ _MENU_RULES_T = (
     ("Ocultar todos", "pantalla"), ("Mostrar todos", "pantalla"), ("Plegar todos", "pantalla"), ("Desplegar todos", "pantalla"),
     ("Recargar", "pantalla"),
     ("Nuevo widget", "crear"), ("Nuevo con un aspecto", "crear"), ("Nueva nota base", "crear"),
-    ("Navegador", "explorar"), ("Widgets", "explorar"), ("Perfiles", "explorar"), ("Guardar y cargar", "explorar"), ("Edici", "explorar"),
+    ("Navegador", "explorar"), ("Widgets", "explorar"), ("Perfiles", "explorar"), ("Guardar y cargar", "explorar"), ("Packs de estilos", "explorar"), ("Edici", "explorar"),
     ("Ajustes", "app"), ("Gu\u00eda", "app"), ("Mostrar u ocultar", "app"), ("Acerca", "app"), ("Salir", "app"),
 )
 # Solo estas opciones (las mas usadas) llevan icono y negrita; sin colores ni franjas.
@@ -10558,6 +10583,959 @@ class BackupRestoreDialog(QDialog):
         self.status.setText(self.m.restore_backup(d, act, names, tpl))
         self._select(self.lst.currentRow())
 
+# ---------------------------------------------------------------------------------------------------------------------
+# [PACK112] Packs de estilos (.wapack): un .zip con estilos (templates), perfiles (conjuntos de widgets) y las imagenes que usan.
+# Se leen directamente del zip (no se extrae nada a disco); al usar un estilo solo se copia lo que ese estilo necesita.
+# Formato completo: docs/FORMATO-WAPACK.md
+# ---------------------------------------------------------------------------------------------------------------------
+PACK_FORMAT = "widget-arena-pack"
+PACK_FORMAT_VERSION = 1          # version del formato que escribe este programa
+PACK_RENDER_V = 1                # version del dibujado de la nota base (si algun dia cambia, se sube y los packs viejos lo declaran)
+PACK_EXT = ".wapack"
+_PACK_LIM = {'json': 8 << 20, 'asset': 40 << 20, 'total': 600 << 20, 'members': 4000}
+_PACK_CACHE = {}
+_PACK_FONTS_DONE = set()
+_PACK_IMG_EXT = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp')
+
+
+class PackError(Exception):
+    """Un pack que no se puede abrir o instalar (el texto va dirigido a la persona)."""
+
+
+def _pack_slug(text, default='pack'):
+    import unicodedata
+    s = unicodedata.normalize('NFKD', str(text or '')).encode('ascii', 'ignore').decode('ascii').lower()
+    s = re.sub(r'[^a-z0-9]+', '-', s).strip('-')[:48].strip('-')
+    return s or default
+
+
+def _pack_safe_member(name):
+    """Nombre de archivo de un zip si es seguro (relativo, sin .., con /); None si no."""
+    n = str(name).replace('\\', '/')
+    if not n or n.startswith('/') or len(n) > 240 or '\x00' in n:
+        return None
+    parts = n.split('/')
+    if any(p in ('', '.', '..') for p in parts) or ':' in parts[0]:
+        return None
+    return n
+
+
+def _pack_ver(v):
+    out = []
+    for p in re.split(r'[.\-+]', str(v or '0')):
+        out.append(int(p) if p.isdigit() else 0)
+    return tuple(out) or (0,)
+
+
+class WaPack:
+    """Un pack .wapack abierto en solo lectura. Lanza PackError si no es un pack valido."""
+
+    def __init__(self, path):
+        import zipfile
+        self.path = os.path.abspath(str(path))
+        self.members = {}
+        try:
+            with zipfile.ZipFile(self.path, 'r') as z:
+                infos = z.infolist()
+                if len(infos) > _PACK_LIM['members']:
+                    raise PackError("El pack tiene demasiados archivos (%d)." % len(infos))
+                if sum(i.file_size for i in infos) > _PACK_LIM['total']:
+                    raise PackError("El pack es demasiado grande una vez descomprimido.")
+                for i in infos:
+                    n = _pack_safe_member(i.filename)
+                    if n is not None and not i.is_dir():
+                        self.members[n] = i.file_size
+        except zipfile.BadZipFile:
+            raise PackError("El archivo no es un .zip v\u00e1lido (puede estar da\u00f1ado o incompleto).")
+        except OSError as e:
+            raise PackError("No se pudo leer el archivo: %s" % e)
+
+        if 'pack.json' not in self.members:
+            raise PackError("No es un pack de estilos: falta pack.json.")
+        try:
+            man = json.loads(self._read('pack.json', 1 << 20).decode('utf-8-sig'))
+        except (ValueError, UnicodeDecodeError):
+            raise PackError("pack.json no se puede leer.")
+        if not isinstance(man, dict) or man.get('format') != PACK_FORMAT:
+            raise PackError("No es un pack de Widget Arena (el formato de pack.json no coincide).")
+        need = man.get('min_reader', 1)
+        if isinstance(need, int) and need > PACK_FORMAT_VERSION:
+            raise PackError("Este pack usa un formato m\u00e1s nuevo (%s). Actualiza Widget Arena para abrirlo." % need)
+        self.manifest = man
+        self.name = str(man.get('name') or os.path.splitext(os.path.basename(self.path))[0])[:80]
+        self.id = _pack_slug(man.get('id') or self.name)
+        self.author = str(man.get('author') or '')[:80]
+        self.version = str(man.get('version') or '1.0.0')[:24]
+        self.license = str(man.get('license') or '')[:200]
+        self.description = str(man.get('description') or '')[:1500]
+
+        self.render_v = man.get('render_v') if isinstance(man.get('render_v'), int) else 1
+        self.styles = self._entries('styles')
+        self.sets = self._entries('sets')
+        self.fonts = []
+        for f in (man.get('fonts') if isinstance(man.get('fonts'), list) else []):
+            fn = _pack_safe_member(f.get('file')) if isinstance(f, dict) else None
+            if fn and fn in self.members and fn.lower().endswith(('.ttf', '.otf')):
+                self.fonts.append({'file': fn, 'family': str(f.get('family') or '')})
+
+    def _read(self, name, cap):
+        n = _pack_safe_member(name)
+        if n is None or n not in self.members:
+            raise PackError("Falta en el pack: %s" % name)
+        if self.members[n] > cap:
+            raise PackError("%s es demasiado grande." % n)
+        import zipfile
+        try:
+            with zipfile.ZipFile(self.path, 'r') as z:
+                with z.open(n) as f:
+                    data = f.read(cap + 1)
+        except (zipfile.BadZipFile, OSError, RuntimeError) as e:
+            raise PackError("No se pudo leer %s: %s" % (n, e))
+        if len(data) > cap:
+            raise PackError("%s es demasiado grande." % n)
+        return data
+
+    def _entries(self, kind):
+        out, seen = [], set()
+        raw = self.manifest.get(kind)
+        for e in (raw if isinstance(raw, list) else []):
+            if not isinstance(e, dict):
+                continue
+            fn = _pack_safe_member(e.get('file'))
+            if fn and fn in self.members and fn.lower().endswith('.json') and fn not in seen:
+                pv = _pack_safe_member(e.get('preview')) if e.get('preview') else None
+                out.append({'file': fn, 'name': str(e.get('name') or os.path.splitext(os.path.basename(fn))[0])[:80],
+                            'preview': pv if pv in self.members else None})
+                seen.add(fn)
+        if not out and not isinstance(raw, list):       # manifiesto sin lista: se descubre por carpetas
+            for fn in sorted(self.members, key=str.lower):
+                if fn.startswith(kind + '/') and fn.lower().endswith('.json'):
+                    stem = os.path.splitext(os.path.basename(fn))[0]
+                    pv = 'previews/%s.png' % stem
+                    out.append({'file': fn, 'name': stem, 'preview': pv if pv in self.members else None})
+
+        return out
+
+    def read_json(self, name):
+        try:
+            d = json.loads(self._read(name, _PACK_LIM['json']).decode('utf-8-sig'))
+        except (ValueError, UnicodeDecodeError):
+            raise PackError("%s no se puede leer." % name)
+        if not isinstance(d, dict):
+            raise PackError("%s no tiene el formato esperado." % name)
+        return d
+
+    def read_bytes(self, name):
+        return self._read(name, _PACK_LIM['asset'])
+
+    def preview_pixmap(self, entry):
+        try:
+            if entry.get('preview'):
+                pm = QPixmap()
+                if pm.loadFromData(self.read_bytes(entry['preview'])) and not pm.isNull():
+                    return pm
+        except PackError:
+            pass
+        return None
+
+
+def pack_open_any(path):
+    """WaPack si el archivo es un pack (.wapack, o un .zip que lleva pack.json); None si no lo es. Un pack danado lanza PackError."""
+    import zipfile
+    low = str(path).lower()
+    if low.endswith(PACK_EXT):
+        return WaPack(path)
+    if low.endswith('.zip') and zipfile.is_zipfile(path):
+        try:
+            with zipfile.ZipFile(path) as z:
+                if 'pack.json' not in z.namelist():
+                    return None
+        except (zipfile.BadZipFile, OSError):
+            return None
+        return WaPack(path)
+    return None
+
+
+def pack_list():
+    """Packs instalados (carpeta packs/). Los archivos que no son packs validos se ignoran."""
+    out = []
+    try:
+        names = sorted(os.listdir(PACKS_DIR), key=str.lower)
+    except OSError:
+        return out
+    for fn in names:
+        if not fn.lower().endswith(PACK_EXT):
+            continue
+        p = os.path.join(PACKS_DIR, fn)
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        sig = (st.st_mtime_ns, st.st_size)
+        ent = _PACK_CACHE.get(p)
+        if ent is None or ent[0] != sig:
+            try:
+                obj = WaPack(p)
+            except PackError as e:
+                log_warn("Packs", "%s se ignora: %s" % (fn, e))
+                obj = None
+            ent = _PACK_CACHE[p] = (sig, obj)
+
+        if ent[1] is not None:
+            out.append(ent[1])
+    return out
+
+
+def pack_find(pid):
+    for pk in pack_list():
+        if pk.id == pid:
+            return pk
+    return None
+
+
+def pack_install(path):
+    """Copia el pack a la carpeta packs/ (con su id como nombre). Si ya habia otra version, la sustituye."""
+    pk = pack_open_any(path)
+    if pk is None:
+        raise PackError("El archivo no es un pack de estilos.")
+    os.makedirs(PACKS_DIR, exist_ok=True)
+    dest = os.path.join(PACKS_DIR, pk.id + PACK_EXT)
+    if os.path.abspath(dest) != pk.path:
+        shutil.copyfile(pk.path, dest + '.tmp')
+        os.replace(dest + '.tmp', dest)
+    _PACK_CACHE.pop(dest, None)
+    new = WaPack(dest)
+    pack_load_fonts()
+    return new
+
+
+def pack_remove(pk):
+    try:
+        os.remove(pk.path)
+    except OSError as e:
+        raise PackError("No se pudo borrar el pack: %s" % e)
+    _PACK_CACHE.pop(pk.path, None)
+
+
+def pack_load_fonts():
+    """Registra en Qt las fuentes que traen los packs instalados (se leen del zip; no se copian a ninguna carpeta)."""
+    try:
+        from PySide6.QtGui import QFontDatabase
+        from PySide6.QtCore import QByteArray
+        for pk in pack_list():
+            for f in pk.fonts:
+                key = (pk.path, os.path.getmtime(pk.path), f['file'])
+                if key in _PACK_FONTS_DONE:
+                    continue
+                _PACK_FONTS_DONE.add(key)
+                try:
+                    QFontDatabase.addApplicationFontFromData(QByteArray(pk.read_bytes(f['file'])))
+                except PackError as e:
+                    log_warn("Packs", "fuente %s: %s" % (f['file'], e))
+    except Exception as e:
+        log_warn("Packs", "No se pudieron cargar las fuentes de los packs: %s" % e)
+
+
+# ---- imagenes: generadas (nota base) o propias ------------------------------------------------------------------------
+def _find_stored_file(path, layer_num=2):
+    """Archivo real al que apunta la ruta guardada en una capa (misma busqueda que al cargarla, y tambien rutas con barras de
+    Windows en cualquier sistema); None si no esta o si es una direccion web."""
+    if not path or not isinstance(path, str):
+        return None
+    p = path.strip()
+    if p.lower().startswith(('http://', 'https://', 'data:')):
+        return None
+    if p.startswith('file:///'):
+        p = QUrl(p).toLocalFile()
+    p = p.replace('\\', '/')
+    cands = [p if (os.path.isabs(p) or re.match(r'^[A-Za-z]:/', p)) else _resolve_stored(p)]
+    fn = os.path.basename(p)
+    if fn:
+        cands += [os.path.join(d, fn) for d in (STICKY_DIR, IMAGES_DIR, FRAMES_DIR)]
+    for c in cands:
+        try:
+            c = os.path.normpath(c)
+            if os.path.isfile(c):
+                return c
+        except (OSError, ValueError):
+            pass
+
+    return None
+
+
+def _gen_base_note_image(p):
+    """Ruta guardable de la imagen de una nota base con los parametros p (la dibuja si hace falta; mismo nombre que el editor de nota base)."""
+    p = {k: v for k, v in p.items() if k != 'render_v'}
+    tag = hashlib.md5(json.dumps(p, sort_keys=True, default=str).encode('utf-8')).hexdigest()[:16]
+    path = os.path.join(STICKY_DIR, "nota_base_%s.png" % tag)
+    if not os.path.exists(path):
+        os.makedirs(STICKY_DIR, exist_ok=True)
+        render_base_note(p).save(path, 'PNG')
+    return _store_path(path)
+
+
+def _is_generated_layer(td, k='layer2'):
+    ld = td.get(k) if isinstance(td, dict) else None
+    if k != 'layer2' or not isinstance(ld, dict) or not isinstance(td.get('base_note'), dict):
+        return False
+    return ld.get('source') == 'generated' or os.path.basename(str(ld.get('content') or '').replace('\\', '/')).startswith('nota_base_')
+
+
+def _ensure_generated_layer(td):
+    """Si la capa 2 es la imagen de una nota base (la genera el programa) y su archivo ya no esta, se dibuja de nuevo desde base_note.
+    Asi un estilo viaja sin imagen y se puede seguir editando. Devuelve True si cambio algo."""
+    try:
+        if not _is_generated_layer(td):
+            return False
+        l2 = td['layer2']
+        if _find_stored_file(str(l2.get('content') or ''), 2) and l2.get('source') != 'generated':
+            return False
+        old = l2.get('content')
+        new = _gen_base_note_image(td['base_note'])
+        l2['content'] = new
+        l2.pop('source', None)
+        if l2.get('base_hue_src') == old:
+            l2['base_hue_src'] = new
+        return True
+    except Exception as e:
+        log_warn("Packs", "No se pudo dibujar de nuevo la nota base: %s" % e)
+
+        return False
+
+
+def _pack_store_asset(pk, name):
+    """Copia a la carpeta sticky una imagen del pack (nombre por contenido: usarla dos veces no la duplica); devuelve la ruta guardable."""
+    data = pk.read_bytes(name)
+    ext = os.path.splitext(name)[1].lower()
+    ext = ext if ext in _PACK_IMG_EXT else '.png'
+    path = os.path.join(STICKY_DIR, "pk_%s%s" % (hashlib.sha1(data).hexdigest()[:16], ext))
+    if not os.path.exists(path):
+        os.makedirs(STICKY_DIR, exist_ok=True)
+        with open(path + '.tmp', 'wb') as f:
+            f.write(data)
+        os.replace(path + '.tmp', path)
+    return _store_path(path)
+
+
+def pack_materialize(pk, td):
+    """Template o nota de un pack -> datos normales del programa: las imagenes se copian (solo las que usa), la nota base se dibuja y
+    no queda ninguna referencia al pack. Lo que sale se puede guardar, exportar o abrir con cualquier version."""
+    td = copy.deepcopy(td)
+    bp = td.get('base_note') if isinstance(td.get('base_note'), dict) else None
+    if bp is not None:
+        bp.pop('render_v', None)
+    for k in ('layer1', 'layer2'):
+        ld = td.get(k)
+        if not isinstance(ld, dict):
+            continue
+        tok = ld.get('content')
+        src = ld.pop('source', None)
+        new = None
+        if src == 'generated' and bp is not None and k == 'layer2':
+            new = _gen_base_note_image(bp)
+        elif isinstance(tok, str) and tok.startswith('asset:'):
+            new = _pack_store_asset(pk, 'assets/' + tok[6:])
+
+        if new is not None:
+            ld['content'] = new
+            if 'base_hue_src' in ld:
+                if ld['base_hue_src'] == tok:
+                    ld['base_hue_src'] = new
+                else:
+                    del ld['base_hue_src']
+    return td
+
+
+def pack_normalize_template(td, assets, missing):
+    """Copia de un template o nota lista para guardar en un pack: las imagenes propias pasan a assets/ (nombre por contenido), la
+    imagen de una nota base se marca como generada (no se guarda) y no queda ninguna ruta del equipo."""
+    td = copy.deepcopy(td)
+    bp = td.get('base_note') if isinstance(td.get('base_note'), dict) else None
+    if bp is not None:
+        bp.pop('text', None)
+        bp['render_v'] = PACK_RENDER_V
+    for k in ('layer1', 'layer2'):
+        ld = td.get(k)
+        if not isinstance(ld, dict) or ld.get('type') != 'png':
+            continue
+        c = ld.get('content')
+        if not isinstance(c, str) or not c or c.lower().startswith(('http://', 'https://', 'data:')):
+            continue
+        same_hue = ld.get('base_hue_src') == c
+        if _is_generated_layer(td, k):
+            ld['source'], ld['content'] = 'generated', ''
+            new = ''
+        else:
+            real = _find_stored_file(c, 1 if k == 'layer1' else 2)
+            try:
+                data = open(real, 'rb').read(_PACK_LIM['asset'] + 1) if real else None
+            except OSError:
+                data = None
+            if not data or len(data) > _PACK_LIM['asset']:
+                missing.append(os.path.basename(c.replace('\\', '/')))
+                ld['content'] = ''
+                ld.pop('base_hue_src', None)
+                continue
+            ext = os.path.splitext(real)[1].lower()
+            ext = ext if ext in _PACK_IMG_EXT else '.png'
+            fn = "%s%s" % (hashlib.sha1(data).hexdigest()[:16], ext)
+            assets['assets/' + fn] = data
+            new = 'asset:' + fn
+            ld['content'] = new
+
+        if same_hue:
+            ld['base_hue_src'] = new
+        else:
+            ld.pop('base_hue_src', None)
+    return td
+
+
+def _pack_fonts_of(td):
+    out = set()
+    for k in ('layer1', 'layer2'):
+        ld = td.get(k) if isinstance(td, dict) else None
+        if isinstance(ld, dict):
+            if ld.get('font_family'):
+                out.add(str(ld['font_family']))
+            if isinstance(ld.get('content'), str) and '<' in ld['content']:
+                out.update(m.strip().strip("'\"") for m in re.findall(r'font-family:\s*([^;"]+)', ld['content']))
+    return {f for f in out if f}
+
+
+def _pack_preview_png(td, box=(260, 190)):
+    """PNG pequeno (bytes) con el aspecto de un estilo: la nota base dibujada o la imagen de su capa 2, con sus efectos de color y su giro."""
+    try:
+        from PySide6.QtCore import QBuffer, QIODevice
+        l2 = td.get('layer2') if isinstance(td.get('layer2'), dict) else {}
+        if _is_generated_layer(td):
+            img = render_base_note(dict(td['base_note']))
+        else:
+            f = _find_stored_file(str(l2.get('content') or ''), 2)
+            img = QImage(f) if f else None
+        if img is None or img.isNull():
+            return None
+        fx = l2.get('image_effects')
+        if isinstance(fx, dict) and any(fx.get(k) for k in ('hue', 'saturation', 'brightness', 'contrast', 'colorize')):
+            img = _apply_numpy_effects(img, fx)
+        if l2.get('rotation'):
+            img = img.transformed(QTransform().rotate(float(l2['rotation'])), Qt.SmoothTransformation)
+        img = img.scaled(box[0], box[1], Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+        buf = QBuffer()
+        buf.open(QIODevice.WriteOnly)
+        img.save(buf, 'PNG')
+        return bytes(buf.data())
+    except Exception as e:
+        log_warn("Packs", "No se pudo hacer la vista previa: %s" % e)
+        return None
+
+
+def pack_build(path, meta, styles, sets, font_files=()):
+    """Escribe un .wapack. styles: [(nombre, template)], sets: [(nombre, {id: nota})], font_files: rutas de .ttf/.otf.
+    Devuelve un resumen: estilos, perfiles, imagenes, fuentes, tamano, archivos que faltaban y fuentes usadas."""
+    import zipfile
+    assets, missing, used, files, slugs = {}, [], set(), {}, set()
+
+    def uniq(s):
+        base, i = s, 2
+        while s in slugs:
+            s = "%s-%d" % (base, i)
+            i += 1
+        slugs.add(s)
+        return s
+    st_ent, set_ent = [], []
+    for name, td in styles:
+        slug = uniq(_pack_slug(name, 'estilo'))
+        prev = _pack_preview_png(td)
+        used |= _pack_fonts_of(td)
+        files['styles/%s.json' % slug] = json.dumps(pack_normalize_template(td, assets, missing), indent=2, ensure_ascii=False).encode('utf-8')
+        e = {'file': 'styles/%s.json' % slug, 'name': str(name)}
+        if prev:
+            files['previews/%s.png' % slug] = prev
+            e['preview'] = 'previews/%s.png' % slug
+        st_ent.append(e)
+
+    for name, notes in sets:
+        slug = uniq(_pack_slug(name, 'perfil'))
+        out = {}
+        for k, v in notes.items():
+            if isinstance(v, dict) and isinstance(v.get('template_data'), dict):
+                v2 = copy.deepcopy(v)
+                used |= _pack_fonts_of(v['template_data'])
+                v2['template_data'] = pack_normalize_template(v['template_data'], assets, missing)
+                out[k] = v2
+            elif isinstance(v, dict) and str(k).startswith('hierarchy_settings'):
+                out[k] = copy.deepcopy(v)
+        files['sets/%s.json' % slug] = json.dumps(out, indent=2, ensure_ascii=False).encode('utf-8')
+        set_ent.append({'file': 'sets/%s.json' % slug, 'name': str(name), 'notes': len([1 for v in out.values() if 'template_data' in v])})
+    fonts = []
+    for fp in font_files:
+        try:
+            data = open(fp, 'rb').read(_PACK_LIM['asset'] + 1)
+        except OSError:
+            continue
+
+        if len(data) > _PACK_LIM['asset'] or not str(fp).lower().endswith(('.ttf', '.otf')):
+            continue
+        fam = ''
+        try:
+            from PySide6.QtGui import QFontDatabase
+            from PySide6.QtCore import QByteArray
+            fid = QFontDatabase.addApplicationFontFromData(QByteArray(data))
+            fam = (QFontDatabase.applicationFontFamilies(fid) or [''])[0] if fid >= 0 else ''
+        except Exception:
+            pass
+        fn = 'fonts/' + re.sub(r'[^A-Za-z0-9._-]+', '_', os.path.basename(fp))
+        files[fn] = data
+        fonts.append({'file': fn, 'family': fam})
+    name = str(meta.get('name') or 'Pack').strip() or 'Pack'
+    man = {'format': PACK_FORMAT, 'format_version': PACK_FORMAT_VERSION, 'min_reader': 1, 'render_v': PACK_RENDER_V,
+           'id': _pack_slug(meta.get('id') or name), 'name': name, 'author': str(meta.get('author') or ''),
+           'version': str(meta.get('version') or '1.0.0'), 'license': str(meta.get('license') or ''),
+           'description': str(meta.get('description') or ''), 'created': datetime.datetime.now().isoformat(timespec='seconds'),
+           'styles': st_ent, 'sets': set_ent, 'fonts': fonts, 'fonts_used': sorted(used)}
+
+    cover = next((e['preview'] for e in st_ent if e.get('preview')), None)
+    if cover:
+        man['cover'] = 'cover.png'
+        files['cover.png'] = files[cover]
+    tmp = str(path) + '.tmp'
+    with zipfile.ZipFile(tmp, 'w') as z:
+        z.writestr('pack.json', json.dumps(man, indent=2, ensure_ascii=False).encode('utf-8'), zipfile.ZIP_DEFLATED)
+        if meta.get('license_text'):
+            z.writestr('LICENSE.txt', str(meta['license_text']).encode('utf-8'), zipfile.ZIP_DEFLATED)
+        for n in sorted(files):
+            z.writestr(n, files[n], zipfile.ZIP_DEFLATED if n.lower().endswith(('.json', '.ttf', '.otf')) else zipfile.ZIP_STORED)
+        for n in sorted(assets):
+            z.writestr(n, assets[n], zipfile.ZIP_STORED)
+    os.replace(tmp, str(path))
+    return {'styles': len(st_ent), 'sets': len(set_ent), 'assets': len(assets), 'fonts': len(fonts), 'bytes': os.path.getsize(path),
+            'missing': sorted(set(missing)), 'fonts_used': sorted(used), 'font_families': [f['family'] for f in fonts], 'id': man['id']}
+
+
+class PacksDialog(QDialog):
+    """[PACK112] Packs de estilos: los instalados, con la vista previa de sus estilos y sus perfiles. Acepta un .wapack arrastrado."""
+
+    def __init__(self, manager):
+        super().__init__(None)
+        from PySide6.QtWidgets import QListWidget, QListView
+        self.m = manager
+        self.packs = []
+        self.setWindowTitle("Packs de estilos")
+        self.setAttribute(Qt.WA_QuitOnClose, False)
+        self.setAcceptDrops(True)
+        self.resize(1020, 660)
+        root = QVBoxLayout(self)
+        head = QHBoxLayout()
+        tl = QVBoxLayout()
+        t1 = QLabel("Packs de estilos")
+        t1.setStyleSheet("font-size:18px;font-weight:bold;")
+        t2 = QLabel("Un pack es un archivo .wapack con estilos de notas y conjuntos de widgets listos para usar. "
+                    "Arrastra aqu\u00ed un .wapack para instalarlo. Al usar un estilo se copia a tus templates (o a tus perfiles) y el pack no se toca.")
+        t2.setWordWrap(True)
+        t2.setStyleSheet("color:#9aa0aa;")
+
+        tl.addWidget(t1)
+        tl.addWidget(t2)
+        head.addLayout(tl, 1)
+        for text, fn, tip in (("Instalar un pack...", self.install_dialog, "Elige un archivo .wapack"),
+                              ("Exportar mis estilos y widgets...", lambda: self.m.pack_export_dialog(), "Crea un pack con lo que ya tienes")):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.setStyleSheet("QPushButton{font-weight:bold;padding:8px 14px;}")
+            b.clicked.connect(lambda _c=False, f=fn: f())
+            head.addWidget(b)
+        root.addLayout(head)
+        body = QHBoxLayout()
+        root.addLayout(body, 1)
+        self.nav = QListWidget()
+        self.nav.setFixedWidth(280)
+        self.nav.setSpacing(2)
+        body.addWidget(self.nav)
+        panel = QVBoxLayout()
+
+        body.addLayout(panel, 1)
+        self.info = QLabel("")
+        self.info.setWordWrap(True)
+        self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.info.setStyleSheet("background:#2b2b2f;border-radius:6px;padding:8px;")
+        panel.addWidget(self.info)
+        panel.addWidget(QLabel("Estilos (elige uno o varios)"))
+        self.styles = QListWidget()
+        self.styles.setViewMode(QListView.IconMode)
+        self.styles.setResizeMode(QListView.Adjust)
+        self.styles.setMovement(QListView.Static)
+        self.styles.setIconSize(QSize(150, 110))
+        self.styles.setGridSize(QSize(176, 150))
+        self.styles.setWordWrap(True)
+        self.styles.setSelectionMode(QListWidget.ExtendedSelection)
+        panel.addWidget(self.styles, 3)
+        panel.addWidget(QLabel("Perfiles: conjuntos de widgets ya colocados"))
+        self.sets = QListWidget()
+
+        self.sets.setMaximumHeight(120)
+        panel.addWidget(self.sets, 1)
+        row = QHBoxLayout()
+        self.b_style, self.b_note, self.b_set, self.b_open, self.b_del = (QPushButton(t) for t in (
+            "A\u00f1adir a mis estilos", "Crear una nota con este estilo", "A\u00f1adir a mis perfiles", "Abrir el perfil ahora", "Quitar este pack"))
+        self.b_style.setToolTip("Guarda los estilos elegidos en tus templates (los ves en Templates y en 'Nuevo con un aspecto')")
+        self.b_note.setToolTip("Crea una nota nueva con el primer estilo elegido")
+        self.b_set.setToolTip("Guarda el perfil elegido en tu lista de perfiles, sin cambiar los widgets que tienes ahora")
+        self.b_open.setToolTip("Lo a\u00f1ade a tus perfiles y lo abre; tu perfil actual se guarda antes")
+        self.b_del.setToolTip("Borra el archivo del pack. Lo que ya a\u00f1adiste a tus templates y perfiles se queda")
+        self.b_style.clicked.connect(lambda: self.add_styles(False))
+        self.b_note.clicked.connect(lambda: self.add_styles(True))
+        self.b_set.clicked.connect(lambda: self.add_set(False))
+        self.b_open.clicked.connect(lambda: self.add_set(True))
+        self.b_del.clicked.connect(self.remove_pack)
+        for b in (self.b_style, self.b_note, self.b_set, self.b_open):
+            row.addWidget(b)
+        row.addStretch(1)
+
+        row.addWidget(self.b_del)
+        panel.addLayout(row)
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet("color:#9aa0aa;")
+        root.addWidget(self.status)
+        self.nav.currentRowChanged.connect(lambda _r: self._show_pack())
+        self.refresh_packs()
+
+    # ---- lista y detalle
+    def refresh_packs(self, select=None):
+        self.packs = pack_list()
+        cur = select or (self._cur().id if self._cur() else None)
+        self.nav.blockSignals(True)
+        self.nav.clear()
+        from PySide6.QtWidgets import QListWidgetItem
+        row = 0
+        for i, pk in enumerate(self.packs):
+            sub = " \u00b7 ".join(x for x in (pk.author, "v" + pk.version, "%d estilos" % len(pk.styles) + (", %d perfiles" % len(pk.sets) if pk.sets else "")) if x)
+            it = QListWidgetItem(pk.name + "\n" + sub)
+            it.setSizeHint(QSize(250, 48))
+            self.nav.addItem(it)
+            if pk.id == cur:
+                row = i
+        self.nav.blockSignals(False)
+        if self.packs:
+            self.nav.setCurrentRow(row)
+
+        self._show_pack()
+
+    def _cur(self):
+        r = self.nav.currentRow() if hasattr(self, 'nav') else -1
+        return self.packs[r] if 0 <= r < len(self.packs) else None
+
+    def _show_pack(self):
+        pk = self._cur()
+        self.styles.clear()
+        self.sets.clear()
+        for b in (self.b_style, self.b_note, self.b_set, self.b_open, self.b_del):
+            b.setEnabled(pk is not None)
+        if pk is None:
+            self.info.setText("No hay ning\u00fan pack instalado todav\u00eda.\n\nArrastra aqu\u00ed un archivo .wapack, o pulsa \u00abInstalar un pack...\u00bb. "
+                              "Tambi\u00e9n puedes crear el tuyo con \u00abExportar mis estilos y widgets...\u00bb.")
+            return
+        lines = ["%s  \u00b7  v%s%s" % (pk.name, pk.version, ("  \u00b7  de " + pk.author) if pk.author else "")]
+        if pk.description:
+            lines.append(pk.description)
+        if pk.license:
+            lines.append("Licencia: " + pk.license)
+        from PySide6.QtGui import QFontDatabase
+        used = [f for f in (pk.manifest.get('fonts_used') if isinstance(pk.manifest.get('fonts_used'), list) else []) if isinstance(f, str)]
+        have = {f.get('family') for f in pk.fonts}
+
+        miss = [f for f in used if f not in have and f not in QFontDatabase.families()]
+        if miss:
+            lines.append("Usa fuentes que no tienes instaladas: " + ", ".join(miss[:6]) + ". Se ver\u00e1 otra letra hasta que las instales.")
+        if pk.render_v > PACK_RENDER_V:
+            lines.append("Este pack se prepar\u00f3 con una versi\u00f3n m\u00e1s nueva del programa: algunas notas pueden verse algo distintas.")
+        self.info.setText("\n".join(lines))
+        from PySide6.QtWidgets import QListWidgetItem
+        for e in pk.styles:
+            pm = pk.preview_pixmap(e)
+            if pm is None:
+                pm = QPixmap(150, 110)
+                pm.fill(QColor('#3a3a40'))
+            it = QListWidgetItem(QIcon(pm.scaled(150, 110, Qt.KeepAspectRatio, Qt.SmoothTransformation)), e['name'])
+            it.setData(Qt.UserRole, e)
+            it.setTextAlignment(Qt.AlignHCenter)
+            self.styles.addItem(it)
+        for e in pk.sets:
+            it = QListWidgetItem(e['name'] + ("   (%d widgets)" % e['notes'] if e.get('notes') else ""))
+            it.setData(Qt.UserRole, e)
+            self.sets.addItem(it)
+
+        if self.styles.count():
+            self.styles.setCurrentRow(0)
+        if self.sets.count():
+            self.sets.setCurrentRow(0)
+        self.b_style.setEnabled(bool(pk.styles))
+        self.b_note.setEnabled(bool(pk.styles))
+        self.b_set.setEnabled(bool(pk.sets))
+        self.b_open.setEnabled(bool(pk.sets))
+
+    # ---- instalar
+    def install_dialog(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "Instalar un pack", os.path.expanduser("~"),
+                                                "Packs de estilos (*.wapack *.zip);;Todos (*)")
+        if paths:
+            self.install_files(paths)
+
+    def install_files(self, paths):
+        last = None
+        for p in paths:
+            try:
+                pk = pack_open_any(p)
+                if pk is None:
+                    self.status.setText("\u00ab%s\u00bb no es un pack de estilos." % os.path.basename(p))
+                    continue
+                old = pack_find(pk.id)
+                if old is not None and os.path.abspath(old.path) != pk.path:
+                    rel = ("una versi\u00f3n m\u00e1s nueva (v%s)" if _pack_ver(old.version) > _pack_ver(pk.version) else
+                           "la misma versi\u00f3n" if _pack_ver(old.version) == _pack_ver(pk.version) else "una versi\u00f3n anterior (v%s)")
+                    if QMessageBox.question(self, "Instalar pack", "Ya tienes \u00ab%s\u00bb instalado, con %s.\n\n\u00bfSustituirlo por la v%s?" % (
+                            pk.name, (rel % old.version) if '%s' in rel else rel, pk.version)) != QMessageBox.Yes:
+                        continue
+                new = pack_install(p)
+                last = new.id
+                self.status.setText("Instalado: \u00ab%s\u00bb v%s (%d estilos, %d perfiles)." % (new.name, new.version, len(new.styles), len(new.sets)))
+            except PackError as e:
+                QMessageBox.warning(self, "Instalar pack", "%s\n\n%s" % (os.path.basename(p), e))
+            except Exception as e:
+                log_error("Packs", "No se pudo instalar %s: %s" % (p, e))
+                QMessageBox.warning(self, "Instalar pack", "No se pudo instalar el pack:\n%s" % e)
+
+        self.refresh_packs(select=last)
+
+    # ---- usar
+    def add_styles(self, create_note):
+        pk = self._cur()
+        sel = [i.data(Qt.UserRole) for i in self.styles.selectedItems()]
+        if pk is None or not sel:
+            self.status.setText("Elige uno o varios estilos.")
+            return
+        names = []
+        try:
+            for e in sel:
+                names.append(self.m.pack_add_style(pk, e))
+            if create_note:
+                self.m.add_new_widget(template_name=names[0])
+        except PackError as e:
+            QMessageBox.warning(self, "Packs de estilos", str(e))
+            return
+        except Exception as e:
+            log_error("Packs", "No se pudo a\u00f1adir el estilo: %s" % e)
+            QMessageBox.warning(self, "Packs de estilos", "No se pudo a\u00f1adir el estilo:\n%s" % e)
+            return
+
+        self.status.setText(("Nota creada. " if create_note else "") + "A\u00f1adido a tus estilos: " + ", ".join(n[:-5] for n in names))
+
+    def add_set(self, open_now):
+        pk = self._cur()
+        it = self.sets.currentItem()
+        if pk is None or it is None:
+            self.status.setText("Elige un perfil.")
+            return
+        try:
+            name = self.m.pack_add_set(pk, it.data(Qt.UserRole))
+        except PackError as e:
+            QMessageBox.warning(self, "Packs de estilos", str(e))
+            return
+        except Exception as e:
+            log_error("Packs", "No se pudo a\u00f1adir el perfil: %s" % e)
+            QMessageBox.warning(self, "Packs de estilos", "No se pudo a\u00f1adir el perfil:\n%s" % e)
+            return
+        self.status.setText("A\u00f1adido a tus perfiles: \u00ab%s\u00bb." % name)
+        if open_now:
+            self.m._load_profile(name)
+
+    def remove_pack(self):
+        pk = self._cur()
+        if pk is None:
+            return
+        if QMessageBox.question(self, "Quitar pack", "\u00bfQuitar el pack \u00ab%s\u00bb?\n\nLos estilos y perfiles que ya a\u00f1adiste a tus templates y perfiles "
+                                "se quedan y siguen funcionando." % pk.name) != QMessageBox.Yes:
+            return
+        try:
+            pack_remove(pk)
+        except PackError as e:
+            QMessageBox.warning(self, "Quitar pack", str(e))
+            return
+        self.status.setText("Pack quitado.")
+        self.refresh_packs()
+
+    # ---- arrastrar y soltar
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        e.acceptProposedAction()
+        QTimer.singleShot(0, lambda: self.install_files(paths))
+
+
+class PackExportDialog(QDialog):
+    """[PACK112] Exportar como pack: elige que estilos, perfiles y widgets van dentro, y quien lo hace; las imagenes se meten solas."""
+    LICENSES = ("Uso personal; no redistribuir", "CC BY 4.0 (con atribuci\u00f3n)", "CC BY-NC 4.0 (con atribuci\u00f3n, no comercial)",
+                "CC0 (dominio p\u00fablico)", "MIT")
+
+    def __init__(self, manager):
+        super().__init__(None)
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem, QComboBox, QTextEdit, QLineEdit
+        self.m = manager
+        self.fonts = []
+        self.setWindowTitle("Exportar como pack de estilos")
+        self.setAttribute(Qt.WA_QuitOnClose, False)
+        self.resize(760, 700)
+        root = QVBoxLayout(self)
+        intro = QLabel("Crea un archivo .wapack con lo que elijas. Las im\u00e1genes que usan tus estilos y widgets se incluyen solas; "
+                       "la imagen de las notas base no hace falta (se vuelve a dibujar y se pueden seguir editando).")
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color:#9aa0aa;")
+        root.addWidget(intro)
+        form = QFormLayout()
+        self.f_name = QLineEdit("Mis estilos")
+        self.f_author = QLineEdit(os.environ.get('USERNAME') or os.environ.get('USER') or "")
+        self.f_ver = QLineEdit("1.0.0")
+
+        self.f_lic = QComboBox()
+        self.f_lic.setEditable(True)
+        self.f_lic.addItems(self.LICENSES)
+        self.f_desc = QTextEdit()
+        self.f_desc.setFixedHeight(64)
+        self.f_desc.setPlaceholderText("Qu\u00e9 contiene y para qu\u00e9 sirve (opcional)")
+        for lab, w in (("Nombre del pack", self.f_name), ("Autor", self.f_author), ("Versi\u00f3n", self.f_ver), ("Licencia", self.f_lic),
+                       ("Descripci\u00f3n", self.f_desc)):
+            form.addRow(lab, w)
+        root.addLayout(form)
+        root.addWidget(QLabel("Estilos (templates)"))
+        self.l_styles = QListWidget()
+        root.addWidget(self.l_styles, 2)
+        dflt = os.path.basename(DEFAULT_TEMPLATE_FILE)
+        for n in self.m.template_files():
+            if n == dflt:
+                continue
+            try:
+                d = self.m.load_template_by_name(n)
+            except Exception:
+                continue
+            it = QListWidgetItem(n[:-5] + ("   (nota base editable)" if isinstance(d.get('base_note'), dict) else ""))
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked)
+            it.setData(Qt.UserRole, n)
+            self.l_styles.addItem(it)
+
+        root.addWidget(QLabel("Widgets y perfiles (conjuntos colocados, con sus enlaces)"))
+        self.l_sets = QListWidget()
+        root.addWidget(self.l_sets, 2)
+        cur = self.m.current_profile_name
+        it = QListWidgetItem("Los widgets que tengo ahora en pantalla" + (" (perfil \u00ab%s\u00bb)" % cur if cur else ""))
+        it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+        it.setCheckState(Qt.Checked)
+        it.setData(Qt.UserRole, ('now', cur or "Mis widgets"))
+        self.l_sets.addItem(it)
+        for p in self.m._list_profiles():
+            nm = os.path.splitext(os.path.basename(p))[0]
+            if nm == cur:
+                continue
+            it = QListWidgetItem("Perfil \u00ab%s\u00bb" % nm)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Unchecked)
+            it.setData(Qt.UserRole, ('profile', nm))
+            self.l_sets.addItem(it)
+
+        frow = QHBoxLayout()
+        bf = QPushButton("A\u00f1adir fuentes (.ttf / .otf)...")
+        bf.setToolTip("Solo si su licencia permite redistribuirlas. Sin ellas, quien abra el pack ver\u00e1 otra letra si no las tiene.")
+        bf.clicked.connect(self._add_fonts)
+        self.l_fonts = QLabel("Sin fuentes incluidas.")
+        self.l_fonts.setStyleSheet("color:#9aa0aa;")
+        frow.addWidget(bf)
+        frow.addWidget(self.l_fonts, 1)
+        root.addLayout(frow)
+        btns = QHBoxLayout()
+        for text, state in (("Marcar todo", Qt.Checked), ("Desmarcar todo", Qt.Unchecked)):
+            b = QPushButton(text)
+            b.clicked.connect(lambda _c=False, s=state: self._mark(s))
+            btns.addWidget(b)
+        btns.addStretch(1)
+        ok = QPushButton("Exportar...")
+        ok.setStyleSheet("QPushButton{font-weight:bold;padding:8px 18px;}")
+        ok.clicked.connect(self._export)
+
+        cancel = QPushButton("Cancelar")
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(cancel)
+        btns.addWidget(ok)
+        root.addLayout(btns)
+
+    def _mark(self, state):
+        for lst in (self.l_styles, self.l_sets):
+            for i in range(lst.count()):
+                lst.item(i).setCheckState(state)
+
+    def _add_fonts(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "Fuentes para incluir", os.path.expanduser("~"), "Fuentes (*.ttf *.otf)")
+        if paths:
+            self.fonts = sorted(set(self.fonts) | set(paths))
+            self.l_fonts.setText("%d fuentes: %s" % (len(self.fonts), ", ".join(os.path.basename(f) for f in self.fonts[:4]) + ("..." if len(self.fonts) > 4 else "")))
+
+    def _export(self):
+        styles, sets = [], []
+        for i in range(self.l_styles.count()):
+            it = self.l_styles.item(i)
+            if it.checkState() == Qt.Checked:
+                n = it.data(Qt.UserRole)
+                styles.append((n[:-5], self.m.load_template_by_name(n)))
+        for i in range(self.l_sets.count()):
+            it = self.l_sets.item(i)
+            if it.checkState() != Qt.Checked:
+                continue
+            kind, nm = it.data(Qt.UserRole)
+            try:
+                if kind == 'now':
+                    self.m._sync_windows_to_state()
+                    raw = self.m.global_state
+                else:
+                    raw = self.m._read_profile(nm)
+            except Exception as e:
+                QMessageBox.warning(self, "Exportar pack", "No se pudo leer \u00ab%s\u00bb:\n%s" % (nm, e))
+                return
+            notes = {k: v for k, v in raw.items() if isinstance(v, dict) and (isinstance(v.get('template_data'), dict) or str(k).startswith('hierarchy_settings'))}
+            if any(isinstance(v.get('template_data'), dict) for v in notes.values()):
+                sets.append((nm, notes))
+
+        if not styles and not sets:
+            QMessageBox.information(self, "Exportar pack", "Marca al menos un estilo o un perfil.")
+            return
+        name = self.f_name.text().strip() or "Mis estilos"
+        path, _ = QFileDialog.getSaveFileName(self, "Guardar el pack", os.path.join(os.path.expanduser("~"), _pack_slug(name) + PACK_EXT),
+                                              "Pack de estilos (*%s)" % PACK_EXT)
+        if not path:
+            return
+        if not path.lower().endswith(PACK_EXT):
+            path += PACK_EXT
+        meta = {'name': name, 'author': self.f_author.text().strip(), 'version': self.f_ver.text().strip() or "1.0.0",
+                'license': self.f_lic.currentText().strip(), 'description': self.f_desc.toPlainText().strip()}
+        try:
+            r = pack_build(path, meta, styles, sets, self.fonts)
+        except Exception as e:
+            log_error("Packs", "No se pudo exportar el pack: %s" % e)
+            QMessageBox.warning(self, "Exportar pack", "No se pudo crear el pack:\n%s" % e)
+            return
+
+        txt = "Pack guardado:\n%s\n\n%d estilos, %d perfiles, %d im\u00e1genes (%.1f MB)." % (path, r['styles'], r['sets'], r['assets'], r['bytes'] / 1048576.0)
+        if r['missing']:
+            txt += "\n\nNo se encontraron estas im\u00e1genes y quedaron sin ellas: " + ", ".join(r['missing'][:8]) + ("..." if len(r['missing']) > 8 else "")
+        free = [f for f in r['fonts_used'] if f not in r['font_families']]
+        if free:
+            txt += "\n\nUsan estas fuentes, que no van dentro: " + ", ".join(free[:6]) + ". Quien no las tenga ver\u00e1 otra letra."
+        QMessageBox.information(self, "Exportar pack", txt)
+        self.accept()
+
+
 class DataHubWindow(QDialog):
     """[PACK72] Centro de guardar y cargar: un mapa de TODO lo que se guarda (sets, templates, configuracion, archivos,
     copias, deshacer): que es, donde vive y como guardarlo, cargarlo o recuperarlo. Acepta archivos arrastrados."""
@@ -10576,7 +11554,7 @@ class DataHubWindow(QDialog):
         t1 = QLabel("Guardar y cargar")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
         t2 = QLabel("Todo lo que la aplicaci\u00f3n guarda, y d\u00f3nde vive cada cosa. Elige a la izquierda lo que buscas.\n"
-                    "Tambi\u00e9n puedes arrastrar aqu\u00ed cualquier archivo (perfil, template, configuraci\u00f3n o copia .zip) y se detecta solo.")
+                    "Tambi\u00e9n puedes arrastrar aqu\u00ed cualquier archivo (perfil, template, configuraci\u00f3n, pack .wapack o copia .zip) y se detecta solo.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
         tl.addWidget(t1)
@@ -10609,6 +11587,7 @@ class DataHubWindow(QDialog):
             ("templates", "Templates y estilos de nota base", "Aspectos guardados y notas base editables", self._sec_templates),
             ("config", "Configuraci\u00f3n y atajos", "Ajustes, cables, tonos y teclas", self._sec_config),
             ("files", "Archivos (exportar / importar)", "Para llevar o compartir widgets", self._sec_files),
+            ("packs", "Packs de estilos", "Estilos y widgets para compartir o estrenar", self._sec_packs),
             ("backups", "Copias de seguridad", "Se hacen solas; aqu\u00ed se recuperan", self._sec_backups),
             ("undo", "Deshacer (historial)", "Ctrl+Alt+Z / Ctrl+Alt+Y, tambi\u00e9n entre sesiones", self._sec_undo),
         ]
@@ -10741,6 +11720,17 @@ class DataHubWindow(QDialog):
                  ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None),
                  ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Perfil, template, configuraci\u00f3n o copia .zip"),
                  self._folder(DATA_DIR)])
+
+    def _sec_packs(self):
+        m = self.m
+        n = len(pack_list())
+        return ("Un pack es un archivo .wapack con estilos de notas y conjuntos de widgets (con las im\u00e1genes que usan), para compartir o para estrenar. "
+                "Aqu\u00ed instalas uno, ves sus estilos con vista previa y los a\u00f1ades a tus templates y perfiles. Tambi\u00e9n puedes crear el tuyo con lo que ya tienes.",
+                PACKS_DIR, [("%d pack instalado" if n == 1 else "%d packs instalados") % n, "Tambi\u00e9n puedes arrastrar un .wapack a esta ventana para instalarlo."],
+                [("Abrir los packs de estilos...", lambda: m.show_packs(), "Cat\u00e1logo con vista previa"),
+                 ("Instalar un pack desde un archivo...", m.pack_install_dialog, None),
+                 ("Exportar mis estilos y widgets como pack...", m.pack_export_dialog, "Incluye las im\u00e1genes; la de las notas base no hace falta"),
+                 self._folder(PACKS_DIR)])
 
     def _sec_backups(self):
         m = self.m
@@ -14141,6 +15131,7 @@ class WidgetManager(QObject):
         self.console_hwnd = console_hwnd
         self.console_visible = False
         self._resident = {}
+        pack_load_fonts()                       # [PACK112] fuentes que traen los packs instalados
         self.user32 = None
         if self.console_hwnd:
             try:
@@ -14775,10 +15766,13 @@ class WidgetManager(QObject):
         hub_top = QAction("Guardar y cargar...", self)       # [PACK72] el mapa de todo lo que se guarda
         hub_top.triggered.connect(lambda: self.show_data_hub())
         menu.addAction(hub_top)
+        packs_top = QAction("Packs de estilos...", self)       # [PACK112]
+        packs_top.triggered.connect(lambda: self.show_packs())
+        menu.addAction(packs_top)
         
         menu.addSeparator()
 
-        undo_action = QAction("Deshacer 煤ltimo cambio (Ctrl+Alt+Z)", self)
+        undo_action = QAction("Deshacer \u7164ltimo cambio (Ctrl+Alt+Z)", self)
         undo_action.setText("Deshacer \u00faltimo cambio (Ctrl+Alt+Z)")
         undo_action.triggered.connect(self.undo_global)
 
@@ -18486,6 +19480,75 @@ class WidgetManager(QObject):
         h.raise_()
         h.activateWindow()
 
+    # ---- [PACK112] packs de estilos (.wapack)
+    def show_packs(self, install=None):
+        d = getattr(self, 'packs_dialog', None)
+        if d is None:
+            d = self.packs_dialog = PacksDialog(self)
+        d.refresh_packs()
+        d.show()
+        d.raise_()
+        d.activateWindow()
+        if install:
+            QTimer.singleShot(0, lambda: d.install_files([install]))
+        return d
+
+    def pack_install_dialog(self):
+        d = self.show_packs()
+        d.install_dialog()
+
+    def pack_export_dialog(self):
+        dlg = PackExportDialog(self)
+        self._pack_export_dlg = dlg
+        dlg.exec()
+        self._pack_export_dlg = None
+
+    def pack_add_style(self, pk, entry):
+        """Guarda un estilo del pack como template normal (con sus imagenes) y devuelve el nombre del archivo. Si ya se anadio, lo actualiza."""
+        td = pack_materialize(pk, pk.read_json(entry['file']))
+        td['origin'] = {'pack': pk.id, 'version': pk.version, 'style': entry['name']}
+        safe = self._tpl_safe_name(entry['name']) or 'estilo.json'
+        dest, i = safe, 2
+        while os.path.exists(os.path.join(TEMPLATES_DIR, dest)):
+            try:
+                with open(os.path.join(TEMPLATES_DIR, dest), 'r', encoding='utf-8') as f:
+                    o = (json.load(f) or {}).get('origin') or {}
+            except Exception:
+                o = {}
+            if o.get('pack') == pk.id and o.get('style') == entry['name']:
+                break
+            dest = safe[:-5] + " %d.json" % i
+            i += 1
+        self.save_template(dest, td)
+        self.build_tray_menu()
+        return dest
+
+    def pack_add_set(self, pk, entry):
+        """Guarda un perfil del pack en la lista de perfiles (con sus imagenes) y devuelve su nombre. No toca los widgets actuales."""
+        raw = pk.read_json(entry['file'])
+        out = {}
+        for k, v in raw.items():
+            if isinstance(v, dict) and isinstance(v.get('template_data'), dict):
+                v2 = copy.deepcopy(v)
+                v2['template_data'] = pack_materialize(pk, v['template_data'])
+                out[k] = v2
+            elif isinstance(v, dict) and str(k).startswith('hierarchy_settings'):
+                out[k] = copy.deepcopy(v)
+        if not any('template_data' in v for v in out.values()):
+            raise PackError("Ese perfil no tiene widgets.")
+        base = (self._tpl_safe_name(entry['name']) or 'perfil.json')[:-5]
+        name, i = base, 2
+        while os.path.exists(self._profile_path(name)):
+            name = "%s %d" % (base, i)
+            i += 1
+        os.makedirs(PROFILES_DIR, exist_ok=True)
+        path = self._profile_path(name)
+        with open(path + '.tmp', 'w', encoding='utf-8') as f:
+            json.dump(out, f, indent=4)
+        os.replace(path + '.tmp', path)
+        self.build_tray_menu()
+        return name
+
     def save_everything_now(self):
         """Guarda de una vez: set activo, perfil activo, configuracion, historial y una copia completa."""
         _q = self.app_is_quitting
@@ -18559,6 +19622,14 @@ class WidgetManager(QObject):
         parent = self.dialog_parent
         path = str(path)
         name = os.path.splitext(os.path.basename(path))[0]
+        try:
+            _pk = pack_open_any(path)           # [PACK112] un pack de estilos (.wapack o un .zip con pack.json)
+        except PackError as e:
+            QMessageBox.warning(parent, "Cargar archivo", str(e))
+            return None
+        if _pk is not None:
+            self.show_packs(install=path)
+            return 'pack'
         if path.lower().endswith('.zip'):
             if not zipfile.is_zipfile(path):
                 QMessageBox.warning(parent, "Cargar archivo", "El .zip no es una copia de seguridad v\u00e1lida.")

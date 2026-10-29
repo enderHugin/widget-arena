@@ -13,6 +13,7 @@ Funciona en Windows, macOS y Linux, con instalación de un clic.
 - **Jerarquizar**: padres, hijos, nietos… Los hijos pueden seguir al padre cuando lo arrastras, y puedes mover una rama entera.
 - **Plegar y desplegar**: oculta los hijos de una nota (o de todas) para ver solo lo que importa, y recupéralos cuando quieras.
 - **Perfiles**: guarda conjuntos completos de widgets y cambia entre ellos al instante con el teclado.
+- **Packs de estilos**: comparte o estrena estilos y tableros en un solo archivo `.wapack`; exporta lo que ya tienes.
 - **Configurable a fondo**: cables (grosor, opacidad, degradado, cuerda, calidad de dibujo), estilos de nota, templates, atajos de teclado y gestos del icono de bandeja.
 - **Rápido y ligero**: la calidad de dibujo de los cables se adapta sola al ordenador.
 - **Tus datos son tuyos**: todo se guarda en archivos JSON en tu carpeta de usuario, con copias de seguridad.
@@ -43,6 +44,16 @@ Todo el código está en este repositorio (`installers/`) para que puedas leerlo
 La primera vez que se abre aparece un conjunto de notas de bienvenida enlazadas entre sí, que te enseña los gestos y las opciones principales
 (mover, enlazar, plegar, estilos, perfiles). Además queda guardado un perfil de ejemplo de uso diario, «Ejemplo - semana», para que veas cómo se organiza
 un tablero real; cámbialo con **Ctrl + 2** o desde el menú del icono de bandeja → *Perfiles*. Puedes borrarlos cuando quieras: no vuelven a aparecer.
+
+## Packs de estilos
+
+Un **pack** (`.wapack`, un zip) reúne estilos de notas y conjuntos de widgets ya colocados, con las imágenes que usan, para compartir o estrenar.
+Abre *icono de bandeja → Packs de estilos...* (o arrastra un `.wapack` a la ventana *Guardar y cargar*): ves sus estilos con vista previa y los añades a tus
+templates y perfiles. Las notas base no guardan imagen: se vuelven a dibujar y se pueden seguir editando. También puedes **exportar lo que ya tienes**
+(*Exportar mis estilos y widgets...*), y tus notas, estilos y perfiles de siempre se leen sin cambios.
+
+Con el primer arranque se instala un pack de ejemplo, **Notas de colores** (8 colores y dos tableros). Descárgalo también desde la página: `dl/notas-de-colores.wapack`.
+El formato está descrito en [docs/FORMATO-WAPACK.md](docs/FORMATO-WAPACK.md).
 
 ## Gestos y atajos más útiles
 
@@ -75,7 +86,8 @@ compila un ejecutable o deja el programa en modo portable.
 
 - `widget_arena.py`: el programa (un solo archivo).
 - `herramientas.py`: instalar / desinstalar / compilar / librerías de cualquier `.py` de la carpeta.
-- `defaults/`: lo que se copia en el primer arranque (notas de bienvenida, perfil de ejemplo, estilo de nota).
+- `defaults/`: lo que se copia en el primer arranque (notas de bienvenida, perfil de ejemplo, estilo de nota y el pack de ejemplo en `defaults/packs/`).
+- `docs/FORMATO-WAPACK.md`: especificación del formato de los packs.
 - `installers/`: `install-windows.cmd` (con PowerShell dentro) e `install-unix.sh` (Linux y macOS). Descargan `uv`, un Python 3.12 propio, y llaman a `herramientas.py install`.
 - `site/` y `tools/build_site.sh`: la página con el botón único y el montaje de lo que se publica.
 - `.github/workflows/pages.yml`: publica la página en GitHub Pages en cada cambio; calcula las URLs solo.
