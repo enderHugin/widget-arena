@@ -46,6 +46,15 @@ crear y clonar hijas, gestos y ayuda con **F1**, cambiar el tono con **Ctrl + ru
 Además queda guardado un perfil de ejemplo de uso diario, «Ejemplo - semana», para que veas cómo se organiza un tablero real; cámbialo con **Ctrl + 2** (y vuelve con **Ctrl + 1**)
 o desde el menú del icono de bandeja → *Perfiles*. Puedes borrarlos cuando quieras: no vuelven a aparecer.
 
+## Actualizaciones
+
+*Icono de bandeja → Buscar actualizaciones...* compara tu versión con la publicada en esta página (`dl/update.json`: número de pack, huellas sha256 y novedades).
+Si hay una más nueva, la descarga, comprueba que coincide con la huella y que es Python válido, **guarda una copia de la tuya** (carpeta `backups_programa/`) y reinicia el programa.
+Tus notas, perfiles y ajustes no se tocan, y *Volver a la versión anterior* restaura la copia. Nunca baja de versión: si tu copia es más nueva que la publicada, no hace nada.
+
+Al abrir el programa pregunta, como cualquier aplicación, si hay una versión nueva («¿Descargarla e instalarla ahora?»). Marca *No mostrar más este mensaje* si prefieres actualizar a mano;
+se vuelve a activar en la ventana de actualizaciones. Es una conexión más a esta página; `WA_OFFLINE=1` la desactiva. En una instalación como ejecutable no se actualiza sola: baja el instalador nuevo.
+
 ## Fuentes
 
 Las notas de ejemplo usan **Segoe Print**, una letra de Windows que no se puede redistribuir. Fuera de Windows (o si no la tienes) se sustituye sola por una fuente libre
@@ -54,7 +63,7 @@ parecida. Widget Arena trae tres, con licencia SIL Open Font License (están en 
 
 - Durante la instalación te pregunta cuál quieres como **fuente predeterminada** (la de las notas nuevas y la que sustituye a una que falta). Si no la contestas, te lo pregunta al abrir el programa.
   Puedes cambiarla cuando quieras en *icono de bandeja → Ajustes → Apariencia → Fuente predeterminada...*.
-- Si falta alguna de las tres, el programa la descarga sola, en segundo plano, de esta misma página (`dl/fonts/`) y comprueba su huella sha256. Es la única conexión que hace por su cuenta;
+- Si falta alguna de las tres, el programa la descarga sola, en segundo plano, de esta misma página (`dl/fonts/`) y comprueba su huella sha256. Junto con la comprobación de versiones, son las únicas conexiones que hace por su cuenta;
   sin red no pasa nada y lo reintenta pasadas unas horas. Para desactivarla, define la variable de entorno `WA_OFFLINE=1`.
 - Al **exportar un pack** te pregunta por las fuentes que usa: las del sistema no se pueden incluir, las libres se marcan solas y las demás solo se incluyen si confirmas que tienes derecho.
 

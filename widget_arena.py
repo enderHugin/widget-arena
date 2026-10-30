@@ -11196,6 +11196,260 @@ def font_boot(m):
     QTimer.singleShot(3500, m.font_first_run_prompt)
 
 
+# ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
+APP_PACK = 114                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
+UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
+UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
+APP_FILE = os.path.abspath(_a0)
+UPDATE_FILES = ("widget_arena.py", "herramientas.py")
+_UPDATE_ST = {}
+
+
+def update_state():
+    global _UPDATE_ST
+    if not _UPDATE_ST:
+        try:
+            with open(UPDATE_STATE, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+        except Exception:
+            d = {}
+        _UPDATE_ST = d if isinstance(d, dict) else {}
+    return _UPDATE_ST
+
+
+def update_state_save():
+    try:
+        os.makedirs(os.path.dirname(UPDATE_STATE), exist_ok=True)
+        tmp = UPDATE_STATE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(update_state(), f, indent=2, ensure_ascii=False)
+        os.replace(tmp, UPDATE_STATE)
+    except OSError as e:
+        log_warn("Actualizar", "No se pudo guardar el estado: %s" % e)
+
+
+def _sha256_file(p):
+    h = hashlib.sha256()
+    with open(p, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def update_local_info():
+    label = ''
+    try:
+        with open(os.path.join(APP_DIR, 'VERSION'), 'r', encoding='utf-8') as f:
+            label = f.read().strip()[:40]
+    except OSError:
+        pass
+    try:
+        sha = _sha256_file(APP_FILE)
+    except OSError:
+        sha = ''
+    return {'pack': APP_PACK, 'sha256': sha, 'label': label, 'file': APP_FILE, 'frozen': bool(getattr(sys, 'frozen', False))}
+
+
+def _update_get(url, limit, timeout=20):
+    """Descarga una direccion de la web del proyecto (y nada mas: ni siquiera si hay una redireccion a otro sitio)."""
+    import urllib.request, ssl
+    if not url.startswith(UPDATE_BASE):
+        raise ValueError("direcci\u00f3n no permitida")
+
+    class _Same(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            if not newurl.startswith(UPDATE_BASE):
+                raise ValueError("redirecci\u00f3n a otro sitio rechazada")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        ctx = ssl.create_default_context()
+    op = urllib.request.build_opener(_Same(), urllib.request.HTTPSHandler(context=ctx))
+    with op.open(urllib.request.Request(url, headers={'User-Agent': 'WidgetArena', 'Cache-Control': 'no-cache'}), timeout=timeout) as r:
+        data = r.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("la respuesta es demasiado grande")
+    return data
+
+
+def update_check():
+    """Mira la version publicada. Devuelve {ok, state: newer|same|older|diverged, info, local} o {ok: False, error}."""
+    try:
+        info = json.loads(_update_get(UPDATE_BASE + 'update.json?t=%d' % int(time.time()), 262144).decode('utf-8'))
+        meta = info['files']['widget_arena.py']
+        pack, sha, size = int(info['pack']), str(meta['sha256']).lower(), int(meta['size'])
+        if not re.fullmatch(r'[0-9a-f]{64}', sha) or size <= 0 or size > 12 * 1048576:
+            raise ValueError("update.json no es v\u00e1lido")
+    except Exception as e:
+        return {'ok': False, 'error': str(e) or e.__class__.__name__}
+    loc = update_local_info()
+    if pack > loc['pack']:
+        st = 'newer'
+    elif pack < loc['pack']:
+        st = 'older'
+    else:
+        st = 'same' if sha == loc['sha256'] else 'diverged'
+    update_state()['last_check'] = time.time()
+
+    update_state_save()
+    return {'ok': True, 'state': st, 'info': info, 'local': loc}
+
+
+def _update_file(info, name):
+    if name not in UPDATE_FILES:
+        raise ValueError("archivo no permitido")
+    meta = info['files'][name]
+    data = _update_get(UPDATE_BASE + name + '?v=' + str(meta['sha256'])[:12], int(meta['size']))      # con la huella en la direccion no se sirve una copia vieja de la cache
+    if len(data) != int(meta['size']) or hashlib.sha256(data).hexdigest() != str(meta['sha256']).lower():
+        raise ValueError("%s: lo descargado no coincide con la huella publicada (se cancela; si acaban de publicar, int\u00e9ntalo de nuevo en unos minutos)" % name)
+    compile(data, name, 'exec')                       # que al menos sea Python valido antes de tocar nada
+    return data
+
+
+def _update_put(path, data):
+    tmp = path + '.nuevo'
+    with open(tmp, 'wb') as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def _update_bkname(prefix):
+    """Nombre libre para una copia (nunca pisa otra, aunque se hagan dos en el mismo segundo)."""
+    base = os.path.join(UPDATE_BACKUPS, '%s.pack%d.%s' % (prefix, APP_PACK, time.strftime('%Y%m%d-%H%M%S')))
+    p, i = base + '.py', 2
+    while os.path.exists(p):
+        p = '%s-%d.py' % (base, i)
+        i += 1
+    return p
+
+
+def update_apply(info):
+    """Descarga y comprueba la version publicada, guarda una copia de la actual y la sustituye. Devuelve {backup, tools}."""
+    if getattr(sys, 'frozen', False):
+        raise ValueError("Esta instalaci\u00f3n es un ejecutable: descarga el instalador nuevo desde la p\u00e1gina del programa.")
+    d = os.path.dirname(APP_FILE)
+    if not os.access(d, os.W_OK) or not os.access(APP_FILE, os.W_OK):
+        raise ValueError("No hay permiso para escribir en la carpeta del programa (%s)." % d)
+    data = _update_file(info, 'widget_arena.py')
+    m = re.search(rb'^APP_PACK\s*=\s*(\d+)', data, re.M)
+    if not m or int(m.group(1)) != int(info['pack']):
+        raise ValueError("El archivo publicado no es el de la versi\u00f3n anunciada (se cancela).")
+    tools, tools_path = None, os.path.join(APP_DIR, 'herramientas.py')
+    if 'herramientas.py' in info.get('files', {}) and os.path.exists(tools_path):
+        if _sha256_file(tools_path) != str(info['files']['herramientas.py']['sha256']).lower():
+            tools = _update_file(info, 'herramientas.py')
+    os.makedirs(UPDATE_BACKUPS, exist_ok=True)
+    bk = _update_bkname('widget_arena')
+    shutil.copyfile(APP_FILE, bk)
+
+    bk_t = None
+    if tools is not None:
+        bk_t = _update_bkname('herramientas')
+        shutil.copyfile(tools_path, bk_t)
+    _update_put(APP_FILE, data)
+    if tools is not None:
+        try:
+            _update_put(tools_path, tools)
+        except OSError as e:
+            log_warn("Actualizar", "No se pudo actualizar herramientas.py: %s" % e)
+            bk_t = None
+    try:
+        with open(os.path.join(APP_DIR, 'VERSION'), 'w', encoding='utf-8') as f:
+            f.write(str(info.get('version') or '') + "\n")
+    except OSError:
+        pass
+    st = update_state()
+    st.update({'last_backup': bk, 'last_backup_tools': bk_t, 'from_pack': APP_PACK, 'to_pack': int(info['pack']), 'applied': time.time()})
+
+    update_state_save()
+    try:                                              # se conservan las 5 ultimas copias de cada archivo
+        for pre in ('widget_arena.pack', 'herramientas.pack'):
+            olds = sorted((os.path.join(UPDATE_BACKUPS, f) for f in os.listdir(UPDATE_BACKUPS) if f.startswith(pre)), key=lambda q: (os.path.getmtime(q), q in (bk, bk_t)))
+            for f in olds[:-5]:
+                os.remove(f)
+    except OSError:
+        pass
+    return {'backup': bk, 'tools': tools is not None}
+
+
+def update_backup_available():
+    bk = update_state().get('last_backup')
+    return bool(bk) and os.path.exists(bk) and os.path.abspath(os.path.dirname(bk)) == os.path.abspath(UPDATE_BACKUPS)
+
+
+def update_rollback():
+    """Vuelve a la copia guardada en la ultima actualizacion (y deja la actual como copia, por si quieres volver a ella)."""
+    if getattr(sys, 'frozen', False):
+        raise ValueError("Esta instalaci\u00f3n es un ejecutable: no se puede cambiar la versi\u00f3n desde aqu\u00ed.")
+    if not update_backup_available():
+        raise ValueError("No hay una copia anterior a la que volver.")
+    st = update_state()
+    bk = st['last_backup']
+    with open(bk, 'rb') as f:
+        data = f.read()
+    compile(data, 'widget_arena.py', 'exec')
+    cur = _update_bkname('widget_arena')
+    shutil.copyfile(APP_FILE, cur)
+    _update_put(APP_FILE, data)
+    bkt = st.get('last_backup_tools')
+    cur_t = None
+    if bkt and os.path.exists(bkt) and os.path.exists(os.path.join(APP_DIR, 'herramientas.py')):
+        cur_t = _update_bkname('herramientas')
+
+        shutil.copyfile(os.path.join(APP_DIR, "herramientas.py"), cur_t)
+        with open(bkt, 'rb') as f:
+            _update_put(os.path.join(APP_DIR, 'herramientas.py'), f.read())
+    st.update({'last_backup': cur, 'last_backup_tools': cur_t, 'applied': time.time()})
+    update_state_save()
+    return {'backup': cur, 'tools': bool(cur_t)}
+
+
+def update_spawn_restart(delay=3):
+    """Lanza, aparte, una orden que arranca otra vez el programa pasados unos segundos (da tiempo a que este termine de guardar)."""
+    import subprocess
+    script = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] and os.path.exists(sys.argv[0]) else APP_FILE
+    cmd = [sys.executable, script] + list(sys.argv[1:])
+    code = "import subprocess, sys, time\ntime.sleep(%d)\nsubprocess.Popen(sys.argv[1:], close_fds=True%s)" % (
+        int(delay), ", creationflags=0x08000008" if os.name == 'nt' else ", start_new_session=True")
+    kw = {'creationflags': 0x08000008} if os.name == 'nt' else {'start_new_session': True}
+    subprocess.Popen([sys.executable, '-c', code] + cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     close_fds=True, **kw)
+    return cmd
+
+
+class _UpdateWorker(QObject):
+    """Hace la comprobacion y la instalacion en segundo plano y avisa con una senal."""
+    checked = Signal(dict)
+    applied = Signal(dict)
+
+    def check(self):
+        import threading
+        threading.Thread(target=self._do_check, daemon=True).start()
+
+    def _do_check(self):
+        self.checked.emit(update_check())
+
+    def apply(self, info, rollback=False):
+        import threading
+        threading.Thread(target=self._do_apply, args=(info, rollback), daemon=True).start()
+
+    def _do_apply(self, info, rollback):
+        try:
+            r = update_rollback() if rollback else update_apply(info)
+            r['ok'] = True
+        except Exception as e:
+            log_warn("Actualizar", "%s" % e)
+            r = {'ok': False, 'error': str(e) or e.__class__.__name__}
+        self.applied.emit(r)
+
+
+def update_boot(m):
+    QTimer.singleShot(12000, m.update_auto_check)
+
+
 # ---- imagenes: generadas (nota base) o propias ------------------------------------------------------------------------
 def _find_stored_file(path, layer_num=2):
     """Archivo real al que apunta la ruta guardada en una capa (misma busqueda que al cargarla, y tambien rutas con barras de
@@ -11952,6 +12206,151 @@ class FontExportDialog(QDialog):
 
     def scope(self):
         return 'share' if self.rb_share.isChecked() else 'personal'
+
+
+class UpdateDialog(QDialog):
+    """[PACK114] Actualizaciones: version instalada y publicada, novedades, instalar, volver a la anterior y aviso al abrir el programa."""
+
+    def __init__(self, manager):
+        super().__init__(None)
+        from PySide6.QtWidgets import QTextBrowser
+        self.m = manager
+        self.res = None
+        self.busy = False
+        self.setWindowTitle("Actualizaciones")
+        self.setAttribute(Qt.WA_QuitOnClose, False)
+        self.resize(640, 520)
+        self.w = _UpdateWorker(self)
+        self.w.checked.connect(self._on_checked)
+        self.w.applied.connect(self._on_applied)
+        root = QVBoxLayout(self)
+        t1 = QLabel("Actualizaciones")
+        t1.setStyleSheet("font-size:18px;font-weight:bold;")
+        root.addWidget(t1)
+        self.lb_local = QLabel("")
+        self.lb_remote = QLabel("")
+
+        root.addWidget(self.lb_local)
+        root.addWidget(self.lb_remote)
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet("background:#2b2b2f;border-radius:6px;padding:8px;")
+        root.addWidget(self.status)
+        root.addWidget(QLabel("Novedades"))
+        self.notes = QTextBrowser()
+        self.notes.setOpenExternalLinks(True)
+        root.addWidget(self.notes, 1)
+        self.chk_auto = QCheckBox("Avisarme al abrir el programa si hay una versi\u00f3n nueva")
+        self.chk_auto.setChecked(update_state().get('auto', True) is not False)
+        self.chk_auto.toggled.connect(self._auto_toggled)
+        root.addWidget(self.chk_auto)
+        row = QHBoxLayout()
+        self.b_check = QPushButton("Buscar de nuevo")
+        self.b_check.clicked.connect(self.start_check)
+        self.b_back = QPushButton("Volver a la versi\u00f3n anterior")
+
+        self.b_back.clicked.connect(self._rollback)
+        self.b_go = QPushButton("Actualizar y reiniciar")
+        self.b_go.setStyleSheet("QPushButton{font-weight:bold;padding:8px 18px;}")
+        self.b_go.clicked.connect(self._apply)
+        close = QPushButton("Cerrar")
+        close.clicked.connect(self.close)
+        row.addWidget(self.b_check)
+        row.addWidget(self.b_back)
+        row.addStretch(1)
+        row.addWidget(close)
+        row.addWidget(self.b_go)
+        root.addLayout(row)
+        self._fill_local()
+        self._buttons()
+
+    def _fill_local(self):
+        loc = update_local_info()
+        self.lb_local.setText("Tu versi\u00f3n:  pack %d%s  \u00b7  huella %s" % (loc['pack'], ("  \u00b7  " + loc['label']) if loc['label'] else "", loc['sha256'][:8] or "?"))
+        self.lb_remote.setText("Publicada:  \u2014")
+
+    def _buttons(self):
+        r = self.res or {}
+        frozen = bool(getattr(sys, 'frozen', False))
+        can = bool(r.get('ok')) and r.get('state') in ('newer', 'diverged') and not frozen and not self.busy
+        self.b_go.setEnabled(can)
+        self.b_go.setText("Sustituir por la publicada" if r.get('state') == 'diverged' else "Actualizar y reiniciar")
+        self.b_back.setEnabled(update_backup_available() and not frozen and not self.busy)
+        self.b_check.setEnabled(not self.busy)
+
+    def start_check(self):
+        self.busy = True
+        self.status.setText("Buscando la versi\u00f3n publicada...")
+        self._buttons()
+        self.w.check()
+
+    def _auto_toggled(self, on):
+        update_state()['auto'] = bool(on)
+        update_state_save()
+
+    def _on_checked(self, r):
+        self.busy = False
+        self.res = r
+        self._fill_local()
+        if not r.get('ok'):
+            self.status.setText("No se pudo comprobar: %s\nRevisa tu conexi\u00f3n e int\u00e9ntalo de nuevo." % r.get('error', ''))
+            self._buttons()
+            return
+        info, st = r['info'], r['state']
+        self.lb_remote.setText("Publicada:  pack %s%s" % (info.get('pack'), ("  \u00b7  " + str(info.get('version'))) if info.get('version') else ""))
+        try:
+            self.notes.setMarkdown(str(info.get('notes') or "(sin novedades indicadas)"))
+        except Exception:
+            self.notes.setPlainText(str(info.get('notes') or ""))
+        if getattr(sys, 'frozen', False) and st in ('newer', 'diverged'):
+            self.status.setText("Hay una versi\u00f3n m\u00e1s nueva, pero esta instalaci\u00f3n es un ejecutable: descarga el instalador nuevo desde la p\u00e1gina del programa.")
+        else:
+            self.status.setText({
+                'newer': "Hay una versi\u00f3n nueva (pack %s). Se guardar\u00e1 una copia de la actual y el programa se reiniciar\u00e1; tus notas y ajustes no se tocan." % info.get('pack'),
+                'same': "Ya tienes la \u00faltima versi\u00f3n.",
+                'older': "Tu copia (pack %d) es m\u00e1s nueva que la publicada (pack %s): no hay nada que actualizar." % (r['local']['pack'], info.get('pack')),
+                'diverged': "Tienes el mismo pack que la web, pero tu archivo es distinto (cambios tuyos sin publicar). Puedes sustituirlo por el publicado: se guarda una copia.",
+            }[st])
+
+        self._buttons()
+
+    def apply_result(self, r):
+        """Desde el aviso del arranque: ya se sabe que hay una version nueva y el usuario dijo que si."""
+        self._on_checked(r)
+        self._apply(confirm=False)
+
+    def _apply(self, confirm=True):
+        r = self.res or {}
+        if not r.get('ok') or r.get('state') not in ('newer', 'diverged'):
+            return
+        if confirm:
+            warn = "\n\nTu archivo tiene cambios que no est\u00e1n publicados; se guardar\u00e1 una copia por si quieres volver." if r['state'] == 'diverged' else ""
+            if QMessageBox.question(self, "Actualizar", "Se descargar\u00e1 la versi\u00f3n publicada (pack %s), se guardar\u00e1 una copia de la actual y el programa se reiniciar\u00e1.%s\n\n\u00bfContinuar?" % (r['info'].get('pack'), warn)) != QMessageBox.Yes:
+                return
+        self.busy = True
+        self.status.setText("Descargando e instalando...")
+        self._buttons()
+        self.w.apply(r['info'])
+
+    def _rollback(self):
+        if QMessageBox.question(self, "Volver a la versi\u00f3n anterior", "Se restaurar\u00e1 la copia guardada en la \u00faltima actualizaci\u00f3n y el programa se reiniciar\u00e1. La versi\u00f3n actual queda guardada.\n\n\u00bfContinuar?") != QMessageBox.Yes:
+            return
+        self.busy = True
+        self.status.setText("Restaurando...")
+        self._buttons()
+        self.w.apply(None, True)
+
+    def _on_applied(self, r):
+        self.busy = False
+        if not r.get('ok'):
+            self.status.setText("No se pudo completar: %s\nNo se ha cambiado nada." % r.get('error', ''))
+            self._buttons()
+            QMessageBox.warning(self, "Actualizar", "No se pudo completar:\n%s\n\nNo se ha cambiado nada." % r.get('error', ''))
+            return
+        self.status.setText("Listo. El programa se reinicia en unos segundos...")
+        self._buttons()
+        self.b_go.setEnabled(False)
+        QTimer.singleShot(900, self.m.update_restart_app)
 
 
 class PackExportDialog(QDialog):
@@ -15735,6 +16134,7 @@ class WidgetManager(QObject):
         self._resident = {}
         pack_load_fonts()                       # [PACK112] fuentes que traen los packs instalados
         font_boot(self)                         # [PACK113] fuentes libres, sustitutas y predeterminada
+        update_boot(self)                       # [PACK114] aviso de version nueva al abrir
         self.user32 = None
         if self.console_hwnd:
             try:
@@ -16454,6 +16854,9 @@ class WidgetManager(QObject):
         console_action.triggered.connect(self.toggle_console_visibility)
         menu.addAction(console_action)
         menu.addSeparator()
+        update_action = QAction("Buscar actualizaciones...", self)       # [PACK114]
+        update_action.triggered.connect(lambda checked=False: self.show_updates())
+        menu.addAction(update_action)
         about_action = QAction("Acerca de WidgetArena  \u2615", self)
         about_action.triggered.connect(self.show_about)
         menu.addAction(about_action)
@@ -20085,6 +20488,59 @@ class WidgetManager(QObject):
         h.show()
         h.raise_()
         h.activateWindow()
+
+    # ---- [PACK114] actualizaciones
+    def show_updates(self, check=True):
+        d = getattr(self, 'update_dialog', None)
+        if d is None or not d.isVisible():
+            d = self.update_dialog = UpdateDialog(self)
+            if check:
+                d.start_check()
+        d.show()
+        d.raise_()
+        d.activateWindow()
+        return d
+
+    def update_restart_app(self):
+        """Arranca otra vez el programa (pasados unos segundos) y cierra este con el guardado de siempre."""
+        try:
+            update_spawn_restart()
+        except Exception as e:
+            log_error("Actualizar", "No se pudo preparar el reinicio: %s" % e)
+            QMessageBox.warning(None, "Actualizar", "La actualizaci\u00f3n est\u00e1 instalada, pero no se pudo reiniciar sola.\nCierra y abre de nuevo Widget Arena.")
+            return
+        self.safe_quit()
+
+    def update_auto_check(self):
+        """Al abrir el programa: si hay una version nueva, pregunta (salvo que se haya pedido no avisar)."""
+        st = update_state()
+        if st.get('auto', True) is False or os.environ.get('WA_OFFLINE') or getattr(sys, 'frozen', False):
+            return
+        if time.time() - float(st.get('last_check', 0) or 0) < 3600:
+            return
+        self._upd_probe = _UpdateWorker(self)
+        self._upd_probe.checked.connect(self._update_probe_done)
+        self._upd_probe.check()
+
+    def _update_probe_done(self, r):
+        if not r.get('ok') or r.get('state') != 'newer':
+            return
+        info = r['info']
+        box = QMessageBox(QMessageBox.Question, "Widget Arena",
+                          "Se ha encontrado una nueva versi\u00f3n de Widget Arena (pack %s).\n\n\u00bfDescargarla e instalarla ahora? Se guarda una copia de la versi\u00f3n "
+                          "actual y el programa se reinicia; tus notas y ajustes no se tocan." % info.get('pack'))
+        box.setAttribute(Qt.WA_QuitOnClose, False)
+        chk = QCheckBox("No mostrar m\u00e1s este mensaje, prefiero actualizar manualmente")
+        box.setCheckBox(chk)
+        ok = box.addButton("Aceptar", QMessageBox.AcceptRole)
+        box.addButton("Cancelar", QMessageBox.RejectRole)
+        box.setDefaultButton(ok)
+        box.exec()
+        if chk.isChecked():
+            update_state()['auto'] = False
+            update_state_save()
+        if box.clickedButton() is ok:
+            self.show_updates(check=False).apply_result(r)
 
     # ---- [PACK113] fuentes
     def show_font_chooser(self, first_run=False):

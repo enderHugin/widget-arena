@@ -13,6 +13,19 @@ sub site/index.html > "$OUT/index.html"
 cp site/favicon.png "$OUT/favicon.png"
 touch "$OUT/.nojekyll"
 cp widget_arena.py herramientas.py VERSION "$OUT/dl/"
+# update.json: lo que lee el boton "Buscar actualizaciones" (numero de pack, huellas sha256 y novedades)
+python3 - "$OUT" "$VER" <<'PYEOF'
+import hashlib, json, os, re, sys
+out, ver = sys.argv[1], sys.argv[2]
+sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
+m = re.search(r'^APP_PACK\s*=\s*(\d+)', open('widget_arena.py', encoding='utf-8').read(), re.M)
+if not m:
+    sys.exit('widget_arena.py no define APP_PACK')
+notes = open('NOVEDADES.md', encoding='utf-8').read()[:4000] if os.path.exists('NOVEDADES.md') else ''
+files = {n: {'sha256': sha(n), 'size': os.path.getsize(n)} for n in ('widget_arena.py', 'herramientas.py')}
+with open(os.path.join(out, 'dl', 'update.json'), 'w', encoding='utf-8') as f:
+    json.dump({'pack': int(m.group(1)), 'version': ver, 'notes': notes, 'files': files}, f, ensure_ascii=False, indent=2)
+PYEOF
 cp assets/icon.png assets/icon.ico assets/icon.icns "$OUT/dl/"
 # notas de bienvenida y perfil de ejemplo (se copian en el primer arranque): defaults.zip con carpeta "defaults/" en la raiz
 zip -qrX "$OUT/dl/defaults.zip" defaults
