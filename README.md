@@ -55,6 +55,17 @@ Tus notas, perfiles y ajustes no se tocan, y *Volver a la versión anterior* res
 Al abrir el programa pregunta, como cualquier aplicación, si hay una versión nueva («¿Descargarla e instalarla ahora?»). Marca *No mostrar más este mensaje* si prefieres actualizar a mano;
 se vuelve a activar en la ventana de actualizaciones. Es una conexión más a esta página; `WA_OFFLINE=1` la desactiva. En una instalación como ejecutable no se actualiza sola: baja el instalador nuevo.
 
+## Traer los datos de otra versión
+
+Si usabas una versión anterior (o otro equipo), no hace falta copiar nada a mano: **Ajustes → Importar y exportar → Importar datos de otra instalación...**
+Elige la carpeta `widget_arena_data` de la versión anterior (suele estar junto al programa), la carpeta que la contiene, o una copia completa `.zip`, y marca lo que quieras traer:
+widgets (sustituyendo, añadiendo a los actuales o como perfil nuevo), perfiles, templates, imágenes y marcos, ajustes, atajos de teclado y la conexión con Telegram.
+
+- Antes de tocar nada se guarda una copia completa de lo que tenías.
+- Nunca se pisa un archivo que ya exista con otro contenido: el importado entra con otro nombre («... (importado)»).
+- Las rutas de las imágenes se ajustan solas, también las absolutas de otro equipo o de Windows.
+- Una copia completa `.zip` solo lleva los `.json`; para traer también las imágenes usa la carpeta.
+
 ## Fuentes
 
 Las notas de ejemplo usan **Segoe Print**, una letra de Windows que no se puede redistribuir. Fuera de Windows (o si no la tienes) se sustituye sola por una fuente libre

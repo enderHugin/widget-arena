@@ -1,3 +1,6 @@
+## Pack 118 · 2026-10-30
+- **Importar datos de otra instalación**: *Ajustes → Importar y exportar → Importar datos de otra instalación...*. Trae widgets, perfiles, templates, imágenes, ajustes, atajos y Telegram desde la carpeta `widget_arena_data` de una versión anterior (o desde un .zip). Guarda antes una copia de lo actual y no pisa nada.
+
 ## Pack 117 · 2026-10-30
 - **Acerca de**: nuevo botón «Página del proyecto» que abre https://enderhugin.github.io/widget-arena/.
 

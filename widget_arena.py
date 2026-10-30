@@ -11201,7 +11201,7 @@ def font_boot(m):
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
-APP_PACK = 117                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 118                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -12012,6 +12012,357 @@ class _FontCard(QFrame):
         super().mousePressEvent(e)
 
 
+# ---- [PACK118] importar los datos de otra instalacion (carpeta "widget_arena_data" o copia completa .zip) ---------------------
+IMPORT_MEDIA = ("sticky", "images", "frames")                    # imagenes que usan las notas: no viajan en los .json
+IMPORT_SKIP_DIRS = ("cache", "backups", "backups_programa", "config_backups", "web_data", "logs", "previews")
+IMPORT_MAX_BYTES = 3 * 1024 ** 3
+_IMP_EXT = re.compile(r'\.(png|jpe?g|gif|webp|bmp|svg|ico|tiff?|apng)$', re.I)
+_IMP_SEG = re.compile(r'(?:^|/)(sticky|images|frames)/([^/].*)$')
+
+
+def import_is_root(d):
+    j = os.path.join
+    return any(os.path.exists(j(d, *p)) for p in (("data", "widget_set.json"), ("profiles",), ("templates",), ("sticky",),
+                                                    ("images",), ("frames",), ("sets_en_memoria",)))
+
+
+def import_find_root(path):
+    """Carpeta de datos que hay en 'path': la propia, 'widget_arena_data' dentro de ella o dentro de una subcarpeta cercana. None si no hay."""
+    path = os.path.abspath(path)
+    if os.path.basename(path) == "data" and import_is_root(os.path.dirname(path)):
+        return os.path.dirname(path)
+    level = [path]
+    for _i in range(4):
+        nxt = []
+        for d in level:
+            if import_is_root(d):
+                return d
+            try:
+                subs = sorted(os.listdir(d), key=lambda n: (n != DATA_DIRNAME, n.lower()))
+            except OSError:
+                continue
+            for n in subs:
+                p = os.path.join(d, n)
+                if n not in IMPORT_SKIP_DIRS and not n.startswith('.') and os.path.isdir(p) and not os.path.islink(p):
+                    nxt.append(p)
+
+        level = nxt[:300]
+    return None
+
+
+def import_extract_zip(zpath, dest):
+    """Descomprime un .zip (copia completa o la carpeta de datos comprimida) en 'dest' sin salirse de el ni traer cache ni copias."""
+    import zipfile
+    total = 0
+    with zipfile.ZipFile(zpath) as z:
+        for info in z.infolist():
+            name = info.filename.replace('\\', '/')
+            parts = [p for p in name.split('/') if p]
+            if info.is_dir() or not parts or name.startswith('/') or '..' in parts or re.match(r'^[A-Za-z]:', parts[0]):
+                continue
+            if parts[0] in IMPORT_SKIP_DIRS or (len(parts) > 1 and parts[0] == DATA_DIRNAME and parts[1] in IMPORT_SKIP_DIRS):
+                continue
+            total += info.file_size
+            if total > IMPORT_MAX_BYTES:
+                raise ValueError("el archivo descomprimido es demasiado grande")
+            out = os.path.join(dest, *parts)
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with z.open(info) as src, open(out, 'wb') as dst:
+                shutil.copyfileobj(src, dst)
+
+    return dest
+
+
+def _imp_json(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def _imp_notes(d):
+    return {k: v for k, v in (d or {}).items() if isinstance(v, dict) and isinstance(v.get('template_data'), dict)}
+
+
+def _imp_names(root, sub, ext=".json"):
+    d = os.path.join(root, *sub)
+    try:
+        return sorted(f for f in os.listdir(d) if f.lower().endswith(ext) and os.path.isfile(os.path.join(d, f)))
+    except OSError:
+        return []
+
+
+def import_scan(root):
+    """Que hay para traer en esa carpeta de datos (solo cuentas: no se lee nada secreto)."""
+    j = os.path.join
+    ws = _imp_json(j(root, "data", "widget_set.json")) or {}
+    media = {}
+    for sub in IMPORT_MEDIA:
+        media[sub] = sum(len(fs) for _r, _d, fs in os.walk(j(root, sub)))
+    return {"root": root, "notes": len(_imp_notes(ws)),
+            "settings": len([k for k, v in ws.items() if not isinstance(v, dict) and not str(k).startswith('telegram') and k != 'current_profile']),
+            "telegram": any(str(k).startswith('telegram') and v for k, v in ws.items() if not isinstance(v, dict)),
+            "profiles": _imp_names(root, ("profiles",)), "resident": _imp_names(root, ("sets_en_memoria",)),
+            "templates": _imp_names(root, ("templates",)), "hotkeys": os.path.isfile(j(root, "data", "hotkeys.json")),
+            "hotkey_profiles": _imp_names(root, ("data", "hotkey_profiles")), "media": media}
+
+
+def import_copy_media(root):
+    """Copia sticky/, images/ y frames/ sin pisar nada: lo que ya esta igual se salta y lo que tiene el mismo nombre pero distinto
+    contenido entra con otro nombre. Devuelve (copiados, ya_estaban, {ruta_vieja: ruta_nueva})."""
+    new = same = 0
+    renames = {}
+    for sub in IMPORT_MEDIA:
+        src_root, dst_root = os.path.join(root, sub), os.path.join(ROOT_DATA_DIR, sub)
+        for r, dirs, fs in os.walk(src_root):
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(r, d))]
+            for f in fs:
+                s = os.path.join(r, f)
+                if os.path.islink(s):
+                    continue
+                rel = os.path.relpath(s, src_root).replace(os.sep, '/')
+                d = os.path.join(dst_root, *rel.split('/'))
+                if os.path.exists(d):
+                    if os.path.getsize(d) == os.path.getsize(s) and _sha256_file(d) == _sha256_file(s):
+                        same += 1
+                        continue
+                    stem, ext = os.path.splitext(d)
+                    k = 1
+                    while os.path.exists(d):
+                        d = "%s (importado%s)%s" % (stem, "" if k == 1 else " %d" % k, ext)
+                        k += 1
+                    renames["%s/%s" % (sub, rel)] = "%s/%s" % (sub, os.path.relpath(d, dst_root).replace(os.sep, '/'))
+                os.makedirs(os.path.dirname(d), exist_ok=True)
+                shutil.copy2(s, d)
+                new += 1
+
+    return new, same, renames
+
+
+def import_fix_paths(obj, renames=None):
+    """Recorre un JSON (en el sitio) y deja las rutas de imagenes en la forma portable 'widget_arena_data/sticky/...', tambien las absolutas
+    de otro equipo o de Windows, siempre que el archivo ya este aqui. Devuelve cuantas rutas cambio."""
+    renames = renames or {}
+    n = [0]
+
+    def fix(s):
+        if len(s) > 400 or '<' in s or '\n' in s or not _IMP_EXT.search(s):
+            return s
+        q = s.strip().replace('\\', '/')
+        if q.lower().startswith(('http://', 'https://', 'data:')):
+            return s
+        m = _IMP_SEG.search(q)
+        if not m:
+            return s
+        rel = "%s/%s" % (m.group(1), m.group(2))
+        rel = renames.get(rel, rel)
+        if not os.path.isfile(os.path.join(ROOT_DATA_DIR, *rel.split('/'))):
+            return s
+        out = DATA_DIRNAME + '/' + rel
+        if os.path.normpath(out) == os.path.normpath(s):
+            return s
+        n[0] += 1
+        return out
+
+    def walk(o):
+        if isinstance(o, dict):
+            for k in list(o.keys()):
+                v = o[k]
+                o[k] = fix(v) if isinstance(v, str) else (walk(v) if isinstance(v, (dict, list)) else v)
+        elif isinstance(o, list):
+            for i, v in enumerate(o):
+                o[i] = fix(v) if isinstance(v, str) else (walk(v) if isinstance(v, (dict, list)) else v)
+        return o
+    walk(obj)
+    return n[0]
+
+
+class ImportDataDialog(QDialog):
+    """[PACK118] Importar datos de otra instalaci\u00f3n: se elige la carpeta (o el .zip), se ve lo que hay y se marca lo que se quiere traer."""
+    NOTE_MODES = (("replace", "Sustituir los widgets que tengo ahora"), ("add", "A\u00f1adirlos a los que tengo ahora"),
+                  ("profile", "Guardarlos como un perfil nuevo (sin tocar lo actual)"))
+
+    def __init__(self, manager):
+        super().__init__(None)
+        self.m = manager
+        self.root = None
+        self.info = None
+        self.tmp = None
+        self.setWindowTitle("Importar datos de otra instalaci\u00f3n")
+        self.setAttribute(Qt.WA_QuitOnClose, False)
+        self.setMinimumWidth(640)
+        lay = QVBoxLayout(self)
+        t1 = QLabel("Importar datos de otra instalaci\u00f3n")
+        t1.setStyleSheet("font-size:18px;font-weight:bold;")
+        t2 = QLabel("Trae tus widgets, perfiles, templates, im\u00e1genes y ajustes de una versi\u00f3n anterior o de otro equipo. Elige la carpeta "
+                    "\u00abwidget_arena_data\u00bb que usaba esa versi\u00f3n (suele estar junto al programa), la carpeta que la contiene, o una copia completa .zip.\n"
+                    "Antes de tocar nada se guarda una copia completa de lo que tienes, y nunca se pisa un archivo que ya exista con otro contenido: "
+                    "entra con otro nombre.")
+        t2.setWordWrap(True)
+        t2.setStyleSheet("color:#9aa0aa;")
+
+        lay.addWidget(t1)
+        lay.addWidget(t2)
+        row = QHBoxLayout()
+        self.path = QLineEdit()
+        self.path.setPlaceholderText("Carpeta o archivo .zip de la otra instalaci\u00f3n")
+        self.path.returnPressed.connect(self._typed)
+        b_dir = QPushButton("Carpeta...")
+        b_dir.clicked.connect(self._pick_dir)
+        b_zip = QPushButton("Archivo .zip...")
+        b_zip.clicked.connect(self._pick_zip)
+        row.addWidget(self.path, 1)
+        row.addWidget(b_dir)
+        row.addWidget(b_zip)
+        lay.addLayout(row)
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet("background:#2b2b2f;color:#e8e8ee;border-radius:6px;padding:8px;")
+        lay.addWidget(self.status)
+
+        self.chk = {}
+        for key in ("notes", "profiles", "templates", "media", "settings", "hotkeys", "telegram"):
+            c = QCheckBox("")
+            c.setChecked(True)
+            self.chk[key] = c
+            lay.addWidget(c)
+            if key == "notes":
+                self.mode = QComboBox()
+                for k, label in self.NOTE_MODES:
+                    self.mode.addItem(label, k)
+                mrow = QHBoxLayout()
+                mrow.addSpacing(26)
+                mrow.addWidget(self.mode, 1)
+                lay.addLayout(mrow)
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        cancel = QPushButton("Cancelar")
+        cancel.clicked.connect(self.close)
+
+        self.go = QPushButton("Importar")
+        self.go.setStyleSheet("QPushButton{font-weight:bold;padding:8px 18px;}")
+        self.go.setDefault(True)
+        self.go.clicked.connect(self._run)
+        btns.addWidget(cancel)
+        btns.addWidget(self.go)
+        lay.addLayout(btns)
+        self._fill()
+
+    def _cleanup(self):
+        if self.tmp:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            self.tmp = None
+
+    def closeEvent(self, e):
+        self._cleanup()
+        super().closeEvent(e)
+
+    def _start_dir(self):
+        p = self.path.text().strip()
+        return p if p and os.path.isdir(p) else os.path.expanduser("~")
+
+    def _pick_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "Carpeta de datos de la otra instalaci\u00f3n", self._start_dir())
+        if d:
+            self.load_source(d)
+
+    def _pick_zip(self):
+        f, _ = QFileDialog.getOpenFileName(self, "Copia completa (.zip)", self._start_dir(), "Copias (*.zip)")
+        if f:
+            self.load_source(f)
+
+    def _typed(self):
+        p = self.path.text().strip()
+        if p:
+            self.load_source(os.path.expanduser(p))
+
+    def load_source(self, path):
+        """Mira que hay en la carpeta o el .zip. Devuelve True si encontro datos."""
+        import zipfile
+        import tempfile
+        self._cleanup()
+        self.root = self.info = None
+        self.path.setText(path)
+        try:
+            src = path
+            if os.path.isfile(src):
+                if not zipfile.is_zipfile(src):
+                    raise ValueError("Elige una carpeta o un archivo .zip.")
+                self.tmp = tempfile.mkdtemp(prefix="wa_importar_")
+                import_extract_zip(src, self.tmp)
+                src = self.tmp
+            elif not os.path.isdir(src):
+                raise ValueError("No existe esa carpeta.")
+            root = import_find_root(src)
+            if not root:
+                raise ValueError("No encuentro datos de Widget Arena ah\u00ed (busco data/widget_set.json, profiles, templates, sticky...).")
+            if os.path.abspath(root) == os.path.abspath(ROOT_DATA_DIR):
+                raise ValueError("Esa es la carpeta de datos de esta misma instalaci\u00f3n.")
+            self.root, self.info = root, import_scan(root)
+        except Exception as e:
+            self._cleanup()
+            self.status.setText(str(e) or e.__class__.__name__)
+            self._fill()
+            return False
+
+        self._fill()
+        return True
+
+    def _fill(self):
+        i = self.info
+        self.go.setEnabled(bool(i))
+        if i:
+            self.status.setText("Encontrado en: %s" % self.root)
+        elif not self.status.text():
+            self.status.setText("Elige la carpeta o el .zip para ver qu\u00e9 se puede importar.")
+        nm = sum(i["media"].values()) if i else 0
+        rows = {"notes": ("Mis widgets (%d)" % i["notes"] if i else "Mis widgets", bool(i and i["notes"])),
+                "profiles": ("Perfiles (%d)" % (len(i["profiles"]) + len(i["resident"])) if i else "Perfiles", bool(i and (i["profiles"] or i["resident"]))),
+                "templates": ("Templates (%d)" % len(i["templates"]) if i else "Templates", bool(i and i["templates"])),
+                "media": ("Im\u00e1genes, marcos y notas base (%d archivos)" % nm if i else "Im\u00e1genes, marcos y notas base", nm > 0),
+                "settings": ("Ajustes generales (%d)" % i["settings"] if i else "Ajustes generales", bool(i and i["settings"])),
+                "hotkeys": ("Atajos de teclado", bool(i and i["hotkeys"])),
+                "telegram": ("Conexi\u00f3n con Telegram (bot y chat)", bool(i and i["telegram"]))}
+        for k, (text, has) in rows.items():
+            c = self.chk[k]
+            c.setText(text if (has or not i) else text + "  \u00b7  no hay")
+            c.setEnabled(has)
+            c.setChecked(has)
+
+        self.mode.setEnabled(bool(i and i["notes"]))
+
+    def options(self):
+        o = {k: c.isEnabled() and c.isChecked() for k, c in self.chk.items()}
+        o["notes"] = self.mode.currentData() if o["notes"] else None
+        return o
+
+    def _run(self):
+        if not self.info or not self.root:
+            return
+        o = self.options()
+        if not any(o.values()):
+            self.status.setText("Marca algo para importar.")
+            return
+        if o["notes"] == "replace":
+            have = len([1 for v in self.m.global_state.values() if isinstance(v, dict) and isinstance(v.get('template_data'), dict)])
+            if have and QMessageBox.question(self, "Importar", "Se sustituir\u00e1n tus %d widgets actuales por los de la copia. Antes se guarda una copia "
+                                             "completa, as\u00ed que se puede volver atr\u00e1s.\n\n\u00bfContinuar?" % have) != QMessageBox.Yes:
+                return
+        self.go.setEnabled(False)
+        try:
+            rep = self.m.import_data(self.root, o)
+        except Exception as e:
+            log_error("Importar", "%s" % e)
+            self.go.setEnabled(True)
+            QMessageBox.warning(self, "Importar", "No se pudo completar la importaci\u00f3n:\n%s" % e)
+            return
+
+        QMessageBox.information(self, "Importar", "Importaci\u00f3n terminada:\n\n" + "\n".join("\u2022 " + r for r in rep))
+        self.close()
+
+
 class FontChooserDialog(QDialog):
     """[PACK113] Fuente predeterminada, con muestras: cada opcion ense\u00f1a una nota escrita con esa fuente. Es la de las notas nuevas
     y la que sustituye a una fuente que falta (por ejemplo Segoe Print fuera de Windows). [PACK115] tarjetas con nota de muestra."""
@@ -12784,6 +13135,7 @@ class DataHubWindow(QDialog):
                  ("Agregar widgets desde un archivo...", lambda: m.import_state(replace=False), None),
                  ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None),
                  ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Perfil, template, configuraci\u00f3n o copia .zip"),
+                 ("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", m.show_import_data, "Widgets, perfiles, templates, im\u00e1genes y ajustes de una versi\u00f3n anterior"),
                  self._folder(DATA_DIR)])
 
     def _sec_packs(self):
@@ -20521,6 +20873,9 @@ class WidgetManager(QObject):
         any_action = QAction("Cargar un archivo (se detecta solo)...", self)
         any_action.triggered.connect(lambda: self.load_anything_dialog())
         data_menu.addAction(any_action)
+        imp_action = QAction("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", self)      # [PACK118]
+        imp_action.triggered.connect(self.show_import_data)
+        data_menu.addAction(imp_action)
         data_menu.addSeparator()
         import_menu = QMenu("Importar", data_menu)
         import_add = QAction("Agregar widgets desde un archivo...", self)
@@ -20568,6 +20923,138 @@ class WidgetManager(QObject):
         h.show()
         h.raise_()
         h.activateWindow()
+
+    # ---- [PACK118] importar datos de otra instalacion
+    def show_import_data(self, *_a):
+        d = getattr(self, 'import_dialog', None)
+        if d is None or not d.isVisible():
+            d = self.import_dialog = ImportDataDialog(self)
+        d.show()
+        d.raise_()
+        d.activateWindow()
+        return d
+
+    def import_data(self, root, opts):
+        """Trae a esta instalacion lo elegido de otra carpeta de datos (ver import_scan). No pisa nada que tenga contenido distinto: entra con
+        otro nombre. Antes guarda una copia completa de lo actual. Devuelve las lineas del resumen."""
+        j = os.path.join
+        rep = []
+        self._sync_windows_to_state()
+        safety = self._full_backup(manual=True)
+        if safety:
+            rep.append("Copia de seguridad de lo que ten\u00edas: backups/full/%s" % os.path.basename(safety))
+        ws = _imp_json(j(root, "data", "widget_set.json")) or {}
+        renames = {}
+        if opts.get('media'):
+            new, same, renames = import_copy_media(root)
+            rep.append("Im\u00e1genes, marcos y notas base: %d nuevos, %d ya estaban%s" % (new, same, (", %d con otro nombre" % len(renames)) if renames else ""))
+        if opts.get('settings') or opts.get('hotkeys'):
+            cfg = {}
+            if opts.get('settings'):
+                cfg['settings'] = {k: v for k, v in ws.items() if not isinstance(v, dict) and not str(k).startswith('telegram') and k != 'current_profile'}
+            hk = _imp_json(j(root, "data", "hotkeys.json")) if opts.get('hotkeys') else None
+            if hk:
+                cfg['hotkeys'] = hk
+            if cfg:
+                try:
+                    self._apply_config(cfg, backup=True, exact=False)
+                    rep.append("Ajustes: %d%s" % (len(cfg.get('settings', {})), " \u00b7 atajos de teclado importados" if hk else ""))
+                except Exception as e:
+                    log_warn("Importar", "ajustes: %s" % e)
+                    rep.append("No se pudieron importar los ajustes: %s" % e)
+
+        if opts.get('hotkeys'):
+            n = 0
+            for f in _imp_names(root, ("data", "hotkey_profiles")):
+                dst = j(HOTKEY_PROFILES_DIR, f)
+                if not os.path.exists(dst):
+                    os.makedirs(HOTKEY_PROFILES_DIR, exist_ok=True)
+                    shutil.copy2(j(root, "data", "hotkey_profiles", f), dst)
+                    n += 1
+            if n:
+                rep.append("Esquemas de atajos: %d" % n)
+        if opts.get('telegram'):
+            tg = {k: v for k, v in ws.items() if str(k).startswith('telegram') and not isinstance(v, dict)}
+            if tg:
+                self.global_state.update(tg)
+                self.save_global_state()
+                rep.append("Telegram: bot y chat copiados")
+        notes, mode = _imp_notes(ws), opts.get('notes')
+        if notes and mode:
+            nfix = import_fix_paths(notes, renames)
+            if mode == 'replace':
+                self.restore_backup({'notes': notes}, active=True)
+                rep.append("Widgets: %d (sustituyen a los de antes)" % len(notes))
+            elif mode == 'add':
+                self._hist_begin()
+                try:
+                    for nid, st in self._remap_set(notes).items():
+                        self.global_state[nid] = st
+                        win = StickerWindow(self, nid, st)
+                        self.widgets[nid] = win
+                        if st.get('enabled', True):
+                            win.show()
+                finally:
+                    self._hist_end()
+                self.save_global_state()
+                self._apply_collapse_visibility()
+                self._refresh_connector_overlay()
+                rep.append("Widgets: %d a\u00f1adidos a los que ya ten\u00edas" % len(notes))
+            else:
+                dest = self._unique_profile_name("Importado " + datetime.datetime.now().strftime('%Y-%m-%d'))
+                os.makedirs(PROFILES_DIR, exist_ok=True)
+                with open(self._profile_path(dest), 'w', encoding='utf-8') as f:
+                    json.dump(notes, f, indent=2, ensure_ascii=False)
+                rep.append("Widgets: %d guardados como el perfil \u00ab%s\u00bb" % (len(notes), dest))
+            if nfix:
+                rep.append("Rutas de im\u00e1genes ajustadas: %d" % nfix)
+
+        if opts.get('profiles'):
+            done, skip = [], 0
+            os.makedirs(PROFILES_DIR, exist_ok=True)
+            todo = [(f[:-5], j(root, "profiles", f)) for f in _imp_names(root, ("profiles",))]
+            todo += [(f[:-5] + " (en memoria)", j(root, "sets_en_memoria", f)) for f in _imp_names(root, ("sets_en_memoria",))]
+            for name, path in todo:
+                raw = _imp_json(path)
+                if raw is None:
+                    continue
+                import_fix_paths(raw, renames)
+                base = HotkeyManager.safe_profile_name(name) or "Perfil"
+                if os.path.exists(self._profile_path(base)):
+                    if _imp_json(self._profile_path(base)) == raw:
+                        skip += 1
+                        continue
+                    base = self._unique_profile_name(base + " (importado)")
+                with open(self._profile_path(base), 'w', encoding='utf-8') as f:
+                    json.dump(raw, f, indent=2, ensure_ascii=False)
+                done.append(base)
+            rep.append("Perfiles: %d nuevos%s" % (len(done), (", %d ya estaban" % skip) if skip else ""))
+
+        if opts.get('templates'):
+            done, skip = [], 0
+            for f in _imp_names(root, ("templates",)):
+                raw = _imp_json(j(root, "templates", f))
+                if raw is None:
+                    continue
+                import_fix_paths(raw, renames)
+                dest, k = f, 1
+                if os.path.exists(j(TEMPLATES_DIR, dest)):
+                    if _imp_json(j(TEMPLATES_DIR, dest)) == raw:
+                        skip += 1
+                        continue
+                    while os.path.exists(j(TEMPLATES_DIR, dest)):
+                        dest = "%s (importado%s).json" % (f[:-5], "" if k == 1 else " %d" % k)
+                        k += 1
+                self.save_template(dest, raw)
+                done.append(dest)
+            rep.append("Templates: %d nuevos%s" % (len(done), (", %d ya estaban" % skip) if skip else ""))
+
+        self.build_tray_menu()
+        tb = getattr(self, 'template_browser', None)
+        if tb is not None:
+            tb.reload()
+        log_info("Importar", "Importado desde %s: %s" % (root, " | ".join(rep)))
+        return rep
 
     # ---- [PACK114] actualizaciones
     def show_updates(self, check=True):
