@@ -254,7 +254,7 @@
       "upright_angle": 0.0,
       "layer1": {
         "type": "text",
-        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Semana 43</b><br><span style=\"font-size:10pt;\">Tablero de ejemplo: cada día es una rama. «Proyecto X» está plegado.</span></p>",
+        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Semana 43</b><br><span style=\"font-size:10pt;\">Tablero de ejemplo: cada día es una rama. «Proyecto X» está plegado. Ctrl + 1 vuelve a «Bienvenida».</span></p>",
         "background": "transparent",
         "font_family": "Segoe Print",
         "font_size": 11,
@@ -2283,7 +2283,7 @@
       "upright_angle": 0.0,
       "layer1": {
         "type": "text",
-        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Proyecto X</b><br><span style=\"font-size:10pt;\">Plegado: dos notas ocultas. Clic derecho → Relaciones → Desplegar hijos.</span></p>",
+        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Proyecto X</b><br><span style=\"font-size:10pt;\">Plegado: dos notas ocultas. Clic derecho → Relaciones → Desplegar hijos (2).</span></p>",
         "background": "transparent",
         "font_family": "Segoe Print",
         "font_size": 11,

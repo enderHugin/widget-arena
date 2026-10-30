@@ -41,9 +41,10 @@ Todo el código está en este repositorio (`installers/`) para que puedas leerlo
 
 ## Primer arranque
 
-La primera vez que se abre aparece un conjunto de notas de bienvenida enlazadas entre sí, que te enseña los gestos y las opciones principales
-(mover, enlazar, plegar, estilos, perfiles). Además queda guardado un perfil de ejemplo de uso diario, «Ejemplo - semana», para que veas cómo se organiza
-un tablero real; cámbialo con **Ctrl + 2** o desde el menú del icono de bandeja → *Perfiles*. Puedes borrarlos cuando quieras: no vuelven a aparecer.
+La primera vez que se abre aparece el perfil **Bienvenida**: doce notas enlazadas por cables que sirven de tutorial (mover y enlazar con **Ctrl** / **Alt** + arrastrar,
+crear y clonar hijas, gestos y ayuda con **F1**, cambiar el tono con **Ctrl + rueda**, mover una rama entera, plegar y desplegar hijos, perfiles con **Ctrl + 1…0** y el icono de la bandeja).
+Además queda guardado un perfil de ejemplo de uso diario, «Ejemplo - semana», para que veas cómo se organiza un tablero real; cámbialo con **Ctrl + 2** (y vuelve con **Ctrl + 1**)
+o desde el menú del icono de bandeja → *Perfiles*. Puedes borrarlos cuando quieras: no vuelven a aparecer.
 
 ## Packs de estilos
 
