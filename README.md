@@ -46,6 +46,18 @@ crear y clonar hijas, gestos y ayuda con **F1**, cambiar el tono con **Ctrl + ru
 Además queda guardado un perfil de ejemplo de uso diario, «Ejemplo - semana», para que veas cómo se organiza un tablero real; cámbialo con **Ctrl + 2** (y vuelve con **Ctrl + 1**)
 o desde el menú del icono de bandeja → *Perfiles*. Puedes borrarlos cuando quieras: no vuelven a aparecer.
 
+## Fuentes
+
+Las notas de ejemplo usan **Segoe Print**, una letra de Windows que no se puede redistribuir. Fuera de Windows (o si no la tienes) se sustituye sola por una fuente libre
+parecida. Widget Arena trae tres, con licencia SIL Open Font License (están en `defaults/fonts/`, con su licencia): **Kalam** (la más parecida, redonda y ancha),
+**Patrick Hand** (clara y compacta) y **Caveat** (estrecha y caligráfica).
+
+- Durante la instalación te pregunta cuál quieres como **fuente predeterminada** (la de las notas nuevas y la que sustituye a una que falta). Si no la contestas, te lo pregunta al abrir el programa.
+  Puedes cambiarla cuando quieras en *icono de bandeja → Ajustes → Apariencia → Fuente predeterminada...*.
+- Si falta alguna de las tres, el programa la descarga sola, en segundo plano, de esta misma página (`dl/fonts/`) y comprueba su huella sha256. Es la única conexión que hace por su cuenta;
+  sin red no pasa nada y lo reintenta pasadas unas horas. Para desactivarla, define la variable de entorno `WA_OFFLINE=1`.
+- Al **exportar un pack** te pregunta por las fuentes que usa: las del sistema no se pueden incluir, las libres se marcan solas y las demás solo se incluyen si confirmas que tienes derecho.
+
 ## Packs de estilos
 
 Un **pack** (`.wapack`, un zip) reúne estilos de notas y conjuntos de widgets ya colocados, con las imágenes que usan, para compartir o estrenar.

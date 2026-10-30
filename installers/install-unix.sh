@@ -99,6 +99,25 @@ if curl -fsSL --retry 2 -o "$STAGE/defaults.zip" "$BASE/dl/defaults.zip" 2>/dev/
   "$PY" -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$STAGE/defaults.zip" "$STAGE" || rm -rf "$STAGE/defaults"
 fi
 VERSION="$(tr -d '[:space:]' < "$STAGE/VERSION")"
+# fuente predeterminada de las notas nuevas (se puede cambiar luego en Ajustes > Apariencia). Con WA_FONT definida no pregunta.
+if [ -d "$STAGE/defaults" ]; then
+  FONT="${WA_FONT:-}"
+  if [ -z "$FONT" ] && { : < /dev/tty; } 2>/dev/null; then
+    echo
+    echo "Fuente predeterminada de las notas nuevas (se puede cambiar luego en Ajustes > Apariencia; las fuentes son libres y se descargan solas):"
+    echo "  1) Kalam         redonda y ancha, la mas parecida a Segoe Print"
+    echo "  2) Patrick Hand  clara y compacta, cabe mas texto"
+    echo "  3) Caveat        estrecha y caligrafica"
+    echo "  4) Inter         la de siempre en Widget Arena"
+    n=""; read -r -p "Elige [1-4, Intro = 1]: " n < /dev/tty || n=""
+    case "$n" in 2) FONT="Patrick Hand";; 3) FONT="Caveat";; 4) FONT="Inter";; *) FONT="Kalam";; esac
+  fi
+  if [ -n "$FONT" ]; then
+    mkdir -p "$STAGE/defaults/data"
+    printf '{"default_font": "%s", "asked": true}\n' "$FONT" > "$STAGE/defaults/data/fuentes.json"
+    say "fuente predeterminada: $FONT"
+  fi
+fi
 say "version $VERSION"
 
 # --- 4) instalacion ------------------------------------------------------------------------------------------------

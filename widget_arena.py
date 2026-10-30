@@ -10836,6 +10836,366 @@ def pack_load_fonts():
         log_warn("Packs", "No se pudieron cargar las fuentes de los packs: %s" % e)
 
 
+# ---- [PACK113] fuentes: libres que se descargan solas, sustitutas de las propietarias, predeterminada y exportacion ------------
+FONTS_DIR = os.path.join(ROOT_DATA_DIR, "fonts")
+FONTS_CFG = os.path.join(DATA_DIR, "fuentes.json")
+FONT_BASE_URL = "https://enderhugin.github.io/widget-arena/dl/fonts/"
+# (familia, archivo, sha256) - fuentes libres (licencia SIL Open Font License) que la aplicacion descarga sola y que se pueden redistribuir
+FREE_FONTS = (
+    ("Kalam", "Kalam-Regular.ttf", "57cecb63d4608019371954274ae1d8c397764debd5b19d4a33c1efa4dc923c0b"),
+    ("Kalam", "Kalam-Bold.ttf", "2f6576601db015d4f6c08678120277fc8510b98c06e932ce7a6a9cbff4cbdded"),
+    ("Patrick Hand", "PatrickHand-Regular.ttf", "0f173b3e6cb6d1af25babf7f0057c5ac4ee11f9992b0469bb817e967ef4ad0fc"),
+    ("Caveat", "Caveat-VariableFont_wght.ttf", "0bdb6b660482d31531b3945849fba5916b3ef8695da7024a9e6b9ee3c4157988"),
+)
+FREE_FONT_INFO = {
+    "Kalam": "Redonda y ancha: la m\u00e1s parecida a Segoe Print.",
+    "Patrick Hand": "Clara y compacta: cabe m\u00e1s texto en la nota.",
+    "Caveat": "Estrecha y caligr\u00e1fica: mucho texto en poco sitio.",
+}
+# familias propietarias (o que solo existen en un sistema) que se sustituyen por la predeterminada y por las libres cuando faltan
+FONT_ALIAS = ("Segoe Print", "Segoe Script", "Ink Free", "Comic Sans MS", "Bradley Hand", "Bradley Hand ITC", "Noteworthy", "Marker Felt",
+              "Chalkboard", "Chalkboard SE", "Lucida Handwriting", "Kristen ITC", "Mistral", "Brush Script MT")
+
+FONT_GENERIC = ("Kalam", "Patrick Hand", "Caveat", "Bradley Hand", "Noteworthy", "Marker Felt", "Comic Sans MS")
+_FONT_CFG = {}
+_FONT_LOADED = set()
+_FONT_INDEX = None
+
+
+def font_cfg():
+    global _FONT_CFG
+    if not _FONT_CFG:
+        try:
+            with open(FONTS_CFG, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+        except Exception:
+            d = {}
+        _FONT_CFG = d if isinstance(d, dict) else {}
+    return _FONT_CFG
+
+
+def font_cfg_save():
+    try:
+        tmp = FONTS_CFG + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(font_cfg(), f, indent=2, ensure_ascii=False)
+        os.replace(tmp, FONTS_CFG)
+    except OSError as e:
+        log_warn("Fuentes", "No se pudo guardar la configuraci\u00f3n de fuentes: %s" % e)
+
+
+def font_default():
+    """Fuente de las notas nuevas: la elegida por el usuario o, si nunca eligio, la de siempre (Inter)."""
+    v = font_cfg().get('default_font')
+    return v.strip() if isinstance(v, str) and v.strip() else 'Inter'
+
+
+def font_chain_for(family):
+    """Familias que se prueban, por orden, cuando falta `family`: primero la predeterminada elegida y luego las libres."""
+    out = []
+    d = font_cfg().get('default_font')
+    for f in ([d] if isinstance(d, str) and d.strip() else []) + list(FONT_GENERIC):
+        if f and f != family and f not in out:
+            out.append(f)
+    return out
+
+
+def font_installed(family):
+    try:
+        from PySide6.QtGui import QFontDatabase
+        low = str(family).lower()
+        return any(f.lower() == low for f in QFontDatabase.families())
+    except Exception:
+        return False
+
+
+def font_seed_local():
+    """Copia a la carpeta de datos las fuentes libres que vengan con el programa (defaults/fonts) y falten. Nunca sobrescribe."""
+    src = os.path.join(APP_DIR, "defaults", "fonts")
+    try:
+        if not os.path.isdir(src):
+            return
+        os.makedirs(FONTS_DIR, exist_ok=True)
+        for f in os.listdir(src):
+            dst = os.path.join(FONTS_DIR, f)
+            if not os.path.exists(dst):
+                shutil.copy2(os.path.join(src, f), dst)
+    except OSError as e:
+        log_warn("Fuentes", "No se pudieron copiar las fuentes incluidas: %s" % e)
+
+
+def font_load_local():
+    """Registra en Qt las .ttf / .otf de la carpeta de fuentes (una vez por archivo). Devuelve las familias nuevas."""
+    new = []
+    try:
+        from PySide6.QtGui import QFontDatabase
+        if not os.path.isdir(FONTS_DIR):
+            return new
+        for f in sorted(os.listdir(FONTS_DIR)):
+            if not f.lower().endswith(('.ttf', '.otf')):
+                continue
+            p = os.path.join(FONTS_DIR, f)
+            key = (p, os.path.getmtime(p))
+            if key in _FONT_LOADED:
+                continue
+            _FONT_LOADED.add(key)
+            fid = QFontDatabase.addApplicationFont(p)
+            if fid >= 0:
+                new += QFontDatabase.applicationFontFamilies(fid)
+            else:
+                log_warn("Fuentes", "Qt no pudo cargar %s" % f)
+    except Exception as e:
+        log_warn("Fuentes", "No se pudieron cargar las fuentes: %s" % e)
+
+    return new
+
+
+def font_apply_substitutions():
+    """Qt solo usa estas sustitutas cuando la familia pedida no esta instalada: con Segoe Print instalada se ve Segoe Print."""
+    try:
+        for fam in FONT_ALIAS:
+            QFont.removeSubstitutions(fam)
+            QFont.insertSubstitutions(fam, font_chain_for(fam))
+    except Exception as e:
+        log_warn("Fuentes", "No se pudieron fijar las fuentes sustitutas: %s" % e)
+
+
+def font_set_default(family):
+    font_cfg()['default_font'] = str(family)
+    font_cfg()['asked'] = True
+    font_cfg_save()
+    font_apply_substitutions()
+
+
+class _FontFetcher(QObject):
+    """Descarga en segundo plano las fuentes libres que falten (con su huella sha256) y avisa al terminar. Si no hay red no pasa nada."""
+    done = Signal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._busy = False
+
+    def pending(self):
+        return [f for f in FREE_FONTS if not os.path.exists(os.path.join(FONTS_DIR, f[1]))]
+
+    def start(self, force=False):
+        if self._busy or os.environ.get('WA_OFFLINE'):
+            return False
+        todo = self.pending()
+        if not todo:
+            return False
+        c = font_cfg()
+        if not force and c.get('last_fail') and time.time() - float(c.get('last_try', 0) or 0) < 6 * 3600:
+            return False
+        import threading
+        self._busy = True
+        threading.Thread(target=self._run, args=(todo,), daemon=True).start()
+        return True
+
+    def _run(self, todo):
+        import urllib.request, ssl
+        got, fail = [], False
+        ctx = None
+        try:
+            import certifi
+            ctx = ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            ctx = ssl.create_default_context()
+        for fam, fn, sha in todo:
+            try:
+                req = urllib.request.Request(FONT_BASE_URL + fn, headers={'User-Agent': 'WidgetArena'})
+                with urllib.request.urlopen(req, timeout=25, context=ctx) as r:
+                    data = r.read(4 * 1048576 + 1)
+                if len(data) > 4 * 1048576 or hashlib.sha256(data).hexdigest() != sha:
+                    raise ValueError("el archivo no coincide con la huella esperada")
+                os.makedirs(FONTS_DIR, exist_ok=True)
+                tmp = os.path.join(FONTS_DIR, fn + '.part')
+                with open(tmp, 'wb') as f:
+                    f.write(data)
+                os.replace(tmp, os.path.join(FONTS_DIR, fn))
+                got.append(fn)
+            except Exception as e:
+                fail = True
+                log_warn("Fuentes", "No se pudo descargar %s: %s" % (fn, e))
+
+        c = font_cfg()
+        c['last_try'] = time.time()
+        c['last_fail'] = fail
+        font_cfg_save()
+        self._busy = False
+        self.done.emit(got)
+
+
+# ---- lectura minima de los datos de una fuente (nombre, licencia, permiso de incrustacion), sin dependencias -----------
+def _font_meta(src):
+    import struct, io
+    try:
+        f = io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else open(src, 'rb')
+        with f:
+            h = f.read(12)
+            if len(h) < 12 or h[:4] not in (b'\x00\x01\x00\x00', b'OTTO', b'true'):
+                return None
+            n = struct.unpack('>H', h[4:6])[0]
+            if n > 64:
+                return None
+            tab = {}
+            for _i in range(n):
+                e = f.read(16)
+                if len(e) < 16:
+                    break
+                tab[e[:4]] = struct.unpack('>II', e[8:16])
+            res = {'family': '', 'family1': '', 'license': '', 'license_url': '', 'copyright': '', 'fstype': 0}
+            if b'OS/2' in tab:
+                f.seek(tab[b'OS/2'][0] + 8)
+                v = f.read(2)
+                if len(v) == 2:
+                    res['fstype'] = struct.unpack('>H', v)[0]
+            if b'name' in tab and 0 < tab[b'name'][1] <= 262144:
+                f.seek(tab[b'name'][0])
+                b = f.read(tab[b'name'][1])
+                _fmt, cnt, so = struct.unpack('>HHH', b[:6])
+                names = {}
+                for i in range(min(cnt, 400)):
+                    r = b[6 + 12 * i: 18 + 12 * i]
+                    if len(r) < 12:
+                        break
+                    pid, _eid, _lid, nid, ln, off = struct.unpack('>HHHHHH', r)
+                    raw = b[so + off: so + off + ln]
+                    if pid in (0, 3):
+                        s = raw.decode('utf-16-be', 'ignore')
+                    elif pid == 1:
+                        s = raw.decode('mac_roman', 'ignore')
+                    else:
+                        continue
+                    if s and (pid == 3 or nid not in names):
+                        names[nid] = s
+                res['family1'] = names.get(1, '')
+                res['family'] = names.get(16) or names.get(1, '')
+                res['license'] = names.get(13, '')
+                res['license_url'] = names.get(14, '')
+                res['copyright'] = names.get(0, '')
+            return res
+    except Exception:
+        return None
+
+
+def font_license_label(meta):
+    t = ' '.join(str(meta.get(k) or '') for k in ('license', 'license_url', 'copyright')).lower()
+    if 'open font license' in t or 'scripts.sil.org/ofl' in t or 'openfontlicense' in t or 'sil ofl' in t:
+        return 'OFL'
+    if 'apache' in t:
+        return 'Apache 2.0'
+    if 'ubuntu font licen' in t:
+        return 'Ubuntu Font Licence'
+    if 'public domain' in t or 'creativecommons.org/publicdomain' in t:
+        return 'dominio p\u00fablico'
+    return ''
+
+
+def font_license_of_bytes(data):
+    m = _font_meta(data)
+    return font_license_label(m) if m else ''
+
+
+def _font_dirs():
+    out = []
+    home = os.path.expanduser('~')
+    if sys.platform == 'win32':
+        out.append((os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts'), 'windows'))
+        if os.environ.get('LOCALAPPDATA'):
+            out.append((os.path.join(os.environ['LOCALAPPDATA'], 'Microsoft', 'Windows', 'Fonts'), 'user'))
+    elif sys.platform == 'darwin':
+        out += [('/System/Library/Fonts', 'macos'), ('/Library/Fonts', 'user'), (os.path.join(home, 'Library', 'Fonts'), 'user')]
+    else:
+        out += [('/usr/share/fonts', 'linux'), ('/usr/local/share/fonts', 'linux'), (os.path.join(home, '.fonts'), 'user'),
+                (os.path.join(home, '.local', 'share', 'fonts'), 'user')]
+    out.append((FONTS_DIR, 'app'))
+    return [(d, o) for d, o in out if os.path.isdir(d)]
+
+
+def font_index(refresh=False):
+    """{familia en minusculas: [(ruta, origen, datos), ...]} (un archivo por estilo: normal, negrita...) de las fuentes .ttf / .otf del equipo (se lee solo la cabecera de cada una)."""
+    global _FONT_INDEX
+    if _FONT_INDEX is not None and not refresh:
+        return _FONT_INDEX
+    idx, n = {}, 0
+    for base, origin in _font_dirs():
+        for r, _d, fs in os.walk(base):
+            for fn in fs:
+                if not fn.lower().endswith(('.ttf', '.otf')):
+                    continue
+                n += 1
+                if n > 8000:
+                    break
+                p = os.path.join(r, fn)
+                m = _font_meta(p)
+                if not m:
+                    continue
+                for k in (m['family'], m['family1']):
+                    if k:
+                        lst = idx.setdefault(k.lower(), [])
+                        if all(x[0] != p for x in lst):
+                            lst.append((p, origin, m))
+
+    _FONT_INDEX = idx
+    return idx
+
+
+def font_export_rows(families):
+    """Una fila por fuente usada, con lo que se puede hacer con ella al exportar un pack: dict(family, path, enabled, checked, status, where)."""
+    idx = font_index()
+    free = {f[0] for f in FREE_FONTS}
+    rows = []
+    for fam in sorted(families):
+        row = {'family': fam, 'path': '', 'paths': [], 'enabled': False, 'checked': False, 'status': '', 'where': '', 'license': ''}
+        alt = [x for x in font_chain_for(fam) if font_installed(x)]
+        sust = (" En los dem\u00e1s sistemas se ver\u00e1 \u00ab%s\u00bb." % alt[0]) if alt else ''
+        if fam in free:
+            row['status'] = "Libre (OFL). La aplicaci\u00f3n la descarga sola: no hace falta incluirla."
+            row['where'] = "Windows, macOS y Linux"
+        else:
+            hit = idx.get(fam.lower())
+            if not hit and not font_installed(fam):
+                continue                          # ni esta instalada ni se encuentra: no hay nada que decidir
+            if not hit:
+                row['status'] = "No se encontr\u00f3 el archivo de esta fuente en este equipo: no se puede incluir."
+                row['where'] = "Solo donde est\u00e9 instalada." + sust
+            else:
+                p, origin, m = hit[0]
+                lic = font_license_label(m)
+                row['path'], row['license'] = p, lic
+                row['paths'] = [h[0] for h in hit]
+                if origin in ('windows', 'macos'):
+                    nm = "Windows" if origin == 'windows' else "macOS"
+                    row['status'] = "Fuente de %s: su licencia no permite redistribuirla." % nm
+                    row['where'] = "Solo en %s.%s" % (nm, sust)
+                elif m.get('fstype', 0) & 0x0002:
+                    row['status'] = "Su licencia prohibe incrustarla: no se puede incluir."
+                    row['where'] = "Solo donde est\u00e9 instalada." + sust
+                else:
+                    row['enabled'] = True
+                    row['where'] = "Windows, macOS y Linux (va dentro del pack)"
+                    if lic:
+                        row['status'] = "Licencia libre (%s): se puede incluir." % lic
+                        row['checked'] = True
+                    else:
+                        row['status'] = "Licencia sin identificar: incl\u00fayela solo si tienes derecho a redistribuirla."
+
+        rows.append(row)
+    return rows
+
+
+def font_boot(m):
+    """Arranque de las fuentes: copia las incluidas, las registra, fija las sustitutas y, un momento despues, descarga las que falten."""
+    font_seed_local()
+    font_load_local()
+    font_apply_substitutions()
+    m._font_fetcher = _FontFetcher(m)
+    m._font_fetcher.done.connect(m.font_downloaded)
+    QTimer.singleShot(2000, lambda: m._font_fetcher.start())
+    QTimer.singleShot(3500, m.font_first_run_prompt)
+
+
 # ---- imagenes: generadas (nota base) o propias ------------------------------------------------------------------------
 def _find_stored_file(path, layer_num=2):
     """Archivo real al que apunta la ruta guardada en una capa (misma busqueda que al cargarla, y tambien rutas con barras de
@@ -11087,7 +11447,7 @@ def pack_build(path, meta, styles, sets, font_files=()):
             pass
         fn = 'fonts/' + re.sub(r'[^A-Za-z0-9._-]+', '_', os.path.basename(fp))
         files[fn] = data
-        fonts.append({'file': fn, 'family': fam})
+        fonts.append({'file': fn, 'family': fam, 'license': font_license_of_bytes(data)})
     name = str(meta.get('name') or 'Pack').strip() or 'Pack'
     man = {'format': PACK_FORMAT, 'format_version': PACK_FORMAT_VERSION, 'min_reader': 1, 'render_v': PACK_RENDER_V,
            'id': _pack_slug(meta.get('id') or name), 'name': name, 'author': str(meta.get('author') or ''),
@@ -11095,6 +11455,11 @@ def pack_build(path, meta, styles, sets, font_files=()):
            'description': str(meta.get('description') or ''), 'created': datetime.datetime.now().isoformat(timespec='seconds'),
            'styles': st_ent, 'sets': set_ent, 'fonts': fonts, 'fonts_used': sorted(used)}
 
+    fb = {f: font_chain_for(f) for f in sorted(used) if f in FONT_ALIAS}
+    if fb:
+        man['font_fallbacks'] = fb              # [PACK113] sustitutas sugeridas para las fuentes propietarias (informativo)
+    if fonts:
+        man['fonts_scope'] = 'share' if meta.get('fonts_scope') == 'share' else 'personal'
     cover = next((e['preview'] for e in st_ent if e.get('preview')), None)
     if cover:
         man['cover'] = 'cover.png'
@@ -11247,7 +11612,11 @@ class PacksDialog(QDialog):
 
         miss = [f for f in used if f not in have and f not in QFontDatabase.families()]
         if miss:
-            lines.append("Usa fuentes que no tienes instaladas: " + ", ".join(miss[:6]) + ". Se ver\u00e1 otra letra hasta que las instales.")
+            alt = [x for x in font_chain_for('') if font_installed(x)]
+            lines.append("Usa fuentes que no tienes instaladas: " + ", ".join(miss[:6]) + ". "
+                         + (("Se ver\u00e1 \u00ab%s\u00bb en su lugar." % alt[0]) if alt and any(x in FONT_ALIAS for x in miss) else "Se ver\u00e1 otra letra hasta que las instales."))
+        if pk.fonts and str(pk.manifest.get('fonts_scope')) == 'personal':
+            lines.append("Incluye fuentes que su autor marc\u00f3 como de uso personal.")
         if pk.render_v > PACK_RENDER_V:
             lines.append("Este pack se prepar\u00f3 con una versi\u00f3n m\u00e1s nueva del programa: algunas notas pueden verse algo distintas.")
         self.info.setText("\n".join(lines))
@@ -11376,6 +11745,215 @@ class PacksDialog(QDialog):
         QTimer.singleShot(0, lambda: self.install_files(paths))
 
 
+class FontChooserDialog(QDialog):
+    """[PACK113] Fuente predeterminada: la de las notas nuevas y la que sustituye a una fuente que falta (por ejemplo Segoe Print fuera de Windows)."""
+    SAMPLE = "Mant\u00e9n Ctrl, Alt, May\u00fas o Win sobre una nota"
+
+    def __init__(self, manager, first_run=False):
+        super().__init__(None)
+        self.m = manager
+        self.first_run = first_run
+        self.setWindowTitle("Fuente predeterminada")
+        self.setAttribute(Qt.WA_QuitOnClose, False)
+        self.setMinimumWidth(560)
+        root = QVBoxLayout(self)
+        t1 = QLabel("Elige tu fuente predeterminada")
+        t1.setStyleSheet("font-size:18px;font-weight:bold;")
+        t2 = QLabel("Se usa en las notas nuevas y sustituye a la fuente de un widget cuando esta no est\u00e1 instalada (por ejemplo \u00abSegoe Print\u00bb "
+                    "fuera de Windows). Las fuentes son libres (licencia OFL) y la aplicaci\u00f3n las descarga sola; puedes cambiarla cuando quieras en "
+                    "Ajustes \u2192 Apariencia \u2192 Fuente predeterminada.")
+        t2.setWordWrap(True)
+        t2.setStyleSheet("color:#9aa0aa;")
+        root.addWidget(t1)
+        root.addWidget(t2)
+        self.opts = []                      # (radio, familia, etiqueta de muestra, aviso)
+
+        cur = font_cfg().get('default_font')
+        names = list(dict.fromkeys(f[0] for f in FREE_FONTS))
+        for fam in names:
+            self._add_option(root, fam, FREE_FONT_INFO.get(fam, ""))
+        self._add_option(root, "Inter", "La de siempre en Widget Arena (si no est\u00e1 instalada, la del sistema).")
+        row = QHBoxLayout()
+        self.rb_other = QRadioButton("Otra fuente del equipo:")
+        self.other = QFontComboBox()
+        self.other.currentFontChanged.connect(self._other_changed)
+        row.addWidget(self.rb_other)
+        row.addWidget(self.other, 1)
+        root.addLayout(row)
+        sel = False
+        for rb, fam, _lb, _w in self.opts:
+            if cur == fam:
+                rb.setChecked(True)
+                sel = True
+        if not sel and isinstance(cur, str) and cur.strip():
+            self.rb_other.setChecked(True)
+            self.other.setCurrentFont(QFont(cur))
+        elif not sel:
+            self.opts[0][0].setChecked(True)             # Kalam: la mas parecida a Segoe Print
+
+        self.status = QLabel("")
+        self.status.setStyleSheet("color:#9aa0aa;")
+        root.addWidget(self.status)
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        later = QPushButton("M\u00e1s tarde" if first_run else "Cancelar")
+        later.clicked.connect(self._later)
+        ok = QPushButton("Usar esta fuente")
+        ok.setStyleSheet("QPushButton{font-weight:bold;padding:8px 18px;}")
+        ok.setDefault(True)
+        ok.clicked.connect(self._accept)
+        btns.addWidget(later)
+        btns.addWidget(ok)
+        root.addLayout(btns)
+        self.refresh_fonts()
+
+    def _other_changed(self, _f=None):
+        self.rb_other.setChecked(True)
+
+    def _add_option(self, root, fam, info):
+        rb = QRadioButton(fam)
+        rb.setStyleSheet("font-weight:bold;")
+        lb = QLabel(self.SAMPLE)
+        lb.setStyleSheet("padding-left:24px;")
+        wr = QLabel(info)
+        wr.setStyleSheet("padding-left:24px;color:#9aa0aa;")
+        wr.setWordWrap(True)
+        root.addWidget(rb)
+        root.addWidget(lb)
+        root.addWidget(wr)
+        self.opts.append((rb, fam, lb, wr))
+
+    def refresh_fonts(self):
+        """Pinta cada muestra con su fuente; las que aun no se han descargado se marcan."""
+        wait = False
+        for rb, fam, lb, wr in self.opts:
+            ok = font_installed(fam) or fam == "Inter"
+            lb.setFont(QFont(fam, 15) if ok else QFont("", 15))
+            if not ok:
+                wait = True
+            base = FREE_FONT_INFO.get(fam, "La de siempre en Widget Arena (si no est\u00e1 instalada, la del sistema).")
+            wr.setText(base if ok else base + "  \u00b7  Descarg\u00e1ndose...")
+        self.status.setText("Descargando las fuentes libres... las muestras se actualizar\u00e1n solas." if wait else "")
+
+    def chosen(self):
+        if self.rb_other.isChecked():
+            return self.other.currentFont().family()
+        for rb, fam, _lb, _w in self.opts:
+            if rb.isChecked():
+                return fam
+        return "Inter"
+
+    def _later(self):
+        if self.first_run:
+            font_cfg()['asked'] = True
+            font_cfg_save()
+        self.close()
+
+    def _accept(self):
+        fam = self.chosen()
+        font_set_default(fam)
+        self.m.font_refresh_widgets()
+        self.close()
+
+
+class FontExportDialog(QDialog):
+    """[PACK113] \u00bfExportar fuentes? Lista las que usa el pack, con lo que se puede hacer con cada una y d\u00f3nde funcionar\u00e1."""
+
+    def __init__(self, parent, rows):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+        self.rows = rows
+        self.setWindowTitle("Exportar fuentes")
+        self.resize(960, 440)
+        root = QVBoxLayout(self)
+        t1 = QLabel("\u00bfExportar fuentes?")
+        t1.setStyleSheet("font-size:18px;font-weight:bold;")
+        t2 = QLabel("Estas son las fuentes que usan los estilos y perfiles elegidos. Las que se incluyen van dentro del pack y funcionan en "
+                    "Windows, macOS y Linux. Las dem\u00e1s no se pueden o no hace falta incluirlas: si faltan, se ver\u00e1 una fuente parecida.")
+        t2.setWordWrap(True)
+        t2.setStyleSheet("color:#9aa0aa;")
+        root.addWidget(t1)
+        root.addWidget(t2)
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(3)
+        self.tree.setHeaderLabels(["Fuente", "Estado", "D\u00f3nde funciona"])
+
+        self.tree.setRootIsDecorated(False)
+        self.tree.setWordWrap(True)
+        self.tree.setColumnWidth(0, 150)
+        self.tree.setColumnWidth(1, 430)
+        for r in rows:
+            it = QTreeWidgetItem([r['family'], r['status'], r['where']])
+            fl = it.flags()
+            if r['enabled']:
+                it.setFlags(fl | Qt.ItemIsUserCheckable)
+                it.setCheckState(0, Qt.Checked if r['checked'] else Qt.Unchecked)
+            else:
+                it.setFlags(fl & ~Qt.ItemIsUserCheckable)
+            for c in (1, 2):
+                it.setToolTip(c, it.text(c))
+            self.tree.addTopLevelItem(it)
+        self.tree.itemChanged.connect(self._sync)
+        root.addWidget(self.tree, 1)
+        self.rb_personal = QRadioButton("Copia personal: para usar en mis equipos")
+
+        self.rb_share = QRadioButton("Para compartir o publicar el pack")
+        self.rb_personal.setChecked(True)
+        self.rb_personal.toggled.connect(self._sync)
+        root.addWidget(self.rb_personal)
+        root.addWidget(self.rb_share)
+        self.chk = QCheckBox("")
+        self.chk.toggled.connect(self._sync)
+        root.addWidget(self.chk)
+        self.note = QLabel("")
+        self.note.setWordWrap(True)
+        self.note.setStyleSheet("color:#9aa0aa;")
+        root.addWidget(self.note)
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        cancel = QPushButton("Cancelar")
+        cancel.clicked.connect(self.reject)
+        self.ok = QPushButton("Aceptar")
+        self.ok.setStyleSheet("QPushButton{font-weight:bold;padding:8px 18px;}")
+
+        self.ok.clicked.connect(self.accept)
+        btns.addWidget(cancel)
+        btns.addWidget(self.ok)
+        root.addLayout(btns)
+        self._sync()
+
+    def _checked(self):
+        out = []
+        for i, r in enumerate(self.rows):
+            it = self.tree.topLevelItem(i)
+            if r['enabled'] and it.checkState(0) == Qt.Checked:
+                out.append(r)
+        return out
+
+    def _sync(self, *_a):
+        sel = self._checked()
+        share = self.rb_share.isChecked()
+        self.chk.setText("Confirmo que tengo derecho a redistribuir estas fuentes" if share else
+                         "Confirmo que solo voy a exportar estas fuentes para uso personal")
+        self.chk.setEnabled(bool(sel))
+        self.rb_personal.setEnabled(bool(sel))
+        self.rb_share.setEnabled(bool(sel))
+        self.ok.setEnabled(not sel or self.chk.isChecked())
+        self.note.setText(("\u2139 Se incluir\u00e1n %d fuente(s). El pack anota que son %s." % (len(sel), "para compartir" if share else "de uso personal"))
+                          if sel else "\u2139 No se incluir\u00e1 ninguna fuente.")
+
+    def paths(self):
+        out = []
+        for r in self._checked():
+            for x in (r.get('paths') or ([r['path']] if r['path'] else [])):
+                if x not in out:
+                    out.append(x)
+        return out
+
+    def scope(self):
+        return 'share' if self.rb_share.isChecked() else 'personal'
+
+
 class PackExportDialog(QDialog):
     """[PACK112] Exportar como pack: elige que estilos, perfiles y widgets van dentro, y quien lo hace; las imagenes se meten solas."""
     LICENSES = ("Uso personal; no redistribuir", "CC BY 4.0 (con atribuci\u00f3n)", "CC BY-NC 4.0 (con atribuci\u00f3n, no comercial)",
@@ -11447,10 +12025,10 @@ class PackExportDialog(QDialog):
             self.l_sets.addItem(it)
 
         frow = QHBoxLayout()
-        bf = QPushButton("A\u00f1adir fuentes (.ttf / .otf)...")
-        bf.setToolTip("Solo si su licencia permite redistribuirlas. Sin ellas, quien abra el pack ver\u00e1 otra letra si no las tiene.")
+        bf = QPushButton("A\u00f1adir otras fuentes (.ttf / .otf)...")
+        bf.setToolTip("Las fuentes que usan tus estilos se te preguntan al exportar; esto es para a\u00f1adir alguna m\u00e1s. Solo si su licencia permite redistribuirlas.")
         bf.clicked.connect(self._add_fonts)
-        self.l_fonts = QLabel("Sin fuentes incluidas.")
+        self.l_fonts = QLabel("Al exportar se te preguntar\u00e1 por las fuentes que usan tus estilos.")
         self.l_fonts.setStyleSheet("color:#9aa0aa;")
         frow.addWidget(bf)
         frow.addWidget(self.l_fonts, 1)
@@ -11510,6 +12088,30 @@ class PackExportDialog(QDialog):
         if not styles and not sets:
             QMessageBox.information(self, "Exportar pack", "Marca al menos un estilo o un perfil.")
             return
+        used = set()
+        for _n, _td in styles:
+            used |= _pack_fonts_of(_td)
+        for _n, _notes in sets:
+            for _v in _notes.values():
+                if isinstance(_v, dict) and isinstance(_v.get('template_data'), dict):
+                    used |= _pack_fonts_of(_v['template_data'])
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            frows = font_export_rows(used)
+        finally:
+            QApplication.restoreOverrideCursor()
+        for _fp in self.fonts:                                 # [PACK113] las que a\u00f1adiste a mano tambien pasan por la pregunta
+            _mt = _font_meta(_fp) or {}
+            _lic = font_license_label(_mt)
+            frows.append({'family': _mt.get('family') or os.path.basename(_fp), 'path': _fp, 'enabled': True, 'checked': bool(_lic),
+                          'status': "A\u00f1adida a mano" + ((" \u00b7 licencia libre (%s)" % _lic) if _lic else " \u00b7 licencia sin identificar"),
+                          'where': "Windows, macOS y Linux (va dentro del pack)", 'license': _lic})
+        font_files, fscope = [], 'personal'
+        if frows:
+            fdlg = FontExportDialog(self, frows)
+            if fdlg.exec() != QDialog.Accepted:
+                return
+            font_files, fscope = fdlg.paths(), fdlg.scope()
         name = self.f_name.text().strip() or "Mis estilos"
         path, _ = QFileDialog.getSaveFileName(self, "Guardar el pack", os.path.join(os.path.expanduser("~"), _pack_slug(name) + PACK_EXT),
                                               "Pack de estilos (*%s)" % PACK_EXT)
@@ -11518,9 +12120,9 @@ class PackExportDialog(QDialog):
         if not path.lower().endswith(PACK_EXT):
             path += PACK_EXT
         meta = {'name': name, 'author': self.f_author.text().strip(), 'version': self.f_ver.text().strip() or "1.0.0",
-                'license': self.f_lic.currentText().strip(), 'description': self.f_desc.toPlainText().strip()}
+                'license': self.f_lic.currentText().strip(), 'description': self.f_desc.toPlainText().strip(), 'fonts_scope': fscope}
         try:
-            r = pack_build(path, meta, styles, sets, self.fonts)
+            r = pack_build(path, meta, styles, sets, font_files)
         except Exception as e:
             log_error("Packs", "No se pudo exportar el pack: %s" % e)
             QMessageBox.warning(self, "Exportar pack", "No se pudo crear el pack:\n%s" % e)
@@ -15132,6 +15734,7 @@ class WidgetManager(QObject):
         self.console_visible = False
         self._resident = {}
         pack_load_fonts()                       # [PACK112] fuentes que traen los packs instalados
+        font_boot(self)                         # [PACK113] fuentes libres, sustitutas y predeterminada
         self.user32 = None
         if self.console_hwnd:
             try:
@@ -15797,6 +16400,9 @@ class WidgetManager(QObject):
         crown_toggle.setChecked(self.get_show_crown())
         crown_toggle.toggled.connect(self.set_show_crown)
         look_menu.addAction(crown_toggle)
+        font_cfg_action = QAction("Fuente predeterminada...", self)      # [PACK113]
+        font_cfg_action.triggered.connect(lambda checked=False: self.show_font_chooser())
+        look_menu.addAction(font_cfg_action)
 
         tones_menu = QMenu("Tonos y color base", look_menu)
         hues_action = QAction("Tonos predefinidos (Ctrl+rueda)...", self)
@@ -18481,7 +19087,7 @@ class WidgetManager(QObject):
             "layer1": {
                 "type": "text",
                 "content": f'<p style="color:{p["text_color"]};" align="center">{text}</p>',
-                "background": "transparent", "font_family": "Inter", "font_size": int(p['font_size']),
+                "background": "transparent", "font_family": font_default(), "font_size": int(p['font_size']),
                 "color": p['text_color'], "rotation": 0, "image_effects": {},
                 "geometry": {"x": pad + 10, "y": pad + 10, "w": int(p['w']) - 20, "h": int(p['h']) - 20},
                 "scaled_contents": False
@@ -18709,7 +19315,7 @@ class WidgetManager(QObject):
             "layer1": {
                 "type": "text",
                 "content": f'<p style="color:{p["text_color"]};" align="center">{text}</p>',
-                "background": "transparent", "font_family": "Inter", "font_size": int(p['font_size']),
+                "background": "transparent", "font_family": font_default(), "font_size": int(p['font_size']),
                 "color": p['text_color'], "rotation": 0, "image_effects": {},
                 "geometry": {"x": pad + 10, "y": pad + 10, "w": int(p['w']) - 20, "h": int(p['h']) - 20},
                 "scaled_contents": False
@@ -19479,6 +20085,41 @@ class WidgetManager(QObject):
         h.show()
         h.raise_()
         h.activateWindow()
+
+    # ---- [PACK113] fuentes
+    def show_font_chooser(self, first_run=False):
+        d = getattr(self, 'font_dialog', None)
+        if d is None or not d.isVisible():
+            d = self.font_dialog = FontChooserDialog(self, first_run)
+        d.show()
+        d.raise_()
+        d.activateWindow()
+        return d
+
+    def font_first_run_prompt(self):
+        """Una sola vez, al terminar de instalar: pregunta la fuente predeterminada (no sale si ya se eligio o se pospuso)."""
+        if os.environ.get('WA_NO_FONT_PROMPT') or font_cfg().get('asked'):
+            return
+        self.show_font_chooser(True)
+
+    def font_downloaded(self, names=None):
+        font_load_local()
+        font_apply_substitutions()
+        d = getattr(self, 'font_dialog', None)
+        if d is not None and d.isVisible():
+            d.refresh_fonts()
+        if names:
+            self.font_refresh_widgets()
+
+    def font_refresh_widgets(self):
+        """Vuelve a pintar los widgets que usan una fuente sustituible o libre (tras descargarla o cambiar la predeterminada)."""
+        fams = set(FONT_ALIAS) | {f[0] for f in FREE_FONTS}
+        for w in list(self.widgets.values()):
+            try:
+                if _pack_fonts_of(w.current_template_data) & fams:
+                    w.load_template_data(w.current_template_data)
+            except Exception as e:
+                log_warn("Fuentes", "No se pudo repintar un widget: %s" % e)
 
     # ---- [PACK112] packs de estilos (.wapack)
     def show_packs(self, install=None):
@@ -20581,7 +21222,7 @@ class WidgetManager(QObject):
                 "type": "text", 
                 "content": '<p style="color:#1f2737;" align="center">Clic derecho para opciones<br>Doble clic para ocultar</p>',
                 "background": "transparent",
-                "font_family": "Inter", 
+                "font_family": font_default(), 
                 "font_size": 14,
                 "color": "#1f2737",
                 "rotation": 0, 
@@ -20593,7 +21234,7 @@ class WidgetManager(QObject):
                 "type": "text", 
                 "content": '<p style="color:#1f2737;" align="center">Post-it</p>', 
                 "background": "#fef08a",
-                "font_family": "Inter", 
+                "font_family": font_default(), 
                 "font_size": 24,
                 "color": "#1f2737",
                 "rotation": 0, 

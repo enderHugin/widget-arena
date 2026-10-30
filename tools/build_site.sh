@@ -17,6 +17,8 @@ cp assets/icon.png assets/icon.ico assets/icon.icns "$OUT/dl/"
 # notas de bienvenida y perfil de ejemplo (se copian en el primer arranque): defaults.zip con carpeta "defaults/" en la raiz
 zip -qrX "$OUT/dl/defaults.zip" defaults
 cp defaults/packs/*.wapack "$OUT/dl/" 2>/dev/null || true       # packs de ejemplo para descargar
+# fuentes libres (OFL): el programa las descarga solo desde aqui si no las encuentra (con su huella sha256 fijada en el codigo)
+mkdir -p "$OUT/dl/fonts"; cp defaults/fonts/*.ttf defaults/fonts/OFL-*.txt "$OUT/dl/fonts/"
 sub installers/install-windows.cmd | sed -e 's/\r$//' -e 's/$/\r/' > "$OUT/dl/install-windows.cmd"
 sub installers/install-unix.sh > "$OUT/dl/install-linux.sh"
 sub installers/install-unix.sh > "$OUT/dl/Widget Arena.command"

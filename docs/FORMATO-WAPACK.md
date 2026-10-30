@@ -48,8 +48,10 @@ Todas las rutas del zip usan `/`, son relativas y no contienen `..`. Las que no 
   "created": "2026-10-29T16:57:00",
   "styles": [ { "file": "styles/menta.json", "name": "Menta", "preview": "previews/menta.png" } ],
   "sets":   [ { "file": "sets/bienvenida.json", "name": "Bienvenida", "notes": 10 } ],
-  "fonts":  [ { "file": "fonts/Mi.ttf", "family": "Mi Fuente" } ],
-  "fonts_used": ["Segoe Print"]
+  "fonts":  [ { "file": "fonts/Mi.ttf", "family": "Mi Fuente", "license": "OFL" } ],
+  "fonts_used": ["Segoe Print"],
+  "fonts_scope": "personal",
+  "font_fallbacks": { "Segoe Print": ["Kalam", "Patrick Hand", "Caveat"] }
 }
 ```
 
@@ -62,6 +64,9 @@ Todas las rutas del zip usan `/`, son relativas y no contienen `..`. Las que no 
 | `version` | Números separados por puntos; se compara numéricamente. |
 | `styles`, `sets` | Listas de lo que hay dentro. Si faltan, se descubren por las carpetas `styles/` y `sets/`. |
 | `fonts_used` | Informativo: familias de letra que usan los estilos. Si el equipo no las tiene, se avisa. |
+| `fonts_scope` | Solo si hay `fonts`: `personal` (copia para los equipos de su autor) o `share` (el autor declaró que puede redistribuirlas). |
+| `fonts[].license` | Informativo: licencia reconocida en la propia fuente (`OFL`, `Apache 2.0`...) o vacío. |
+| `font_fallbacks` | Informativo: familias sustitutas sugeridas para las fuentes propietarias. El programa usa las suyas (ver más abajo). |
 
 Los campos desconocidos se ignoran, así que se pueden añadir más sin romper nada.
 
@@ -97,6 +102,14 @@ Los datos personales (por ejemplo, la configuración de Telegram) no se exportan
 El programa es MIT, pero **lo que contiene un pack es de quien lo crea**: ponle la licencia que quieras en `license` y en `LICENSE.txt`.
 Las letras (fuentes) suelen tener licencias propias: incluye solo las que permitan redistribución (por ejemplo, las de Google Fonts) o no las incluyas y decláralas en
 `fonts_used`. Las de Windows (como Segoe Print) **no** se pueden redistribuir.
+
+Al exportar, el programa pregunta por las fuentes que usan los estilos y perfiles elegidos: las libres de la aplicación (Kalam, Patrick Hand y Caveat, licencia
+OFL) no hace falta incluirlas porque se descargan solas; las del sistema (Windows, macOS) no se pueden incluir; las demás se incluyen solo si las marcas y
+confirmas que puedes hacerlo, y el pack anota si son de uso personal o para compartir. Lo que figura en el pack es una declaración de su autor, no una garantía legal.
+
+**Si falta una fuente.** Cuando el equipo no tiene la fuente pedida por un widget, Qt usa la primera disponible de esta lista: la *fuente predeterminada* que haya
+elegido el usuario, luego Kalam, Patrick Hand, Caveat y las manuscritas de macOS (Bradley Hand, Noteworthy, Marker Felt). Solo se sustituyen familias conocidas
+(Segoe Print, Ink Free, Comic Sans MS, Bradley Hand, etc.); si la fuente existe en el equipo, se usa ella siempre.
 
 ## Compatibilidad
 
