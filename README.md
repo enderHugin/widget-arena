@@ -67,6 +67,14 @@ widgets (sustituyendo, añadiendo a los actuales o como perfil nuevo), perfiles,
 - Una copia completa `.zip` solo lleva los `.json`; para traer también las imágenes usa la carpeta.
 - Si cargas una copia vieja (un `.json`) y alguna nota se queda sin su base o su imagen, el programa avisa de cuáles faltan; *Importar y exportar → Buscar las imágenes que faltan (en otra carpeta)...* las recupera de la carpeta `widget_arena_data` de la versión anterior.
 
+## Pasar un árbol de widgets a otro perfil
+
+Clic derecho sobre un widget → *Clonar*:
+
+- **Copiar árbol (json)**: el widget y todos sus descendientes al portapapeles, solo como JSON (las imágenes tienen que existir en la instalación donde lo pegues).
+- **Pegar árbol (json)**: lo añade al perfil activo, con ids nuevos, la jerarquía intacta y un pequeño desplazamiento para que no quede encima del original.
+- **Exportar árbol a un archivo...**: un `.json` con las imágenes incluidas. Para usarlo en otro perfil, cámbiate a él y usa *Agregar widgets desde un archivo*.
+
 ## Fuentes
 
 Las notas de ejemplo usan **Segoe Print**, una letra de Windows que no se puede redistribuir. Fuera de Windows (o si no la tienes) se sustituye sola por una fuente libre

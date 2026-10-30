@@ -2363,8 +2363,11 @@ class StickerWindow(QMainWindow):
             return pixmap
         else:
             print(f"ERROR [{layer_name}]: 脗隆FALLO DE LECTURA DE IMAGEN! El archivo existe, pero QPixmap no pudo leerlo.")
-            supported_formats_bytes = QPixmap.supportedImageFormats()
-            supported_formats = [str(f, 'utf-8').lower() for f in supported_formats_bytes]
+            try:                  # [PACK120] QPixmap no tiene supportedImageFormats(): una imagen ilegible impedia crear la nota (y cortaba la restauracion)
+                from PySide6.QtGui import QImageReader
+                supported_formats = [bytes(f).decode('utf-8', 'replace').lower() for f in QImageReader.supportedImageFormats()]
+            except Exception:
+                supported_formats = []
             _dprint(f"DEBUG [{layer_name}]: Formatos de imagen soportados por Qt: {supported_formats}")
             
             error_msg = f"ERROR [{layer_name}]: Fallo al cargar la imagen.\n" \
@@ -11202,7 +11205,7 @@ def font_boot(m):
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
-APP_PACK = 119                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 120                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -12178,6 +12181,103 @@ def import_fix_paths(obj, renames=None):
         return o
     walk(obj)
     return n[0]
+
+
+TREE_MAX_FILE = 25 * 1024 * 1024               # [PACK120] tope por imagen y en total al exportar un arbol
+TREE_MAX_TOTAL = 100 * 1024 * 1024
+
+
+def tree_collect_images(notes):
+    """Imagenes de capa que usan estas notas (las notas base que el programa redibuja desde sus parametros no hacen falta). Reescribe sus
+    rutas a la forma portable 'widget_arena_data/<carpeta>/<nombre>' y devuelve ({'images/x.png': bytes}, [las que no se encontraron o no caben])."""
+    out, used, skipped, total = {}, {}, [], 0
+    for st in notes.values():
+        td = st.get('template_data') if isinstance(st, dict) else None
+        if not isinstance(td, dict):
+            continue
+        for L in ('layer1', 'layer2'):
+            ld = td.get(L)
+            if not isinstance(ld, dict) or ld.get('type') in ('text', 'web'):
+                continue
+            c = ld.get('content')
+            if not isinstance(c, str) or not c.strip() or '<' in c or not _IMP_EXT.search(c) or c.strip().lower().startswith(('http://', 'https://', 'data:')):
+                continue
+            if L == 'layer2' and _is_generated_layer(td):
+                continue
+            real = _find_stored_file(c)
+            if not real:
+                skipped.append(os.path.basename(c.replace('\\', '/')))
+                continue
+            if real not in used:
+                try:
+                    size = os.path.getsize(real)
+                    if size > TREE_MAX_FILE or total + size > TREE_MAX_TOTAL:
+                        skipped.append(os.path.basename(real))
+                        continue
+                    with open(real, 'rb') as f:
+                        data = f.read()
+                except OSError:
+                    skipped.append(os.path.basename(real))
+                    continue
+                r = os.path.relpath(real, ROOT_DATA_DIR).replace(os.sep, '/')
+                rel = r if r.split('/')[0] in IMPORT_MEDIA and not r.startswith('..') else 'images/' + os.path.basename(real)
+                stem, ext = os.path.splitext(rel)
+                k = 2
+                while rel in out:
+                    rel = "%s (%d)%s" % (stem, k, ext)
+                    k += 1
+                out[rel] = data
+                used[real] = rel
+                total += len(data)
+            ld['content'] = DATA_DIRNAME + '/' + used[real]
+
+    return out, sorted(set(skipped))
+
+
+def import_embedded_images(cfg, notes):
+    """Deja en la carpeta de datos las imagenes que viajan dentro de un archivo exportado (cfg['imagenes'] = {'images/x.png': base64}) sin pisar
+    nada (si ya hay otra con ese nombre entra con otro) y reapunta las capas de 'notes'. Devuelve (nuevas, ya_estaban)."""
+    imgs = cfg.get('imagenes') if isinstance(cfg, dict) else None
+    if not isinstance(imgs, dict) or not imgs:
+        return 0, 0
+    import base64
+    import binascii
+    new = same = total = 0
+    renames = {}
+    for rel, b64 in imgs.items():
+        parts = [p for p in str(rel).replace('\\', '/').split('/') if p]
+        if len(parts) < 2 or parts[0] not in IMPORT_MEDIA or '..' in parts or not _IMP_EXT.search(parts[-1]) or not isinstance(b64, str):
+            continue
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except (ValueError, binascii.Error):
+            continue
+
+        total += len(data)
+        if len(data) > TREE_MAX_FILE or total > TREE_MAX_TOTAL * 2:
+            continue
+        d = os.path.join(ROOT_DATA_DIR, *parts)
+        stem, ext = os.path.splitext(d)
+        chosen = None
+        for k in range(0, 40):          # el mismo nombre; si ya hay otra imagen distinta, "(importado)", "(importado 2)"... reutilizando la que sea identica
+            cand = d if k == 0 else "%s (importado%s)%s" % (stem, "" if k == 1 else " %d" % k, ext)
+            if not os.path.exists(cand):
+                os.makedirs(os.path.dirname(cand), exist_ok=True)
+                with open(cand, 'wb') as f:
+                    f.write(data)
+                new += 1
+                chosen = cand
+                break
+            with open(cand, 'rb') as f:
+                if f.read() == data:
+                    same += 1
+                    chosen = cand
+                    break
+
+        if chosen and chosen != d:
+            renames['/'.join(parts)] = '/'.join(parts[:-1] + [os.path.basename(chosen)])
+    import_fix_paths(notes, renames)
+    return new, same
 
 
 def import_missing_images(notes):
@@ -18557,6 +18657,13 @@ class WidgetManager(QObject):
             add(clone_menu, f"Con sus descendientes ({n_desc + 1} widgets)", lambda: self.clone_tree(widget_id), enabled=bool(n_desc))
         if state.get('parent_id') or full:
             add(clone_menu, "Como hijo independiente", lambda: self.clone_widget(widget_id, independent=True), enabled=bool(state.get('parent_id')))
+        clone_menu.addSeparator()
+        add(clone_menu, f"Copiar \u00e1rbol (json) ({n_desc + 1} widgets)", lambda: self.copy_tree(widget_id),
+            tip="Copia al portapapeles este widget y sus descendientes como JSON (sin im\u00e1genes)")      # [PACK120]
+        add(clone_menu, "Pegar \u00e1rbol (json)", lambda: self.paste_tree(), enabled=self._clip_tree_data() is not None,
+            tip="A\u00f1ade a este perfil el \u00e1rbol que hayas copiado (puede ser de otro perfil)")
+        add(clone_menu, "Exportar \u00e1rbol a un archivo...", lambda: self.export_tree(widget_id),
+            tip="Guarda este widget y sus descendientes en un .json, con las im\u00e1genes que usen dentro del archivo")
         menu.addMenu(clone_menu)
 
         # ---- todos los widgets
@@ -20927,6 +21034,9 @@ class WidgetManager(QObject):
         img_action = QAction("Buscar las im\u00e1genes que faltan (en otra carpeta)...", self)      # [PACK119]
         img_action.triggered.connect(self.recover_images_dialog)
         data_menu.addAction(img_action)
+        paste_action = QAction("Pegar \u00e1rbol copiado (json)", self)      # [PACK120]
+        paste_action.triggered.connect(self.paste_tree)
+        data_menu.addAction(paste_action)
         data_menu.addSeparator()
         import_menu = QMenu("Importar", data_menu)
         import_add = QAction("Agregar widgets desde un archivo...", self)
@@ -21148,6 +21258,124 @@ class WidgetManager(QObject):
         got, left = self.recover_images_root(root)
         QMessageBox.information(parent, "Im\u00e1genes que faltan", "Recuperadas: %d.%s" % (len(got), ("\nSin encontrar: %s" % ", ".join(left[:8])) if left else ""))
         return got, left
+
+    # ---- [PACK120] copiar / pegar / exportar un widget con sus descendientes
+    def _tree_notes(self, widget_id):
+        """Copia independiente del widget y sus descendientes ({id: estado}); la raiz queda sin padre."""
+        self._sync_windows_to_state()
+        ids = [widget_id] + self.get_descendants(widget_id)
+        out = {i: copy.deepcopy(self.global_state[i]) for i in ids if isinstance(self.global_state.get(i), dict)}
+        if widget_id in out:
+            out[widget_id].pop('parent_id', None)
+        return out
+
+    def _tree_label(self, widget_id):
+        st = self.global_state.get(widget_id) or {}
+        return (str(st.get('custom_name') or '').strip() or widget_id)[:60]
+
+    def copy_tree(self, widget_id):
+        """Copia al portapapeles, como JSON y sin imagenes, el widget y todos sus descendientes."""
+        notes = self._tree_notes(widget_id)
+        if not notes:
+            return False
+        data = dict(notes)
+        data['__config__'] = {"arbol": {"raiz": widget_id, "widgets": len(notes), "app_pack": APP_PACK}}
+        txt = json.dumps(data, indent=2, ensure_ascii=False, default=str)
+        if len(txt) > 8000000:
+            self._osd("El \u00e1rbol es demasiado grande para copiarlo: usa \u00abExportar \u00e1rbol a un archivo...\u00bb", 3500)
+            return False
+        QApplication.clipboard().setText(txt)
+        self._osd("\u00c1rbol copiado (%d widgets, JSON)" % len(notes))
+        return True
+
+    @staticmethod
+    def _clip_tree_data():
+        """Widgets ({id: estado}) que hay en el portapapeles como JSON de un arbol o de un conjunto; None si no hay."""
+        txt = QApplication.clipboard().text()
+        if not txt or len(txt) > 8000000 or '"template_data"' not in txt:
+            return None
+        try:
+            d = json.loads(txt.strip().lstrip('\ufeff'))
+        except (ValueError, TypeError):
+            return None
+        return d if isinstance(d, dict) and WidgetManager._only_notes(d) else None
+
+    def paste_tree(self, *_a):
+        """Anade al perfil activo el arbol que hay en el portapapeles (ids nuevos, jerarquia conservada). Devuelve cuantos widgets anadio."""
+        d = self._clip_tree_data()
+        if d is None:
+            self._osd("No hay ning\u00fan \u00e1rbol copiado en el portapapeles")
+            return 0
+        notes = self._only_notes(d)
+        import_fix_paths(notes)
+        self._sync_windows_to_state()
+
+        def pos(st):
+            g = st.get('template_data', {}).get('geometry') if isinstance(st, dict) else None
+            return (g.get('x', 0), g.get('y', 0)) if isinstance(g, dict) and 'x' in g else None
+        taken = {p for p in (pos(s) for s in self.global_state.values()) if p}
+        dx = 0
+        for _i in range(12):                 # que no quede justo encima de los que ya estan (por ejemplo al pegar en el mismo perfil)
+            if not any(p and (p[0] + dx, p[1] + dx) in taken for p in (pos(s) for s in notes.values())):
+                break
+            dx += 40
+        if dx:
+            for st in notes.values():
+                g = st['template_data'].get('geometry')
+                if isinstance(g, dict) and 'x' in g:
+                    g['x'], g['y'] = g['x'] + dx, g.get('y', 0) + dx
+        self._hist_begin()
+        try:
+            for nid, st in self._remap_set(notes).items():
+                self.global_state[nid] = st
+                win = StickerWindow(self, nid, st)
+                self.widgets[nid] = win
+                if st.get('enabled', True):
+                    win.show()
+        finally:
+            self._hist_end()
+
+        self.save_global_state()
+        self.build_tray_menu()
+        self._apply_collapse_visibility()
+        self._refresh_connector_overlay()
+        miss = self.missing_images()
+        self._osd("\u00c1rbol pegado (%d widgets)%s" % (len(notes), ("; " + self._missing_hint(miss)) if miss else ""), 3500 if miss else 1600)
+        return len(notes)
+
+    def export_tree(self, widget_id):
+        """Guarda en un .json el widget y sus descendientes, con las imagenes que usen dentro del propio archivo. Se importa con
+        'Agregar widgets desde un archivo' (o 'Cargar un archivo') en el perfil que se quiera."""
+        parent = self.dialog_parent
+        notes = self._tree_notes(widget_id)
+        if not notes:
+            return None
+        safe = HotkeyManager.safe_profile_name(self._tree_label(widget_id)) or "arbol"
+        path, _ = QFileDialog.getSaveFileName(parent, "Exportar \u00e1rbol de widgets", os.path.join(DATA_DIR, safe + ".json"), "JSON (*.json)")
+        if not path:
+            return None
+        try:
+            imgs, skipped = tree_collect_images(notes)
+            import base64
+            data = dict(notes)
+            data['__config__'] = {"arbol": {"raiz": widget_id, "widgets": len(notes), "app_pack": APP_PACK},
+                                  "imagenes": {k: base64.b64encode(v).decode('ascii') for k, v in imgs.items()}}
+            tmp = path + ".tmp"
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+            os.replace(tmp, path)
+        except Exception as e:
+            log_error("Exportar", "No se pudo exportar el arbol: %s" % e)
+            QMessageBox.critical(parent, "Exportar \u00e1rbol", "No se pudo guardar el archivo:\n%s" % e)
+            return None
+
+        msg = "\u00c1rbol exportado: %d widgets, %d im\u00e1genes" % (len(notes), len(imgs))
+        if skipped:
+            msg += "\nNo se pudieron incluir %d im\u00e1genes (no estaban en este equipo o son muy grandes): %s" % (len(skipped), ", ".join(skipped[:5]))
+            QMessageBox.information(parent, "Exportar \u00e1rbol", msg)
+        else:
+            self._osd(msg, 2500)
+        return path, len(notes), len(imgs), skipped
 
     # ---- [PACK114] actualizaciones
     def show_updates(self, check=True):
@@ -21432,6 +21660,7 @@ class WidgetManager(QObject):
                                   ["Agregarlos a mis widgets", "Guardarlos como perfil nuevo", "Reemplazar mi perfil activo"])
             if ch is None:
                 return None
+            import_embedded_images(raw.get('__config__'), notes)          # [PACK120]
             if ch == 0:
                 self._hist_begin()
                 try:
@@ -22285,6 +22514,7 @@ class WidgetManager(QObject):
             if load_cfg:
                 self._apply_config(cfg, backup=True)
 
+            import_embedded_images(cfg, new_state)          # [PACK120] imagenes que viajan dentro del archivo (exportar arbol)
             for new_widget_id, state in self._remap_set(new_state).items():
                 self.global_state[new_widget_id] = state
                 window = StickerWindow(self, new_widget_id, state)

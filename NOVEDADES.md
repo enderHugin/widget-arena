@@ -1,3 +1,7 @@
+## Pack 120 · 2026-10-31
+- **Copiar, pegar y exportar un árbol de widgets**: clic derecho sobre un widget → *Clonar* → *Copiar árbol (json)* deja en el portapapeles el widget y todos sus descendientes como JSON (sin imágenes). *Pegar árbol (json)* lo añade al perfil activo con ids nuevos y la jerarquía intacta (también en *Importar y exportar → Pegar árbol copiado*). *Exportar árbol a un archivo...* guarda un `.json` que lleva dentro las imágenes que usan las notas; se importa en otro perfil o equipo con *Agregar widgets desde un archivo* o *Cargar un archivo*, sin pisar imágenes que ya existan.
+- **Arreglo**: una imagen que Qt no podía leer abortaba la creación de la nota (`QPixmap.supportedImageFormats` no existe); ahora se usa `QImageReader`.
+
 ## Pack 119 · 2026-10-30
 - **Imágenes que faltan al cargar una copia vieja**: un `.json` no lleva las imágenes de las notas, así que si faltan la nota enseñaba un cartel de error en lugar de su base. Ahora, al restaurar una copia, el programa avisa de cuáles faltan y *Importar y exportar → Buscar las imágenes que faltan (en otra carpeta)...* las recupera de la carpeta `widget_arena_data` de la versión anterior. Las notas base que el programa dibuja se rehacen solas.
 
