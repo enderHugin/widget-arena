@@ -1,7 +1,7 @@
 {
   "widget_9101": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Semana 43",
     "template_data": {
@@ -290,7 +290,7 @@
   },
   "widget_9102": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Lunes",
     "template_data": {
@@ -580,7 +580,7 @@
   },
   "widget_9103": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Reunión 10:00",
     "template_data": {
@@ -870,7 +870,7 @@
   },
   "widget_9104": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Enviar informe",
     "template_data": {
@@ -1160,7 +1160,7 @@
   },
   "widget_9105": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Martes",
     "template_data": {
@@ -1450,7 +1450,7 @@
   },
   "widget_9106": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Dentista 17:30",
     "template_data": {
@@ -1740,7 +1740,7 @@
   },
   "widget_9107": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Pendientes",
     "template_data": {
@@ -2030,7 +2030,7 @@
   },
   "widget_9108": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Proyecto X",
     "template_data": {
@@ -2320,7 +2320,7 @@
   },
   "widget_9109": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Presupuesto",
     "template_data": {
@@ -2610,7 +2610,7 @@
   },
   "widget_9110": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Contrato",
     "template_data": {

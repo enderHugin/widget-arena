@@ -1,7 +1,7 @@
 {
   "widget_9001": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Widget Arena",
     "template_data": {
@@ -290,7 +290,7 @@
   },
   "widget_9002": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Lo básico",
     "template_data": {
@@ -580,7 +580,7 @@
   },
   "widget_9003": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Enlazar notas",
     "template_data": {
@@ -870,7 +870,7 @@
   },
   "widget_9004": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Crear y clonar",
     "template_data": {
@@ -1160,7 +1160,7 @@
   },
   "widget_9005": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Gestos",
     "template_data": {
@@ -1450,7 +1450,7 @@
   },
   "widget_9006": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Color",
     "template_data": {
@@ -1740,7 +1740,7 @@
   },
   "widget_9007": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Mover una rama",
     "template_data": {
@@ -2030,7 +2030,7 @@
   },
   "widget_9008": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Plegar ramas",
     "template_data": {
@@ -2320,7 +2320,7 @@
   },
   "widget_9009": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Hija escondida",
     "template_data": {
@@ -2610,7 +2610,7 @@
   },
   "widget_9010": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Otra hija",
     "template_data": {
@@ -2900,7 +2900,7 @@
   },
   "widget_9011": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Perfiles",
     "template_data": {
@@ -3190,7 +3190,7 @@
   },
   "widget_9012": {
     "enabled": true,
-    "always_on_top": true,
+    "always_on_top": false,
     "template_name": "Nota doblada.json",
     "custom_name": "Icono de la bandeja",
     "template_data": {

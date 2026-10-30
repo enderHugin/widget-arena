@@ -345,14 +345,18 @@ def _wa_syslibs_missing():
     import subprocess
     import glob
     text = ''
-    try:
-        text = subprocess.run(['ldconfig', '-p'], capture_output=True, text=True, timeout=20).stdout
-    except Exception:
-        pass
+    for exe in ('ldconfig', '/sbin/ldconfig', '/usr/sbin/ldconfig'):      # [PACK116] en Debian /sbin no esta en el PATH de un usuario normal
+        try:
+            text = subprocess.run([exe, '-p'], capture_output=True, text=True, timeout=20).stdout
+        except Exception:
+            text = ''
+        if text:
+            break
     if not text:
         for d in ('/usr/lib', '/usr/lib64', '/lib', '/lib64', '/usr/lib/x86_64-linux-gnu', '/usr/lib/aarch64-linux-gnu', '/usr/lib/arm-linux-gnueabihf'):
             text += ' '.join(glob.glob(d + '/lib*.so*')) + ' '
-    return [row for row in _WA_SYSLIBS if ('lib%s.so' % row[0]) not in text]
+    low = text.lower()          # [PACK116] los nombres reales llevan mayusculas (libXrandr.so.2) y la tabla va en minusculas: antes se daban por ausentes
+    return [row for row in _WA_SYSLIBS if ('lib%s.so' % row[0]).lower() not in low]
 
 
 def _wa_bootstrap_system():
@@ -11197,7 +11201,7 @@ def font_boot(m):
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
-APP_PACK = 115                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 116                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -18274,7 +18278,7 @@ class WidgetManager(QObject):
                 return
             tdata = copy.deepcopy(self.get_default_template_data())
             tdata.setdefault('geometry', {'x': 100, 'y': 100})
-            st = {"widget_default": {"enabled": True, "always_on_top": True,
+            st = {"widget_default": {"enabled": True, "always_on_top": False,      # [PACK116] las notas nuevas nacen en la banda normal, no siempre encima
                                      "template_name": os.path.basename(DEFAULT_TEMPLATE_FILE),
                                      "custom_name": "", "template_data": tdata}}
             os.makedirs(DATA_DIR, exist_ok=True)

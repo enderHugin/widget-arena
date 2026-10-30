@@ -1,3 +1,7 @@
+## Pack 116 · 2026-10-30
+- **Linux**: corregida la detección de librerías del sistema. Ya no pide instalar `libXcomposite`, `libXdamage` o `libXrandr` cuando están instaladas (se comparaban mayúsculas con minúsculas), y también encuentra `ldconfig` en Debian aunque `/sbin` no esté en el PATH.
+- **Notas de la instalación**: las notas de bienvenida y de ejemplo ya no nacen con «Siempre encima»: se quedan en el escritorio como una nota normal y se pueden activar en el menú de cada una. Solo afecta a instalaciones nuevas.
+
 ## Pack 115 · 2026-10-30
 - **Elegir la fuente, con muestras**: la primera vez que abres el programa sale una ventana con una nota de ejemplo escrita con cada fuente (Kalam, Patrick Hand, Caveat, Inter u otra de tu equipo). El instalador ya no pregunta en la terminal.
 
