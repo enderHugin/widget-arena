@@ -61,7 +61,7 @@ Las notas de ejemplo usan **Segoe Print**, una letra de Windows que no se puede 
 parecida. Widget Arena trae tres, con licencia SIL Open Font License (están en `defaults/fonts/`, con su licencia): **Kalam** (la más parecida, redonda y ancha),
 **Patrick Hand** (clara y compacta) y **Caveat** (estrecha y caligráfica).
 
-- Durante la instalación te pregunta cuál quieres como **fuente predeterminada** (la de las notas nuevas y la que sustituye a una que falta). Si no la contestas, te lo pregunta al abrir el programa.
+- La primera vez que abres el programa te lo pregunta en una ventana con muestras: cada opción enseña una nota escrita con esa fuente, y eliges la que quieres como **fuente predeterminada** (la de las notas nuevas y la que sustituye a una que falta).
   Puedes cambiarla cuando quieras en *icono de bandeja → Ajustes → Apariencia → Fuente predeterminada...*.
 - Si falta alguna de las tres, el programa la descarga sola, en segundo plano, de esta misma página (`dl/fonts/`) y comprueba su huella sha256. Junto con la comprobación de versiones, son las únicas conexiones que hace por su cuenta;
   sin red no pasa nada y lo reintenta pasadas unas horas. Para desactivarla, define la variable de entorno `WA_OFFLINE=1`.

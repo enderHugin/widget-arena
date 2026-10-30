@@ -127,27 +127,16 @@ try {
         Get-File ($Base + '/dl/defaults.zip') $dz
         Expand-Archive -LiteralPath $dz -DestinationPath $Stage -Force
     } catch { Say 'no se pudieron bajar las notas de bienvenida (se omiten)' }
-    # fuente predeterminada de las notas nuevas (se puede cambiar luego en Ajustes > Apariencia). Con WA_FONT definida no pregunta.
-    try {
-        if (Test-Path (Join-Path $Stage 'defaults')) {
-            $names = @('Kalam', 'Patrick Hand', 'Caveat', 'Inter')
-            $fname = $env:WA_FONT
-            if (-not $fname) {
-                $ch = @(
-                    (New-Object System.Management.Automation.Host.ChoiceDescription '&Kalam', 'Redonda y ancha: la mas parecida a Segoe Print'),
-                    (New-Object System.Management.Automation.Host.ChoiceDescription '&Patrick Hand', 'Clara y compacta: cabe mas texto'),
-                    (New-Object System.Management.Automation.Host.ChoiceDescription '&Caveat', 'Estrecha y caligrafica'),
-                    (New-Object System.Management.Automation.Host.ChoiceDescription '&Inter', 'La de siempre en Widget Arena'))
-                $i = $Host.UI.PromptForChoice('Fuente predeterminada', 'Fuente de las notas nuevas (se puede cambiar luego en Ajustes > Apariencia). Las fuentes son libres y se descargan solas.', $ch, 0)
-                $fname = $names[$i]
-            }
+    # fuente predeterminada: el programa la pregunta, con muestras, la primera vez que se abre. Solo si defines WA_FONT (instalacion desatendida) se fija aqui.
+    if ($env:WA_FONT -and (Test-Path (Join-Path $Stage 'defaults'))) {
+        try {
             $dd = Join-Path $Stage 'defaults\data'
             New-Item -ItemType Directory -Force -Path $dd | Out-Null
-            $js = '{"default_font": "' + $fname + '", "asked": true}'
+            $js = '{"default_font": "' + ($env:WA_FONT -replace '[\\"]', '') + '", "asked": true}'
             [IO.File]::WriteAllText((Join-Path $dd 'fuentes.json'), $js, (New-Object Text.UTF8Encoding $false))
-            Say ('fuente predeterminada: ' + $fname)
-        }
-    } catch { Say 'no se pudo elegir la fuente (se preguntara al abrir el programa)' }
+            Say ('fuente predeterminada: ' + $env:WA_FONT)
+        } catch { Say 'no se pudo fijar la fuente (se preguntara al abrir el programa)' }
+    }
     $version = (Get-Content (Join-Path $Stage 'VERSION') -Raw).Trim()
     Say ('version ' + $version)
 

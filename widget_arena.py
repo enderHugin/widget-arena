@@ -11197,7 +11197,7 @@ def font_boot(m):
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
-APP_PACK = 114                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 115                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -11999,41 +11999,80 @@ class PacksDialog(QDialog):
         QTimer.singleShot(0, lambda: self.install_files(paths))
 
 
+class _FontCard(QFrame):
+    """Tarjeta que se puede pulsar en cualquier punto para elegir su opcion."""
+    clicked = Signal()
+
+    def mousePressEvent(self, e):
+        self.clicked.emit()
+        super().mousePressEvent(e)
+
+
 class FontChooserDialog(QDialog):
-    """[PACK113] Fuente predeterminada: la de las notas nuevas y la que sustituye a una fuente que falta (por ejemplo Segoe Print fuera de Windows)."""
-    SAMPLE = "Mant\u00e9n Ctrl, Alt, May\u00fas o Win sobre una nota"
+    """[PACK113] Fuente predeterminada, con muestras: cada opcion ense\u00f1a una nota escrita con esa fuente. Es la de las notas nuevas
+    y la que sustituye a una fuente que falta (por ejemplo Segoe Print fuera de Windows). [PACK115] tarjetas con nota de muestra."""
+    SAMPLE = "<b>Llamar a Marta</b><br>Comprar caf\u00e9 y filtros &middot; reuni\u00f3n a las 10:00"
+    NOTE_CSS = "QLabel{background:#fff3a6;color:#1f2937;border:1px solid #d9b94a;border-radius:6px;padding:10px 14px;}"
 
     def __init__(self, manager, first_run=False):
         super().__init__(None)
+        from PySide6.QtWidgets import QScrollArea, QButtonGroup
         self.m = manager
         self.first_run = first_run
-        self.setWindowTitle("Fuente predeterminada")
+        self.setWindowTitle("Elige la fuente de tus notas" if first_run else "Fuente predeterminada")
         self.setAttribute(Qt.WA_QuitOnClose, False)
-        self.setMinimumWidth(560)
+        if first_run:
+            self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        self.resize(640, 660)
         root = QVBoxLayout(self)
-        t1 = QLabel("Elige tu fuente predeterminada")
+        t1 = QLabel("Elige la fuente de tus notas")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        t2 = QLabel("Se usa en las notas nuevas y sustituye a la fuente de un widget cuando esta no est\u00e1 instalada (por ejemplo \u00abSegoe Print\u00bb "
-                    "fuera de Windows). Las fuentes son libres (licencia OFL) y la aplicaci\u00f3n las descarga sola; puedes cambiarla cuando quieras en "
-                    "Ajustes \u2192 Apariencia \u2192 Fuente predeterminada.")
+        t2 = QLabel("As\u00ed se ver\u00e1n tus notas con cada fuente. Se usa en las notas nuevas y sustituye a la de un widget cuando esa no est\u00e1 instalada "
+                    "(por ejemplo \u00abSegoe Print\u00bb fuera de Windows). Puedes cambiarla cuando quieras en Ajustes \u2192 Apariencia \u2192 Fuente predeterminada.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
         root.addWidget(t1)
         root.addWidget(t2)
-        self.opts = []                      # (radio, familia, etiqueta de muestra, aviso)
-
+        self.opts = []                      # (radio, familia, nota de muestra, aviso)
+        self.cards = []
+        self.group = QButtonGroup(self)
+        host = QWidget()
+        self.vl = QVBoxLayout(host)
+        self.vl.setContentsMargins(0, 0, 6, 0)
         cur = font_cfg().get('default_font')
         names = list(dict.fromkeys(f[0] for f in FREE_FONTS))
+        if font_installed("Segoe Print"):
+            names.append("Segoe Print")
         for fam in names:
-            self._add_option(root, fam, FREE_FONT_INFO.get(fam, ""))
-        self._add_option(root, "Inter", "La de siempre en Widget Arena (si no est\u00e1 instalada, la del sistema).")
-        row = QHBoxLayout()
-        self.rb_other = QRadioButton("Otra fuente del equipo:")
+            self._add_option(fam, FREE_FONT_INFO.get(fam, "La de Windows que usan las notas de ejemplo." if fam == "Segoe Print" else ""))
+        self._add_option("Inter", "La de siempre en Widget Arena (si no est\u00e1 instalada, la del sistema).")
+        # otra fuente del equipo: con su muestra
+        card = _FontCard()
+        card.setObjectName("fcard")
+        cl = QVBoxLayout(card)
+        head = QHBoxLayout()
+        self.rb_other = QRadioButton("Otra fuente de este equipo:")
+        self.rb_other.setStyleSheet("font-weight:bold;")
+        self.group.addButton(self.rb_other)
         self.other = QFontComboBox()
         self.other.currentFontChanged.connect(self._other_changed)
-        row.addWidget(self.rb_other)
-        row.addWidget(self.other, 1)
-        root.addLayout(row)
+        head.addWidget(self.rb_other)
+        head.addWidget(self.other, 1)
+        cl.addLayout(head)
+        self.other_sample = QLabel(self.SAMPLE)
+        self.other_sample.setStyleSheet(self.NOTE_CSS)
+        self.other_sample.setTextFormat(Qt.RichText)
+        self.other_sample.setWordWrap(True)
+        cl.addWidget(self.other_sample)
+        card.clicked.connect(self.rb_other.click)
+        self.vl.addWidget(card)
+        self.cards.append((card, self.rb_other))
+        self.vl.addStretch(1)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setFrameShape(QFrame.NoFrame)
+        sc.setWidget(host)
+        root.addWidget(sc, 1)
         sel = False
         for rb, fam, _lb, _w in self.opts:
             if cur == fam:
@@ -12044,7 +12083,7 @@ class FontChooserDialog(QDialog):
             self.other.setCurrentFont(QFont(cur))
         elif not sel:
             self.opts[0][0].setChecked(True)             # Kalam: la mas parecida a Segoe Print
-
+        self.group.buttonToggled.connect(self._sync_cards)
         self.status = QLabel("")
         self.status.setStyleSheet("color:#9aa0aa;")
         root.addWidget(self.status)
@@ -12059,23 +12098,42 @@ class FontChooserDialog(QDialog):
         btns.addWidget(later)
         btns.addWidget(ok)
         root.addLayout(btns)
+        self._sync_cards()
         self.refresh_fonts()
+
+    def _add_option(self, fam, info):
+        card = _FontCard()
+        card.setObjectName("fcard")
+        row = QHBoxLayout(card)
+        left = QVBoxLayout()
+        rb = QRadioButton(fam)
+        rb.setStyleSheet("font-weight:bold;")
+        self.group.addButton(rb)
+        wr = QLabel(info)
+        wr.setWordWrap(True)
+        wr.setStyleSheet("color:#9aa0aa;padding-left:22px;")
+        left.addWidget(rb)
+        left.addWidget(wr)
+        left.addStretch(1)
+        lb = QLabel(self.SAMPLE)
+        lb.setTextFormat(Qt.RichText)
+        lb.setWordWrap(True)
+        lb.setStyleSheet(self.NOTE_CSS)
+        lb.setMinimumWidth(300)
+        row.addLayout(left, 2)
+        row.addWidget(lb, 3)
+        card.clicked.connect(rb.click)
+        self.vl.addWidget(card)
+        self.cards.append((card, rb))
+        self.opts.append((rb, fam, lb, wr))
 
     def _other_changed(self, _f=None):
         self.rb_other.setChecked(True)
+        self.other_sample.setFont(QFont(self.other.currentFont().family(), 15))
 
-    def _add_option(self, root, fam, info):
-        rb = QRadioButton(fam)
-        rb.setStyleSheet("font-weight:bold;")
-        lb = QLabel(self.SAMPLE)
-        lb.setStyleSheet("padding-left:24px;")
-        wr = QLabel(info)
-        wr.setStyleSheet("padding-left:24px;color:#9aa0aa;")
-        wr.setWordWrap(True)
-        root.addWidget(rb)
-        root.addWidget(lb)
-        root.addWidget(wr)
-        self.opts.append((rb, fam, lb, wr))
+    def _sync_cards(self, *_a):
+        for card, rb in self.cards:
+            card.setStyleSheet("QFrame#fcard{border:2px solid %s;border-radius:8px;}" % ("#4f8cff" if rb.isChecked() else "transparent"))
 
     def refresh_fonts(self):
         """Pinta cada muestra con su fuente; las que aun no se han descargado se marcan."""
@@ -12085,8 +12143,10 @@ class FontChooserDialog(QDialog):
             lb.setFont(QFont(fam, 15) if ok else QFont("", 15))
             if not ok:
                 wait = True
-            base = FREE_FONT_INFO.get(fam, "La de siempre en Widget Arena (si no est\u00e1 instalada, la del sistema).")
+            base = FREE_FONT_INFO.get(fam, "La de Windows que usan las notas de ejemplo." if fam == "Segoe Print" else
+                                      "La de siempre en Widget Arena (si no est\u00e1 instalada, la del sistema).")
             wr.setText(base if ok else base + "  \u00b7  Descarg\u00e1ndose...")
+        self.other_sample.setFont(QFont(self.other.currentFont().family(), 15))
         self.status.setText("Descargando las fuentes libres... las muestras se actualizar\u00e1n solas." if wait else "")
 
     def chosen(self):
