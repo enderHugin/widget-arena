@@ -11201,7 +11201,7 @@ def font_boot(m):
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
-APP_PACK = 116                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 117                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -14346,6 +14346,7 @@ class GestureGuideDialog(QDialog):
 class AboutDialog(QDialog):
     """Acerca de: tarjeta animada con enlace a Ko-fi."""
     KOFI_URL = "https://ko-fi.com/jaimeluisolguinmesina"
+    WEB_URL = "https://enderhugin.github.io/widget-arena/"      # [PACK117] pagina del proyecto
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -14355,7 +14356,7 @@ class AboutDialog(QDialog):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setWindowTitle("Acerca de WidgetArena")
-        self.setFixedSize(460, 600)
+        self.setFixedSize(460, 650)
 
         rnd = random.Random(7)
         self._stars = [(rnd.random(), rnd.random(), rnd.random() * 6.28, 1 + rnd.random() * 1.8) for _ in range(46)]
@@ -14409,6 +14410,17 @@ class AboutDialog(QDialog):
 
         link.setCursor(Qt.PointingHandCursor)
         lay.addWidget(link)
+        self.btn_web = QPushButton("P\u00e1gina del proyecto  \u2197")           # [PACK117]
+        self.btn_web.setCursor(Qt.PointingHandCursor)
+        self.btn_web.setFixedHeight(38)
+        self.btn_web.setToolTip(self.WEB_URL)
+        self.btn_web.setStyleSheet(
+            "QPushButton{background:rgba(255,255,255,24);color:#f1eeff;border:1px solid rgba(255,255,255,70);border-radius:19px;"
+            "font:600 13px 'Segoe UI';padding:0 22px;}"
+            "QPushButton:hover{background:rgba(255,255,255,48);color:white;}"
+            "QPushButton:pressed{background:rgba(255,255,255,16);}")
+        self.btn_web.clicked.connect(self._open_web)
+        lay.addWidget(self.btn_web)
         lay.addStretch(1)
         lay.addWidget(lab("Hecho con cari\u00f1o por Jaime Luis Olgu\u00edn Mesina", "color:#9d97d6;font:500 11px 'Segoe UI';", False))
         self.close_btn = QToolButton(self)
@@ -14426,6 +14438,10 @@ class AboutDialog(QDialog):
     def _open_kofi(self):
         from PySide6.QtGui import QDesktopServices
         QDesktopServices.openUrl(QUrl(self.KOFI_URL))
+
+    def _open_web(self):
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(self.WEB_URL))
 
     def _tick(self):
         import math
