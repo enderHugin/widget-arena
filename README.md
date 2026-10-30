@@ -65,6 +65,7 @@ widgets (sustituyendo, añadiendo a los actuales o como perfil nuevo), perfiles,
 - Nunca se pisa un archivo que ya exista con otro contenido: el importado entra con otro nombre («... (importado)»).
 - Las rutas de las imágenes se ajustan solas, también las absolutas de otro equipo o de Windows.
 - Una copia completa `.zip` solo lleva los `.json`; para traer también las imágenes usa la carpeta.
+- Si cargas una copia vieja (un `.json`) y alguna nota se queda sin su base o su imagen, el programa avisa de cuáles faltan; *Importar y exportar → Buscar las imágenes que faltan (en otra carpeta)...* las recupera de la carpeta `widget_arena_data` de la versión anterior.
 
 ## Fuentes
 

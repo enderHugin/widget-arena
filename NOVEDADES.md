@@ -1,3 +1,6 @@
+## Pack 119 · 2026-10-30
+- **Imágenes que faltan al cargar una copia vieja**: un `.json` no lleva las imágenes de las notas, así que si faltan la nota enseñaba un cartel de error en lugar de su base. Ahora, al restaurar una copia, el programa avisa de cuáles faltan y *Importar y exportar → Buscar las imágenes que faltan (en otra carpeta)...* las recupera de la carpeta `widget_arena_data` de la versión anterior. Las notas base que el programa dibuja se rehacen solas.
+
 ## Pack 118 · 2026-10-30
 - **Importar datos de otra instalación**: *Ajustes → Importar y exportar → Importar datos de otra instalación...*. Trae widgets, perfiles, templates, imágenes, ajustes, atajos y Telegram desde la carpeta `widget_arena_data` de una versión anterior (o desde un .zip). Guarda antes una copia de lo actual y no pisa nada.
 

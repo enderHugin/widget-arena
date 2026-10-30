@@ -10584,8 +10584,9 @@ class BackupRestoreDialog(QDialog):
         if act and QMessageBox.question(self, "Restaurar perfil activo", "Se sustituir\u00e1n los widgets actuales por los de la copia. \u00bfContinuar?",
                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
-        self.status.setText(self.m.restore_backup(d, act, names, tpl))
+        msg = self.m.restore_backup(d, act, names, tpl)      # [PACK119] el aviso va despues de volver a seleccionar (que limpia la pantalla)
         self._select(self.lst.currentRow())
+        self.status.setText(msg)
 
 # ---------------------------------------------------------------------------------------------------------------------
 # [PACK112] Packs de estilos (.wapack): un .zip con estilos (templates), perfiles (conjuntos de widgets) y las imagenes que usan.
@@ -11201,7 +11202,7 @@ def font_boot(m):
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
-APP_PACK = 118                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 119                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -12179,6 +12180,48 @@ def import_fix_paths(obj, renames=None):
     return n[0]
 
 
+def import_missing_images(notes):
+    """Imagenes de capa que usan estas notas y que no estan en esta instalacion {nombre: [ids]}. Las notas base que el programa dibuja
+    de nuevo desde sus parametros no cuentan."""
+    miss = {}
+    for nid, st in (notes or {}).items():
+        td = st.get('template_data') if isinstance(st, dict) else None
+        if not isinstance(td, dict):
+            continue
+        for L in ('layer1', 'layer2'):
+            ld = td.get(L)
+            if not isinstance(ld, dict) or ld.get('type') in ('text', 'web'):
+                continue
+            c = ld.get('content')
+            if not isinstance(c, str) or not c.strip() or '<' in c or not _IMP_EXT.search(c) or c.strip().lower().startswith(('http://', 'https://', 'data:')):
+                continue
+            if L == 'layer2' and _is_generated_layer(td):
+                continue
+            if not _find_stored_file(c):
+                miss.setdefault(os.path.basename(c.replace('\\', '/')), []).append(nid)
+    return miss
+
+
+def import_recover_images(root, names):
+    """Busca por nombre (sin distinguir mayusculas, como Windows) en sticky/, images/ y frames/ de 'root' las imagenes que faltan y copia las que
+    encuentra (sin pisar nada) con el nombre con el que las usan las notas. Devuelve (copiadas, no_encontradas)."""
+    want, got = {n.lower(): n for n in names}, set()
+    for sub in IMPORT_MEDIA:
+        base = os.path.join(root, sub)
+        for r, dirs, fs in os.walk(base):
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(r, d))]
+            for f in fs:
+                n = want.get(f.lower())
+                if n and n not in got and not os.path.islink(os.path.join(r, f)):
+                    s = os.path.join(r, f)
+                    d = os.path.join(ROOT_DATA_DIR, sub, os.path.dirname(os.path.relpath(s, base)), n)
+                    if not os.path.exists(d):
+                        os.makedirs(os.path.dirname(d), exist_ok=True)
+                        shutil.copy2(s, d)
+                    got.add(n)
+    return sorted(got), sorted(set(want.values()) - got)
+
+
 class ImportDataDialog(QDialog):
     """[PACK118] Importar datos de otra instalaci\u00f3n: se elige la carpeta (o el .zip), se ve lo que hay y se marca lo que se quiere traer."""
     NOTE_MODES = (("replace", "Sustituir los widgets que tengo ahora"), ("add", "A\u00f1adirlos a los que tengo ahora"),
@@ -13136,6 +13179,7 @@ class DataHubWindow(QDialog):
                  ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None),
                  ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Perfil, template, configuraci\u00f3n o copia .zip"),
                  ("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", m.show_import_data, "Widgets, perfiles, templates, im\u00e1genes y ajustes de una versi\u00f3n anterior"),
+                 ("Buscar las im\u00e1genes que faltan (en otra carpeta)...", m.recover_images_dialog, "Si al cargar una copia vieja alguna nota se queda sin su base o su imagen"),
                  self._folder(DATA_DIR)])
 
     def _sec_packs(self):
@@ -20862,6 +20906,10 @@ class WidgetManager(QObject):
         tb = getattr(self, 'template_browser', None)
         if tb is not None:
             tb.reload()
+        miss = self.missing_images() if (active and data.get('notes')) else {}      # [PACK119]
+        if miss:
+            msg.append(self._missing_hint(miss))
+            self._osd(self._missing_hint(miss).capitalize(), 8000)
         return "Restaurado -> " + ("; ".join(msg) if msg else "nada")
 
     def _build_data_menu(self, parent, with_delete=True):
@@ -20876,6 +20924,9 @@ class WidgetManager(QObject):
         imp_action = QAction("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", self)      # [PACK118]
         imp_action.triggered.connect(self.show_import_data)
         data_menu.addAction(imp_action)
+        img_action = QAction("Buscar las im\u00e1genes que faltan (en otra carpeta)...", self)      # [PACK119]
+        img_action.triggered.connect(self.recover_images_dialog)
+        data_menu.addAction(img_action)
         data_menu.addSeparator()
         import_menu = QMenu("Importar", data_menu)
         import_add = QAction("Agregar widgets desde un archivo...", self)
@@ -21053,8 +21104,50 @@ class WidgetManager(QObject):
         tb = getattr(self, 'template_browser', None)
         if tb is not None:
             tb.reload()
+        miss = self.missing_images()
+        if miss:
+            rep.append(self._missing_hint(miss).capitalize())
         log_info("Importar", "Importado desde %s: %s" % (root, " | ".join(rep)))
         return rep
+
+    def missing_images(self):
+        """{nombre: [ids]} de las imagenes de capa que usan las notas actuales y no estan en esta instalacion."""
+        return import_missing_images({k: v for k, v in self.global_state.items() if isinstance(v, dict)})
+
+    def _missing_hint(self, miss):
+        names = sorted(miss)
+        return "faltan %d im\u00e1genes (%s%s): Importar y exportar \u2192 Buscar las im\u00e1genes que faltan..." % (len(names), ", ".join(names[:3]), "..." if len(names) > 3 else "")
+
+    def recover_images_root(self, root):
+        """Copia, desde la carpeta de datos 'root', las imagenes que faltan y vuelve a dibujar las notas. Devuelve (copiadas, no_encontradas)."""
+        got, left = import_recover_images(root, list(self.missing_images()))
+        if got:
+            import_fix_paths({k: v for k, v in self.global_state.items() if isinstance(v, dict)})
+            for w in list(self.widgets.values()):
+                try:
+                    import_fix_paths(w.current_template_data)
+                    w.load_template_data(w.current_template_data)
+                except Exception as e:
+                    log_warn("Importar", "no se pudo redibujar %s: %s" % (getattr(w, 'widget_id', '?'), e))
+            self.save_global_state()
+        return got, left
+
+    def recover_images_dialog(self, *_a):
+        parent = self.dialog_parent
+        miss = self.missing_images()
+        if not miss:
+            QMessageBox.information(parent, "Im\u00e1genes que faltan", "No falta ninguna imagen: todas las notas encuentran las suyas.")
+            return None
+        d = QFileDialog.getExistingDirectory(parent, "Carpeta \u00abwidget_arena_data\u00bb de la otra instalaci\u00f3n (faltan %d im\u00e1genes)" % len(miss), os.path.expanduser("~"))
+        if not d:
+            return None
+        root = import_find_root(d)
+        if not root or os.path.abspath(root) == os.path.abspath(ROOT_DATA_DIR):
+            QMessageBox.warning(parent, "Im\u00e1genes que faltan", "No encuentro la carpeta de datos de la otra instalaci\u00f3n ah\u00ed (busco sticky, images, frames...).")
+            return None
+        got, left = self.recover_images_root(root)
+        QMessageBox.information(parent, "Im\u00e1genes que faltan", "Recuperadas: %d.%s" % (len(got), ("\nSin encontrar: %s" % ", ".join(left[:8])) if left else ""))
+        return got, left
 
     # ---- [PACK114] actualizaciones
     def show_updates(self, check=True):
