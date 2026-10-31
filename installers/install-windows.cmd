@@ -126,13 +126,19 @@ try {
     }
     $py = $null; $uvTail = ''
     $tries = @(
-        @{ n = 'normal'; env = @{} },
-        @{ n = 'certificados de Windows'; env = @{ UV_NATIVE_TLS = '1' } },
-        @{ n = 'conexion lenta'; env = @{ UV_NATIVE_TLS = '1'; UV_HTTP_TIMEOUT = '300'; UV_CONCURRENT_DOWNLOADS = '1' } }
+        @{ n = 'normal'; dir = $Rt; env = @{} },
+        @{ n = 'carpeta nueva y certificados de Windows'; dir = (Join-Path $Root 'py2'); env = @{ UV_NATIVE_TLS = '1' } },
+        @{ n = 'carpeta corta y conexion lenta'; dir = (Join-Path $env:LOCALAPPDATA 'WA-py'); env = @{ UV_NATIVE_TLS = '1'; UV_HTTP_TIMEOUT = '300'; UV_CONCURRENT_DOWNLOADS = '1' } }
     )
     foreach ($t in $tries) {
         foreach ($k in $t.env.Keys) { Set-Item -Path ('Env:' + $k) -Value $t.env[$k] }
         if ($t -ne $tries[0]) { Say ('reintentando con ' + $t.n + '...') }
+        # una carpeta de un intento anterior a medias (sin python.exe) hace que uv falle al escribir dentro de ella
+        New-Item -ItemType Directory -Force -Path $t.dir | Out-Null
+        $env:UV_PYTHON_INSTALL_DIR = $t.dir
+        Get-ChildItem -LiteralPath $t.dir -Directory -Filter 'cpython-3.12*' -ErrorAction SilentlyContinue |
+            Where-Object { -not (Test-Path (Join-Path $_.FullName 'python.exe')) } |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
         $r = Run-Uv @('python', 'install', '3.12')
         if ($r.rc -eq 0) {
             $f = & $uv python find 3.12
@@ -164,7 +170,7 @@ try {
         } catch { $uvTail += ' | descarga directa: ' + $_.Exception.Message }
     }
     if (-not $py -or -not (Test-Path $py)) {
-        throw ('No se pudo conseguir Python 3.12. Puede ser tu antivirus, un proxy o un cortafuegos que bloquea las descargas de GitHub. Ultimos mensajes: ' + $uvTail)
+        throw ('No se pudo conseguir Python 3.12. Puede ser Windows Defender (acceso controlado a carpetas) u otro antivirus que borra archivos mientras se descomprimen, o un proxy o cortafuegos que bloquea GitHub. Prueba a pausar el antivirus unos minutos y vuelve a ejecutar el instalador. Ultimos mensajes: ' + $uvTail)
     }
     Say $py
 
