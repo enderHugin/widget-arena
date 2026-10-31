@@ -9024,32 +9024,70 @@ TRAY_GESTURE_DEFAULTS = {"double": "toggle_all", "shift+double": "new_default", 
 
 
 class MoveTreeDialog(QDialog):
-    """[PACK123] Elige a qu\u00e9 set se mueve un \u00e1rbol de widgets: uno de los que ya existen o uno nuevo."""
+    """[PACK123] Elige a qu\u00e9 set se mueve un \u00e1rbol de widgets: uno de los que ya existen o uno nuevo.
+    [PACK128] Una tabla con columnas: la tecla Ctrl + N y la Alt + N que cargan cada set, si est\u00e1 en memoria y su puesto en la rotaci\u00f3n
+    de Ctrl / Alt + doble clic. 'info' = {set: {'ctrl': n|None, 'alt': n|None, 'mem': bool, 'rot': posicion|True|None}}."""
     NEW = "(Set nuevo...)"
+    COLS = ("Ctrl +", "Alt +", "Set", "Memoria", "Rotaci\u00f3n")
 
-    def __init__(self, label, count, names, suggested, parent=None, labels=None):
+    def __init__(self, label, count, names, suggested, parent=None, info=None, rotation_all=False):
         super().__init__(parent)
+        from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
         self.setWindowTitle("Mover \u00e1rbol a otro set")
-        self.setMinimumWidth(440)
+        self.setMinimumWidth(560)
         self._names = list(names)
         v = QVBoxLayout(self)
-        info = QLabel("Mover \u00ab%s\u00bb (%d widget%s, con sus enlaces) a otro set. Se elimina de este set y pasa al elegido." % (label, count, "" if count == 1 else "s"))
-        info.setTextFormat(Qt.PlainText)
-        info.setWordWrap(True)
-        v.addWidget(info)
-        form = QFormLayout()
-        self.cb = QComboBox()
+        head = QLabel("Mover \u00ab%s\u00bb (%d widget%s, con sus enlaces) a otro set. Se elimina de este set y pasa al elegido." % (label, count, "" if count == 1 else "s"))
+        head.setTextFormat(Qt.PlainText)
+        head.setWordWrap(True)
+        v.addWidget(head)
+        self.lst = QTreeWidget()
+        self.lst.setRootIsDecorated(False)
+        self.lst.setColumnCount(len(self.COLS))
+        self.lst.setHeaderLabels(list(self.COLS))
+        self.lst.setUniformRowHeights(True)
+        self.lst.setAlternatingRowColors(True)
+        self.lst.setMinimumHeight(210)
+        tips = ("Tecla Ctrl + N que carga este set (su ranura o, si no tiene, su puesto en la lista alfab\u00e9tica)",
+                "Tecla Alt + N que carga este set: solo si tiene una ranura asignada",
+                "Nombre del set",
+                "\u25cf = el set ya est\u00e1 en memoria (cambio instant\u00e1neo)",
+                "\u21bb = entra en la rotaci\u00f3n de Ctrl / Alt + doble clic en el icono, Set siguiente / anterior y Ctrl+May\u00fas+\u2191/\u2193; el n\u00famero es su puesto")
+        for c, t in enumerate(tips):
+            self.lst.headerItem().setToolTip(c, t)
+        info = info or {}
         for n in self._names:
-            self.cb.addItem((labels or {}).get(n, n), n)          # [PACK127] con su tecla y si esta en memoria
-        self.cb.addItem(self.NEW, None)
-        self.cb.setCurrentIndex(0)
-        self.ed = QLineEdit(suggested)
-        form.addRow("Mover a:", self.cb)
-        if labels:
-            leyenda = QLabel("[N] = el set se carga con Ctrl + N o Alt + N (1 a 9 y 0)  \u00b7  \u25cf = ya est\u00e1 en memoria (cambio instant\u00e1neo)")
+            d = info.get(n) or {}
+            rot = d.get('rot')
+            it = QTreeWidgetItem([("%d" % (d['ctrl'] % 10)) if d.get('ctrl') else "\u2013",
+                                  ("%d" % (d['alt'] % 10)) if d.get('alt') else "",
+                                  n, "\u25cf" if d.get('mem') else "",
+                                  ("\u21bb" if rot is True else ("\u21bb %d" % rot if rot else ""))])
+            it.setData(2, Qt.UserRole, n)
+            self.lst.addTopLevelItem(it)
+        new = QTreeWidgetItem(["", "", self.NEW, "", ""])
+        new.setData(2, Qt.UserRole, None)
+        f = new.font(2)
+        f.setItalic(True)
+        new.setFont(2, f)
+        self.lst.addTopLevelItem(new)
+        for c in (0, 1, 3, 4):
+            for r in range(self.lst.topLevelItemCount()):
+                self.lst.topLevelItem(r).setTextAlignment(c, Qt.AlignCenter)
+        hd = self.lst.header()
+        hd.setStretchLastSection(False)
+        hd.setSectionResizeMode(2, hd.ResizeMode.Stretch)
+        for c, w in ((0, 62), (1, 62), (3, 74), (4, 82)):
+            self.lst.setColumnWidth(c, w)
+        v.addWidget(self.lst, 1)
+        if info:
+            leyenda = QLabel("Ctrl + N / Alt + N: tecla que carga el set (Alt solo si tiene ranura; Ctrl usa tambi\u00e9n el puesto alfab\u00e9tico).  \u25cf: ya est\u00e1 en memoria.  "
+                             + ("\u21bb: no hay lista de rotaci\u00f3n elegida, rotan todos." if rotation_all else "\u21bb n: puesto en la rotaci\u00f3n de Ctrl / Alt + doble clic."))
             leyenda.setWordWrap(True)
             leyenda.setStyleSheet("color:#888;")
-            form.addRow("", leyenda)
+            v.addWidget(leyenda)
+        form = QFormLayout()
+        self.ed = QLineEdit(suggested)
         form.addRow("Nombre del set nuevo:", self.ed)
         v.addLayout(form)
         self.chk = QCheckBox("Ir a ese set despu\u00e9s")
@@ -9058,23 +9096,29 @@ class MoveTreeDialog(QDialog):
         self.bb.accepted.connect(self.accept)
         self.bb.rejected.connect(self.reject)
         v.addWidget(self.bb)
-        self.cb.currentIndexChanged.connect(self._sync)
+        self.lst.setCurrentItem(self.lst.topLevelItem(0))
+        self.lst.currentItemChanged.connect(lambda *_a: self._sync())
+        self.lst.itemDoubleClicked.connect(lambda *_a: self.bb.button(QDialogButtonBox.Ok).isEnabled() and self.accept())
         self.ed.textChanged.connect(self._sync)
         self._sync()
 
     def _is_new(self):
-        return self.cb.currentData() is None
+        it = self.lst.currentItem()
+        return it is None or it.data(2, Qt.UserRole) is None
 
     def _sync(self, _i=0):
         self.ed.setEnabled(self._is_new())
         ok = self.bb.button(QDialogButtonBox.Ok)
         ok.setEnabled(not self._is_new() or bool(self.ed.text().strip()))
 
+    def select_new(self):
+        self.lst.setCurrentItem(self.lst.topLevelItem(self.lst.topLevelItemCount() - 1))
+
     def values(self):
         """(set existente, nombre del set nuevo, ir a ese set): uno de los dos primeros es None."""
         if self._is_new():
             return None, self.ed.text().strip(), self.chk.isChecked()
-        return self.cb.currentData(), None, self.chk.isChecked()
+        return self.lst.currentItem().data(2, Qt.UserRole), None, self.chk.isChecked()
 
 
 class SetRotationDialog(QDialog):
@@ -11405,7 +11449,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 127                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 128                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -13470,7 +13514,7 @@ class DataHubWindow(QDialog):
         self.setWindowTitle("Guardar y cargar")
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self.setAcceptDrops(True)
-        self.resize(940, 600)
+        self.resize(1060, 700)
         root = QVBoxLayout(self)
         head = QHBoxLayout()
         tl = QVBoxLayout()
@@ -13571,11 +13615,31 @@ class DataHubWindow(QDialog):
             il.setWordWrap(True)
             il.setStyleSheet("background:#2b2b2f;border-radius:6px;padding:8px;")
             self.pl.addWidget(il)
+        last_group = None
         for a in actions:
-            label, target, tip = a
+            label, target, tip = a[0], a[1], a[2]
+            group = a[3] if len(a) > 3 else None
+            detail = a[4] if len(a) > 4 else None                        # [PACK128] que hace, en que formato se guarda y donde acaba
+            if group and group != last_group:
+                gl = QLabel(group.upper())
+                gl.setStyleSheet("color:#8fb8ff;font-weight:bold;margin-top:8px;")
+                self.pl.addWidget(gl)
+                last_group = group
+            row = QWidget()
+            hl = QHBoxLayout(row)
+            hl.setContentsMargins(0, 0, 0, 0)
             b = QPushButton(label)
+            b.setFixedWidth(300)
             b.setStyleSheet("QPushButton{text-align:left;padding:7px 10px;}")
             b.setToolTip(tip or "")
+            hl.addWidget(b, 0, Qt.AlignTop)
+            if detail:
+                dl = QLabel(detail)
+                dl.setWordWrap(True)
+                dl.setStyleSheet("color:#9aa0aa;")
+                hl.addWidget(dl, 1)
+            else:
+                hl.addStretch(1)
             if isinstance(target, list):
                 mn = QMenu(b)
                 for nm, cb in target:
@@ -13586,27 +13650,36 @@ class DataHubWindow(QDialog):
                 b.setMenu(mn)
             else:
                 b.clicked.connect(lambda _c=False, f=target: (f(), self.refresh()))
-            self.pl.addWidget(b)
+            self.pl.addWidget(row)
 
         self.pl.addStretch(1)
 
     def _folder(self, path):
-        return ("Abrir la carpeta", lambda: self.m.open_folder(path), path)
+        return ("Abrir la carpeta", lambda: self.m.open_folder(path), path, "Carpeta", "Abre en el explorador de archivos la carpeta donde vive esto.")
 
     # ---- secciones: (descripcion, ubicacion, lineas de informacion, acciones)
+    #      cada accion: (texto, funcion o lista de (nombre, funcion), ayuda, grupo, explicacion de que hace y en que formato queda) [PACK128]
     def _sec_sets(self):
         m = self.m
         names = [os.path.splitext(os.path.basename(p))[0] for p in m._list_profiles()]
         cur = m.current_profile_name
         info = ["Set activo: " + (("\u00ab%s\u00bb" % cur) if cur else "(sin guardar como set todav\u00eda)"),
                 "%d sets guardados%s" % (len(names), (": " + ", ".join(names[:8]) + ("\u2026" if len(names) > 8 else "")) if names else "")]
-        return ("Un set de widgets es una foto completa de lo que tienes en pantalla (posiciones, enlaces, contenido). Puedes tener varios y cambiar de uno a otro al instante. "
-                "El set activo se guarda solo al cambiar o al salir.",
+        return ("Un set de widgets es una foto completa de lo que tienes en pantalla (posiciones, enlaces, contenido). Puedes tener varios y cambiar de uno a otro al instante "
+                "(Ctrl / Alt + 1\u2026 0). El set activo se guarda solo al cambiar o al salir.",
                 PROFILES_DIR, info,
-                [("Guardar el set activo...", m._save_profile_dialog, "Si el nombre existe, lo actualiza"),
-                 ("Duplicar el set activo como set nuevo...", lambda: m.clone_current_set(), "Nunca sobrescribe otro set"),
-                 ("Cargar un set  \u25be", [(n, (lambda n=n: m._load_profile_dialog(n))) for n in names], "El set activo se aparta y se guarda"),
-                 ("Recuperar sets de una copia de seguridad...", lambda: m.show_backup_restore(), "Los sets eliminados vuelven sin pisar los existentes"),
+                [("Guardar el set activo...", m._save_profile_dialog, "Si el nombre existe, lo actualiza", "Guardar",
+                  "Guarda lo que ves ahora con un nombre, como un set en la carpeta de sets (un archivo .json por set, solo en este equipo; las im\u00e1genes se quedan en la carpeta de datos). "
+                  "Si el nombre ya existe, lo actualiza."),
+                 ("Duplicar el set activo como set nuevo...", lambda: m.clone_current_set(), "Nunca sobrescribe otro set", "Guardar",
+                  "Crea otro set con una copia de lo que ves ahora y, si quieres, le asigna una tecla Alt + N. Nunca sobrescribe otro set."),
+                 ("Cargar un set  \u25be", [(n, (lambda n=n: m._load_profile_dialog(n))) for n in names], "El set activo se aparta y se guarda", "Cargar",
+                  "Cambia a otro set guardado. El set que tienes ahora se aparta en memoria y se guarda."),
+                 ("Exportar los widgets del set activo...", m.export_state, "Archivo .json con las im\u00e1genes dentro", "Llevar a otro equipo",
+                  "Crea un archivo .json con los widgets que ves ahora y sus im\u00e1genes dentro, para abrirlo en otro equipo o compartirlo. No es un set guardado: "
+                  "en el otro equipo se carga con \u00abCargar un archivo\u00bb."),
+                 ("Recuperar sets de una copia de seguridad...", lambda: m.show_backup_restore(), "Los sets eliminados vuelven sin pisar los existentes", "Recuperar",
+                  "Abre una copia (completa .zip o autom\u00e1tica) y trae sets borrados o versiones anteriores, sin pisar los que ya existen."),
                  self._folder(PROFILES_DIR)])
 
     def _sec_templates(self):
@@ -13616,10 +13689,14 @@ class DataHubWindow(QDialog):
         return ("Un widget guardado es el aspecto de un widget (capas, fondo, tama\u00f1o). Las formas de papel creadas con el editor se guardan tambi\u00e9n como widgets guardados "
                 "editables, en su propia lista.",
                 TEMPLATES_DIR, ["%d widgets guardados, %d de ellos son formas de papel editables" % (n_all, n_base)],
-                [("Ver, elegir, crear y editar widgets guardados...", lambda: m.show_template_chooser(), "Primero salen los aspectos en uso y las formas de papel"),
-                 ("Nueva nota && forma de papel...", lambda: m.show_base_note_dialog(), "Puedes guardar el resultado como forma de papel"),
-                 ("Guardar un widget existente como widget guardado...", lambda: (m.show_template_chooser(), m.browser.templates._from_widget()), None),
-                 ("Importar un widget guardado desde un archivo...", lambda: (m.show_template_chooser(), m.browser.templates._import()), None),
+                [("Ver, elegir, crear y editar widgets guardados...", lambda: m.show_template_chooser(), "Primero salen los aspectos en uso y las formas de papel", "Ver y editar",
+                  "Abre la lista de widgets guardados (primero los aspectos en uso y las formas de papel) para crear widgets nuevos a partir de ellos, editarlos o duplicarlos."),
+                 ("Nueva nota && forma de papel...", lambda: m.show_base_note_dialog(), "Puedes guardar el resultado como forma de papel", "Ver y editar",
+                  "Dibuja una nota con el editor de formas de papel; el resultado se puede guardar como forma de papel (un widget guardado editable)."),
+                 ("Guardar un widget existente como widget guardado...", lambda: (m.show_template_chooser(), m.browser.templates._from_widget()), None, "Guardar",
+                  "Guarda el aspecto de uno de los widgets que ves (capas, fondo, tama\u00f1o) como un archivo .json en la carpeta de widgets guardados."),
+                 ("Importar un widget guardado desde un archivo...", lambda: (m.show_template_chooser(), m.browser.templates._import()), None, "Meter en la aplicaci\u00f3n",
+                  "Copia un archivo .json de widget guardado a tu carpeta de widgets guardados (si trae im\u00e1genes dentro, las deja en la carpeta de datos sin pisar nada)."),
                  self._folder(TEMPLATES_DIR)])
 
     def _sec_config(self):
@@ -13629,32 +13706,45 @@ class DataHubWindow(QDialog):
         return ("La configuraci\u00f3n son los ajustes generales (cables, jerarqu\u00eda, tonos, men\u00fas\u2026) y los atajos de teclado. No incluye los widgets.",
                 cd, ["%d copias de la configuraci\u00f3n guardadas (se hace una antes de cada cambio grande)" % n,
                      "Los esquemas de atajos viven en: " + HOTKEY_PROFILES_DIR],
-                [("Guardar una copia de la configuraci\u00f3n ahora", lambda: m._osd("Configuraci\u00f3n guardada" if m._backup_config() else "No se pudo guardar"), None),
-                 ("Restaurar una configuraci\u00f3n previa...", m.restore_config_backup, None),
-                 ("Abrir el editor de atajos de teclado", m.show_hotkeys, None),
+                [("Guardar una copia de la configuraci\u00f3n ahora", lambda: m._osd("Configuraci\u00f3n guardada" if m._backup_config() else "No se pudo guardar"), None, "Guardar",
+                  "Guarda los ajustes y los atajos (sin los widgets) como un archivo .json en la carpeta de copias de configuraci\u00f3n."),
+                 ("Restaurar una configuraci\u00f3n previa...", m.restore_config_backup, None, "Recuperar",
+                  "Elige una de esas copias y vuelve a ella; antes se guarda la configuraci\u00f3n actual."),
+                 ("Abrir el editor de atajos de teclado", m.show_hotkeys, None, "Editar",
+                  "Teclas, gestos del icono de la bandeja y esquemas de atajos (hotkeys.json y la carpeta de esquemas)."),
                  self._folder(cd)])
 
     def _sec_files(self):
         m = self.m
-        return ("Para llevar tus widgets a otro PC o compartirlas: se exportan a un archivo .json y se importan agreg\u00e1ndolas o reemplazando todo.",
+        return ("Para llevar tus widgets a otro PC o compartirlos: se exportan a un archivo .json y se importan agreg\u00e1ndolos o reemplazando todo. "
+                "Las im\u00e1genes que usan viajan dentro del archivo.",
                 DATA_DIR, ["Archivo de trabajo actual: " + GLOBAL_STATE_FILE],
-                [("Exportar todos los widgets a un archivo...", m.export_state, "Puede incluir la configuraci\u00f3n"),
-                 ("Agregar widgets desde un archivo...", lambda: m.import_state(replace=False), None),
-                 ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None),
-                 ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Set, widget guardado, configuraci\u00f3n o copia .zip"),
-                 ("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", m.show_import_data, "Widgets, sets, widgets guardados, im\u00e1genes y ajustes de una versi\u00f3n anterior"),
-                 ("Buscar las im\u00e1genes que faltan (en otra carpeta)...", m.recover_images_dialog, "Si al cargar una copia vieja alguna nota se queda sin su base o su imagen"),
+                [("Exportar todos los widgets a un archivo...", m.export_state, "Puede incluir la configuraci\u00f3n", "Sacar de la aplicaci\u00f3n",
+                  "Crea un archivo .json con los widgets del set activo y sus im\u00e1genes dentro; puede incluir tambi\u00e9n la configuraci\u00f3n."),
+                 ("Agregar widgets desde un archivo...", lambda: m.import_state(replace=False), None, "Meter en la aplicaci\u00f3n",
+                  "Suma los widgets del archivo a los que ya tienes en el set activo."),
+                 ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None, "Meter en la aplicaci\u00f3n",
+                  "Elimina los widgets del set activo y pone los del archivo (se puede deshacer)."),
+                 ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Set, widget guardado, configuraci\u00f3n o copia .zip", "Meter en la aplicaci\u00f3n",
+                  "Elige cualquier archivo (.json de widgets, widget guardado o configuraci\u00f3n; .zip de copia; .wapack) y el programa averigua qu\u00e9 es y c\u00f3mo cargarlo."),
+                 ("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", m.show_import_data, "Widgets, sets, widgets guardados, im\u00e1genes y ajustes de una versi\u00f3n anterior", "Meter en la aplicaci\u00f3n",
+                  "Trae widgets, sets, widgets guardados, im\u00e1genes y ajustes desde la carpeta widget_arena_data de otra versi\u00f3n o desde una copia completa .zip."),
+                 ("Buscar las im\u00e1genes que faltan (en otra carpeta)...", m.recover_images_dialog, "Si al cargar una copia vieja alguna nota se queda sin su base o su imagen", "Meter en la aplicaci\u00f3n",
+                  "Si tras cargar una copia vieja alguna nota se queda sin su imagen, las busca en la carpeta de datos de otra instalaci\u00f3n."),
                  self._folder(DATA_DIR)])
 
     def _sec_packs(self):
         m = self.m
         n = len(pack_list())
-        return ("Un pack es un archivo .wapack con widgets guardados y sets de widgets (con las im\u00e1genes que usan), para compartir o para estrenar. "
+        return ("Un pack es un archivo .wapack (un .zip) con widgets guardados y sets de widgets, con las im\u00e1genes que usan, para compartir o para estrenar. "
                 "Aqu\u00ed instalas uno, ves sus widgets guardados con vista previa y los agregas a los tuyos. Tambi\u00e9n puedes crear el tuyo con lo que ya tienes.",
                 PACKS_DIR, [("%d pack instalado" if n == 1 else "%d packs instalados") % n, "Tambi\u00e9n puedes arrastrar un .wapack a esta ventana para instalarlo."],
-                [("Abrir los packs de widgets...", lambda: m.show_packs(), "Cat\u00e1logo con vista previa"),
-                 ("Instalar un pack desde un archivo...", m.pack_install_dialog, None),
-                 ("Exportar mis widgets y sets como pack...", m.pack_export_dialog, "Incluye las im\u00e1genes; la de las formas de papel no hace falta"),
+                [("Abrir los packs de widgets...", lambda: m.show_packs(), "Cat\u00e1logo con vista previa", "Usar",
+                  "Cat\u00e1logo de los packs instalados, con vista previa de sus widgets guardados y sets, para agregarlos a los tuyos."),
+                 ("Instalar un pack desde un archivo...", m.pack_install_dialog, None, "Usar",
+                  "A\u00f1ade un archivo .wapack al cat\u00e1logo. No toca tus widgets hasta que uses algo del pack."),
+                 ("Exportar mis widgets y sets como pack...", m.pack_export_dialog, "Incluye las im\u00e1genes; la de las formas de papel no hace falta", "Crear",
+                  "Crea un archivo .wapack (un .zip) con los widgets guardados y los sets que elijas, con sus im\u00e1genes (las formas de papel se redibujan solas)."),
                  self._folder(PACKS_DIR)])
 
     def _sec_backups(self):
@@ -13667,8 +13757,10 @@ class DataHubWindow(QDialog):
         return ("Las copias se hacen solas mientras trabajas. Desde aqu\u00ed recuperas el set activo, sets eliminados o widgets guardados. "
                 "Antes de restaurar el set activo se guarda una copia de lo actual y se puede deshacer.",
                 FULL_BACKUP_DIR + "   (y " + BACKUP_DIR + ")", info,
-                [("Restaurar una copia de seguridad...", lambda: m.show_backup_restore(), None),
-                 ("Hacer una copia completa ahora", m._full_backup_now, None),
+                [("Restaurar una copia de seguridad...", lambda: m.show_backup_restore(), None, "Recuperar",
+                  "Elige una copia (completa .zip o autom\u00e1tica del set activo) y qu\u00e9 traer de ella: el set activo, sets, widgets guardados e im\u00e1genes. No pisa nada sin avisar."),
+                 ("Hacer una copia completa ahora", m._full_backup_now, None, "Guardar",
+                  "Crea un .zip en la carpeta de copias completas con el set activo, todos los sets, los widgets guardados, los atajos y las im\u00e1genes que usan."),
                  self._folder(FULL_BACKUP_DIR)])
 
     def _sec_undo(self):
@@ -13677,8 +13769,10 @@ class DataHubWindow(QDialog):
         return ("Ctrl+Alt+Z deshace y Ctrl+Alt+Y rehace los cambios en los widgets (crear, eliminar, editar, mover\u2026). Ctrl+Z deshace primero los del widget enfocado. "
                 "El historial de cada set se guarda en disco y sigue ah\u00ed al reiniciar.",
                 m._undo_file(), ["Este set: %d pasos (est\u00e1s en el %d)" % (len(h), getattr(m, '_global_history_idx', 0) + 1)],
-                [("Deshacer", m.undo_global, None), ("Rehacer", m.redo_global, None),
-                 ("Olvidar el historial guardado de este set", m.clear_saved_history, "Libera espacio; los widgets no cambian")])
+                [("Deshacer", m.undo_global, None, "Deshacer y rehacer", "Vuelve un paso atr\u00e1s en los cambios de este set (Ctrl+Alt+Z)."),
+                 ("Rehacer", m.redo_global, None, "Deshacer y rehacer", "Repite el paso que acabas de deshacer (Ctrl+Alt+Y)."),
+                 ("Olvidar el historial guardado de este set", m.clear_saved_history, "Libera espacio; los widgets no cambian", "Limpiar",
+                  "Borra del disco el historial de este set (libera espacio); los widgets no cambian.")])
 
     # ---- arrastrar y soltar
     def dragEnterEvent(self, e):
@@ -21915,9 +22009,12 @@ class WidgetManager(QObject):
     def move_tree_dialog(self, widget_id):
         n = len(self.get_descendants(widget_id)) + 1
         keys = self._set_key_map()
+        slots = {v: int(k) for k, v in self._slots().items() if str(k).isdigit()}
+        rot = self._rotation_explicit()
         names = sorted(self._other_set_names(), key=lambda s: (keys.get(s, 99), s.lower()))          # [PACK127] primero los que tienen tecla, por orden de tecla
-        labels = {s: "[%s]  %s%s" % ((keys[s] % 10) if s in keys else "\u2013", s, "   \u25cf" if s in self._resident else "") for s in names}
-        dlg = MoveTreeDialog(self._tree_label(widget_id), n, names, self._unique_profile_name("Set nuevo"), self.dialog_parent, labels)
+        info = {s: {'ctrl': keys.get(s), 'alt': slots.get(s) if 1 <= slots.get(s, 0) <= 10 else None, 'mem': s in self._resident,        # [PACK128]
+                    'rot': (rot.index(s) + 1) if s in rot else (True if not rot else None)} for s in names}
+        dlg = MoveTreeDialog(self._tree_label(widget_id), n, names, self._unique_profile_name("Set nuevo"), self.dialog_parent, info, rotation_all=not rot)
         if not dlg.exec():
             return None
         target, new_name, switch = dlg.values()
@@ -23810,8 +23907,8 @@ class WidgetManager(QObject):
             self._load_profile_dialog_confirm(name)
 
     def _save_profile_dialog(self):
-        name, ok = QInputDialog.getText(self.dialog_parent, "Guardar set",
-                                        "Nombre del set:", text=self.current_profile_name or "")
+        name, ok = QInputDialog.getText(self.dialog_parent, "Guardar el set activo",
+                                        "Nombre del set (se guarda como un set en la carpeta de sets; si ya existe, se actualiza):", text=self.current_profile_name or "")
         if ok and name.strip():
             self._save_profile(name.strip())
 
