@@ -11524,7 +11524,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 132                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 133                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -15459,11 +15459,12 @@ def _frame_sample_picture(w, h):
 class FrameDialog(QDialog):
     """[PACK131] Editor de marcos: grosor de cada lado, color o degradado, bisel, textura y sombras, con una vista previa sobre un paisaje de ejemplo."""
 
-    def __init__(self, manager, parent=None, start=None, editing=False):
+    def __init__(self, manager, parent=None, start=None, editing=False, live=None):
         super().__init__(parent)
         from PySide6.QtWidgets import QSpinBox as _SB, QTabWidget, QScrollArea
         self.setWindowTitle("Editar marco" if editing else "Generar marco")
         self._mgr = manager
+        self._live = live                   # [PACK133] funcion(parametros | None, ajustar) que pinta los cambios en el widget real; None = volver a como estaba
         self.p = _fr_clean(start)
         self._building = True
         self._sync = []
@@ -15587,6 +15588,16 @@ class FrameDialog(QDialog):
         self.chk_fit = QCheckBox("Ajustar la imagen o la p\u00e1gina de la capa 2 al hueco del marco")
         self.chk_fit.setChecked(True)
         right.addWidget(self.chk_fit)
+        self.chk_live = QCheckBox("Ver los cambios en el widget real mientras edito")      # [PACK133]
+        self.chk_live.setChecked(True)
+        self.chk_live.setVisible(live is not None)
+        self.chk_live.toggled.connect(self._live_toggled)
+        self.chk_fit.toggled.connect(lambda _on: self._live_schedule())
+        right.addWidget(self.chk_live)
+        self._live_timer = QTimer(self)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.setInterval(140)
+        self._live_timer.timeout.connect(self._live_fire)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.button(QDialogButtonBox.Ok).setText("Aplicar" if editing else "Generar")
@@ -15597,7 +15608,7 @@ class FrameDialog(QDialog):
         self.chk_same.toggled.connect(self._same_toggled)
         self._building = False
         self.resize(900, 560)
-        self._refresh()
+        self._refresh(live=False)
 
     def _same_toggled(self, on):
         if on:
@@ -15635,7 +15646,7 @@ class FrameDialog(QDialog):
         self._building = False
         self._refresh()
 
-    def _refresh(self):
+    def _refresh(self, live=True):
         L = _frame_layout(self.p)
         fr = render_frame(self.p)
         bg = QImage(fr.size(), QImage.Format_ARGB32_Premultiplied)
@@ -15657,11 +15668,33 @@ class FrameDialog(QDialog):
         pm = QPixmap.fromImage(bg)
         box = self.preview.size() - QSize(8, 8) if self.preview.width() > 60 else QSize(340, 340)
         self.preview.setPixmap(pm.scaled(max(100, box.width()), max(100, box.height()), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        if live:
+            self._live_schedule()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
         if hasattr(self, 'preview') and not self._building:
-            self._refresh()
+            self._refresh(live=False)
+
+    def _live_schedule(self):
+        if self._live is not None and not self._building and self.chk_live.isChecked():
+            self._live_timer.start()
+
+    def _live_fire(self):
+        if self._live is not None and self.chk_live.isChecked():
+            self._live(copy.deepcopy(self.p), self.chk_fit.isChecked())
+
+    def _live_toggled(self, on):
+        if self._live is None:
+            return
+        if on:
+            self._live_fire()
+        else:
+            self._live(None)                            # deja el widget real como estaba
+
+    def done(self, r):
+        self._live_timer.stop()
+        super().done(r)
 
     def _copy(self):
         QApplication.clipboard().setText(json.dumps({"frame_shape": self.p}, indent=2, ensure_ascii=False))
@@ -21429,22 +21462,22 @@ class WidgetManager(QObject):
                                      "La capa 1 de este widget es texto (es una nota). Con un marco pasa a ser un marco para una imagen o una p\u00e1gina web y el texto se pierde.\n\n\u00bfContinuar?")
             if r != QMessageBox.Yes:
                 return None
-        dlg = FrameDialog(self, self.dialog_parent, self._frame_start(widget_id), editing=False)
-        if not dlg.exec():
+        res = self._frame_dialog(widget_id, False)
+        if res is None:
             return None
-        self.apply_frame(widget_id, dlg.get_params(), fit=dlg.chk_fit.isChecked())
-        return dlg.get_params()
+        self.apply_frame(widget_id, res[0], fit=res[1])
+        return res[0]
 
     def edit_frame(self, widget_id):
         """[PACK131] Reabre el editor con los parametros del marco de este widget."""
         st = self.global_state.get(widget_id)
         if not isinstance(st, dict) or not self._is_frame(st):
             return None
-        dlg = FrameDialog(self, self.dialog_parent, self._frame_start(widget_id), editing=True)
-        if not dlg.exec():
+        res = self._frame_dialog(widget_id, True)
+        if res is None:
             return None
-        self.apply_frame(widget_id, dlg.get_params(), fit=dlg.chk_fit.isChecked())
-        return dlg.get_params()
+        self.apply_frame(widget_id, res[0], fit=res[1])
+        return res[0]
 
     def apply_frame(self, widget_id, p, fit=True):
         st = self.global_state.get(widget_id)
@@ -21453,11 +21486,29 @@ class WidgetManager(QObject):
         p = _fr_clean(p)
         self.global_state['frame_settings'] = json.dumps(p)
         rel = _gen_frame_image(p)
-        L = _frame_layout(p)
         td = st['template_data']
+        self._frame_fill_td(td, td, p, rel, fit)
+        win = self.widgets.get(widget_id)
+        if win is not None:
+            win._paper_frame_cache = None
+            win.load_template_data(td)
+            try:
+                win._recalculate_and_normalize()
+            except Exception as e:
+                log_warn(widget_id, "No se pudo normalizar tras generar el marco: %s" % e)
+            win._save_changes_to_manager()
+
+        self.save_global_state()
+        self.build_tray_menu()
+        self._refresh_connector_overlay()
+
+    def _frame_fill_td(self, td, src_td, p, rel, fit):
+        """[PACK133] Pone en td (los datos de plantilla de un widget, o una copia) el marco p con la imagen rel: capa 1 = marco y,
+        si fit, capa 2 ajustada al hueco. src_td es el estado actual del widget (de ahi salen la escala y el centro)."""
+        L = _frame_layout(p)
         l1 = td.setdefault('layer1', {})
-        og = l1.get('geometry') or {}
-        sc = self._frame_scale(td)
+        og = (src_td.get('layer1') or {}).get('geometry') or {}
+        sc = self._frame_scale(src_td)
         W, H = int(round(L['W'] * sc)), int(round(L['H'] * sc))
         cx = og.get('x', 0) + og.get('w', W) / 2.0
         cy = og.get('y', 0) + og.get('h', H) / 2.0
@@ -21476,19 +21527,65 @@ class WidgetManager(QObject):
                               "w": int(round(hw * sc + 2 * t)), "h": int(round(hh * sc + 2 * t))}
             if l2.get('type') == 'png':
                 l2['scaled_contents'] = True
-        win = self.widgets.get(widget_id)
-        if win is not None:
-            win._paper_frame_cache = None
-            win.load_template_data(td)
-            try:
-                win._recalculate_and_normalize()
-            except Exception as e:
-                log_warn(widget_id, "No se pudo normalizar tras generar el marco: %s" % e)
-            win._save_changes_to_manager()
 
-        self.save_global_state()
-        self.build_tray_menu()
-        self._refresh_connector_overlay()
+    def preview_frame(self, widget_id, p, fit=True):
+        """[PACK133] Vista en vivo: pinta el widget real con el marco del dialogo sin guardar nada (la imagen es temporal;
+        al cancelar se vuelve a cargar el estado original)."""
+        st, win = self.global_state.get(widget_id), self.widgets.get(widget_id)
+        if not isinstance(st, dict) or win is None or not isinstance(st.get('template_data'), dict):
+            return
+        p = _fr_clean(p)
+        d = os.path.join(STICKY_DIR, '_vivo')
+        os.makedirs(d, exist_ok=True)
+        self._live_n = getattr(self, '_live_n', 0) + 1
+        path = os.path.join(d, f"vivo_{int(time.time() * 1000)}_{self._live_n}.png")
+        render_frame(p).save(path, 'PNG')
+        try:
+            rel = _store_path(path)
+        except ValueError:
+            rel = path
+        td = copy.deepcopy(st['template_data'])
+        self._frame_fill_td(td, st['template_data'], p, rel, fit)
+        win._paper_frame_cache = None
+        win.load_template_data(td)
+
+    def _frame_dialog(self, widget_id, editing):
+        """[PACK133] Abre el editor de marcos con vista en vivo sobre el widget y, si se acepta, devuelve (parametros, ajustar)."""
+        win, st = self.widgets.get(widget_id), self.global_state.get(widget_id)
+        state = {'on': False}
+
+        def live(params, fit=True):
+            if params is None:
+                self._live_wid = None
+                if state['on'] and win is not None:
+                    win._paper_frame_cache = None
+                    win.load_template_data(st['template_data'])
+                    state['on'] = False
+                return
+            self._live_wid = widget_id           # mientras tanto, guardar o cambiar de set no toma la vista previa como estado
+            self.preview_frame(widget_id, params, fit)
+            state['on'] = True
+        dlg = FrameDialog(self, self.dialog_parent, self._frame_start(widget_id), editing=editing, live=live)
+        try:                                     # el editor a un lado del widget, para que no tape lo que cambia
+            g = win.geometry()
+            scr = (win.screen() or QApplication.primaryScreen()).availableGeometry()
+            dlg.adjustSize()
+            x = g.right() + 24
+            if x + dlg.width() > scr.right():
+                x = g.left() - dlg.width() - 24
+            if x >= scr.left():
+                dlg.move(x, max(scr.top(), min(g.top() - 40, scr.bottom() - dlg.height())))
+        except Exception:
+            pass
+        try:
+            ok = dlg.exec()
+        finally:
+            self._live_wid = None
+            self._live_cleanup()
+        if not ok:
+            live(None)
+            return None
+        return dlg.get_params(), dlg.chk_fit.isChecked()
 
     def edit_crown_style(self, widget_id):
         """Dialogo de la corona de un widget (apagar, tono, saturacion, brillo, opacidad); se guarda en su JSON."""
