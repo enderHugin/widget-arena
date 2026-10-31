@@ -15,6 +15,7 @@ rm -rf "$OUT"; mkdir -p "$OUT/dl"
 sub() { sed -e "s|__BASE_URL__|$BASE|g" -e "s|__VERSION__|$VER|g" -e "s|__PACK__|$PACK|g" -e "s|__REPO_URL__|$REPO|g" "$1"; }
 sub site/index.html > "$OUT/index.html"
 cp site/favicon.png "$OUT/favicon.png"
+cp -r site/img "$OUT/img"
 touch "$OUT/.nojekyll"
 cp widget_arena.py herramientas.py VERSION "$OUT/dl/"
 # update.json: lo que lee el boton "Buscar actualizaciones" (numero de pack, huellas sha256 y novedades)

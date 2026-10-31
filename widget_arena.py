@@ -540,12 +540,17 @@ for d in (
     os.makedirs(d, exist_ok=True)
 
 
+FIRST_RUN = False            # [PACK129] True solo en el arranque que crea la carpeta de datos (instalacion nueva)
+
+
 def _seed_first_run():
     """[PACK88] Primer arranque: copia a la carpeta de datos lo que falte de la semilla y nunca sobrescribe. Fuentes: la carpeta
     defaults/ junto al programa (repositorio) y, en un ejecutable, lo empaquetado dentro de el. Solo una vez (data/.seed_done)."""
+    global FIRST_RUN
     marker = os.path.join(DATA_DIR, ".seed_done")
     if os.path.exists(marker):
         return
+    FIRST_RUN = not os.path.exists(os.path.join(DATA_DIR, "widget_set.json"))        # [PACK129] sin estado previo: instalacion nueva
     import shutil
     srcs = [os.path.join(APP_DIR, "defaults")]
     if getattr(sys, '_MEIPASS', None):
@@ -559,6 +564,8 @@ def _seed_first_run():
             rel = os.path.relpath(r, s)
             dst_dir = ROOT_DATA_DIR if rel == '.' else os.path.join(ROOT_DATA_DIR, rel)
             for f in fs:
+                if rel == '.' and f.lower() == 'config.json':          # [PACK129] los valores iniciales no se copian: se aplican (ver _apply_seed_config)
+                    continue
                 dst = os.path.join(dst_dir, f)
                 if not os.path.exists(dst):
                     try:
@@ -9844,18 +9851,18 @@ class TemplateBrowser(QWidget):
         self.reload()
 
     def _import(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Importar widget guardado", DATA_DIR, "JSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "Importar widget guardado", DATA_DIR,
+                                              "Widgets y formas de papel (*.wawidget *.wapaper *.json);;Todos (*)")
         if not path:
             return
         try:
-            with open(path, 'r', encoding='utf-8') as f:
-                d = json.load(f)
+            _k, d = read_file_any(path)
             if not isinstance(d, dict):
                 raise ValueError("no es un widget guardado (la ra\u00edz debe ser un objeto)")
         except Exception as e:
             self.status.setText(f"No se pudo importar: {e}")
             return
-        n = self._unique(self.m._tpl_safe_name(os.path.basename(path)) or "importado.json")
+        n = self._unique(self.m._tpl_safe_name(wa_stem(path)) or "importado.json")
         self.m.save_template(n, d)
         self.reload(n)
 
@@ -9863,16 +9870,11 @@ class TemplateBrowser(QWidget):
         """[PACK96] Guarda en un .json el template seleccionado (o el aspecto en uso seleccionado)."""
         if not self._data:
             return
-        base = self._name or "aspecto_en_uso.json"
-        path, _ = QFileDialog.getSaveFileName(self, "Exportar widget guardado", os.path.join(DATA_DIR, base), "JSON (*.json)")
+        base = wa_stem(self._name or "aspecto_en_uso") + ".wawidget"
+        path, _flt = QFileDialog.getSaveFileName(self, "Exportar widget guardado", os.path.join(DATA_DIR, base), WA_FILTER['widget'])
         if path:
-            if not os.path.splitext(path)[1]:
-                path += ".json"
             try:
-                _td = copy.deepcopy(self._data)
-                n_img, _sk = embed_images_b64(_td)                       # [PACK126] las imagenes viajan dentro del archivo
-                with open(path, 'w', encoding='utf-8') as f:
-                    json.dump(_td, f, indent=4, ensure_ascii=False)
+                path, n_img, _sk = wa_export_template(path, self._data, 'widget', _flt)          # [PACK130] .wawidget: comprimido, con sus imagenes
             except (OSError, TypeError, ValueError) as e:
                 self.status.setText(f"No se pudo exportar: {e}")
                 return
@@ -10422,6 +10424,10 @@ def _previews_cli(argv):
     return 0 if not fail else 1
 
 
+CONFIG_NO_RESTORE = ('current_profile', 'profile_slots', 'gesture_hints')       # [PACK129] ajustes de la sesion: ni en copias ni en la configuracion inicial
+INSTALL_DEFAULTS_SKIP = CONFIG_NO_RESTORE
+
+
 class BackupRestoreDialog(QDialog):
     """[PACK71] Recuperar copias de seguridad (zip completas y copias automaticas): set activo, perfiles y templates."""
 
@@ -10468,6 +10474,8 @@ class BackupRestoreDialog(QDialog):
         rp.addWidget(self.chk_tpl)
         self.chk_img = QCheckBox("")                      # [PACK125]
         rp.addWidget(self.chk_img)
+        self.chk_cfg = QCheckBox("")                      # [PACK129]
+        rp.addWidget(self.chk_cfg)
         self.btn = QPushButton("Restaurar lo marcado")
         self.btn.setStyleSheet("QPushButton{font-weight:bold;padding:6px;}")
         right.addWidget(self.btn)
@@ -10774,12 +10782,13 @@ class BackupRestoreDialog(QDialog):
         d = self._data()
         self.lst_prof.clear()
         ok = d is not None
-        for w in (self.chk_active, self.chk_tpl, self.chk_img, self.btn):
+        for w in (self.chk_active, self.chk_tpl, self.chk_img, self.chk_cfg, self.btn):
             w.setEnabled(ok)
         if not ok:
             self.chk_active.setText("")
             self.chk_tpl.setText("")
             self.chk_img.setText("")
+            self.chk_cfg.setText("")
             self.cb_src.clear()
             self.lst_diff.clear()
             self.lbl_sum.setText("")
@@ -10810,6 +10819,21 @@ class BackupRestoreDialog(QDialog):
             self.chk_img.setText("Esta copia no lleva im\u00e1genes (es de antes de que las copias las incluyeran)" if d.get('zip') else "Im\u00e1genes: esta copia no las lleva")
         self.chk_img.setEnabled(bool(miss_img))
         self.chk_img.setChecked(bool(miss_img))
+        _bk = self.m._restorable_settings(d.get('settings'))                # [PACK129] ajustes (cables...) y atajos que la copia tiene distintos de los actuales
+        _cur = self.m._restorable_settings(self.m.global_state)
+        n_set = sum(1 for k, v in _bk.items() if _cur.get(k) != v)
+        hk_diff = False
+        if isinstance(d.get('hotkeys'), dict):
+            _a, _b = self.m.hotkeys.cfg_snapshot(), d['hotkeys']
+            hk_diff = any(json.dumps(_a.get(k), sort_keys=True) != json.dumps(_b.get(k, {}), sort_keys=True) for k in ('hotkeys', 'menu_keys', 'tray_gestures'))
+        if not (d.get('settings') or d.get('hotkeys')):
+            self.chk_cfg.setText("Configuraci\u00f3n y atajos: esta copia no los lleva")
+        elif n_set or hk_diff:
+            self.chk_cfg.setText("Configuraci\u00f3n y atajos de la copia (%s de los actuales%s)" % ((("%d ajuste distinto" if n_set == 1 else "%d ajustes distintos") % n_set), ", y los atajos" if hk_diff else ""))
+        else:
+            self.chk_cfg.setText("Configuraci\u00f3n y atajos: son iguales que los actuales")
+        self.chk_cfg.setEnabled(bool(n_set or hk_diff))
+        self.chk_cfg.setChecked(False)
         self.info.setText(self.items[self.lst.currentRow()]['label'] + "\nAntes de restaurar el set activo se hace una copia completa de lo actual, y el cambio se puede deshacer con Ctrl+Alt+Z.")
         self.status.setText("")
         self._fill_combos(d)
@@ -10824,13 +10848,14 @@ class BackupRestoreDialog(QDialog):
         act = self.chk_active.isChecked()
         tpl = self.chk_tpl.isChecked()
         img = self.chk_img.isChecked()
-        if not (act or names or tpl or img):
+        cfg = self.chk_cfg.isChecked()
+        if not (act or names or tpl or img or cfg):
             self.status.setText("No hay nada marcado.")
             return
         if act and QMessageBox.question(self, "Restaurar set activo", "Se sustituir\u00e1n los widgets actuales por los de la copia. \u00bfContinuar?",
                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
-        msg = self.m.restore_backup(d, act, names, tpl, img)      # [PACK119] el aviso va despues de volver a seleccionar (que limpia la pantalla)
+        msg = self.m.restore_backup(d, act, names, tpl, img, cfg)      # [PACK119] el aviso va despues de volver a seleccionar (que limpia la pantalla)
         self._select(self.lst.currentRow())
         self.status.setText(msg)
 
@@ -11449,7 +11474,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 128                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 130                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -12623,6 +12648,115 @@ def embed_images_b64(td):
     return len(imgs), skipped
 
 
+# [PACK130] Archivos propios de Widget Arena. Son un .zip con: wa.json (que es: tipo, version del programa), data.json (lo mismo que llevaba el .json de
+# siempre, pero sin imagenes dentro) y las imagenes en images/, sticky/ y frames/. Se reconocen por el contenido, no por la extension.
+WA_FILE_FORMAT = "widget-arena-file"
+WA_FILE_EXT = {'set': '.waset', 'widget': '.wawidget', 'paper': '.wapaper'}
+WA_FILTER = {'set': "Widgets de Widget Arena (*.waset);;JSON antiguo (*.json)",
+             'widget': "Widget guardado (*.wawidget);;JSON antiguo (*.json)",
+             'paper': "Forma de papel (*.wapaper);;JSON antiguo (*.json)"}
+WA_OPEN_FILTER = "Archivos de Widget Arena (*.waset *.wawidget *.wapaper);;JSON (*.json);;Todos (*)"
+WA_MAX_JSON = 64 << 20
+
+
+def wa_file_kind(path):
+    """'set' | 'widget' | 'paper' si es un archivo .waset / .wawidget / .wapaper; None si no (un .json, una copia .zip, un pack...)."""
+    import zipfile
+    try:
+        if not zipfile.is_zipfile(path):
+            return None
+        with zipfile.ZipFile(path) as z:
+            if 'wa.json' not in z.namelist() or z.getinfo('wa.json').file_size > 100000:
+                return None
+            man = json.loads(z.read('wa.json').decode('utf-8'))
+    except (OSError, ValueError, zipfile.BadZipFile, KeyError):
+        return None
+    if not isinstance(man, dict) or man.get('format') != WA_FILE_FORMAT or man.get('kind') not in WA_FILE_EXT:
+        return None
+    return man['kind']
+
+
+def wa_out_path(path, kind, flt=''):
+    """(ruta, es_json): respeta .json y las extensiones propias; si no hay extension pone la del filtro elegido (.json si eligio JSON) o la del tipo."""
+    path = str(path)
+    ext = os.path.splitext(path)[1].lower()
+    if ext == '.json':
+        return path, True
+    if ext in WA_FILE_EXT.values():
+        return path, False
+    if '*.json' in str(flt) and '*.wa' not in str(flt):
+        return path + '.json', True
+    return path + WA_FILE_EXT[kind], False
+
+
+def wa_stem(path):
+    """Nombre del archivo sin la extension propia (ni .json)."""
+    b = os.path.basename(str(path))
+    root, ext = os.path.splitext(b)
+    return root if ext.lower() in tuple(WA_FILE_EXT.values()) + ('.json',) else b
+
+
+def wa_file_write(path, kind, data, imgs=None):
+    """Escribe un archivo propio. data: lo que iria en el .json; imgs: {'images/x.png': bytes}."""
+    import zipfile
+    man = {'format': WA_FILE_FORMAT, 'format_version': 1, 'kind': kind, 'app_pack': APP_PACK,
+           'created': datetime.datetime.now().isoformat(timespec='seconds'), 'images': len(imgs or {})}
+    tmp = str(path) + '.tmp'
+    with zipfile.ZipFile(tmp, 'w') as z:
+        z.writestr('wa.json', json.dumps(man, indent=2).encode('utf-8'), zipfile.ZIP_DEFLATED)
+        z.writestr('data.json', json.dumps(data, indent=2, ensure_ascii=False, default=str).encode('utf-8'), zipfile.ZIP_DEFLATED)
+        for k in sorted(imgs or {}):
+            z.writestr(k, imgs[k], zipfile.ZIP_STORED)
+    os.replace(tmp, str(path))
+
+
+def wa_file_read(path):
+    """(tipo, datos) de un archivo propio. Los datos llevan, como si vinieran del portapapeles, el marcador de imagenes apuntando al propio archivo
+    ('__config__.imagenes_zip' en un set, '__imagenes_zip__' en un widget guardado): al importar se traen sin pisar nada."""
+    import zipfile
+    kind = wa_file_kind(path)
+    if kind is None:
+        raise ValueError("no es un archivo de Widget Arena")
+    with zipfile.ZipFile(path) as z:
+        if z.getinfo('data.json').file_size > WA_MAX_JSON:
+            raise ValueError("el archivo es demasiado grande")
+        data = json.loads(z.read('data.json').decode('utf-8'))
+    if not isinstance(data, dict):
+        raise ValueError("el archivo no contiene datos validos")
+    if kind == 'set':
+        cfg = data.get('__config__')
+        if not isinstance(cfg, dict):
+            cfg = data['__config__'] = {}
+        cfg['imagenes_zip'] = str(path)
+    else:
+        data['__imagenes_zip__'] = str(path)
+
+    return kind, data
+
+
+def read_file_any(path):
+    """(tipo | None, dict) de un archivo para importar: un archivo propio (.waset / .wawidget / .wapaper) o un .json de los de siempre."""
+    if wa_file_kind(path):
+        return wa_file_read(path)
+    with open(path, 'r', encoding='utf-8') as f:
+        return None, json.load(f)
+
+
+def wa_export_template(path, td, kind='widget', flt=''):
+    """Guarda un widget guardado o una forma de papel: .wawidget / .wapaper (comprimido, con las imagenes que use) o .json (con ellas en base64).
+    Devuelve (ruta, cuantas imagenes, [las que no se pudieron incluir])."""
+    path, as_json = wa_out_path(path, kind, flt)
+    td = copy.deepcopy(td)
+    if as_json:
+        n, sk = embed_images_b64(td)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(td, f, indent=4, ensure_ascii=False)
+        return path, n, sk
+    imgs, sk = tree_collect_images({'x': {'template_data': td}})
+    wa_file_write(path, kind, td, imgs)
+    return path, len(imgs), sk
+
+
 def import_template_images(td):
     """[PACK126] Inversa: quita de un widget guardado '__imagenes__' / '__imagenes_zip__', deja las imagenes en la carpeta de datos (sin pisar) y reapunta
     las rutas. Devuelve cuantas imagenes se trajeron."""
@@ -12645,9 +12779,11 @@ def import_template_images(td):
 def import_embedded_images(cfg, notes):
     """Deja en la carpeta de datos las imagenes que viajan dentro de un archivo exportado (cfg['imagenes'] = {'images/x.png': base64}) sin pisar
     nada (si ya hay otra con ese nombre entra con otro) y reapunta las capas de 'notes'. Devuelve (nuevas, ya_estaban)."""
+    zr = clip_take_images(cfg.get('imagenes_zip'), [notes]) if isinstance(cfg, dict) and cfg.get('imagenes_zip') else None      # [PACK130]
+    z_new, z_same = zr if zr else (0, 0)
     imgs = cfg.get('imagenes') if isinstance(cfg, dict) else None
     if not isinstance(imgs, dict) or not imgs:
-        return 0, 0
+        return z_new, z_same
     import base64
     import binascii
     new = same = total = 0
@@ -12685,7 +12821,7 @@ def import_embedded_images(cfg, notes):
         if chosen and chosen != d:
             renames['/'.join(parts)] = '/'.join(parts[:-1] + [os.path.basename(chosen)])
     import_fix_paths(notes, renames)
-    return new, same
+    return new + z_new, same + z_same
 
 
 def import_missing_images(notes):
@@ -13675,8 +13811,8 @@ class DataHubWindow(QDialog):
                   "Crea otro set con una copia de lo que ves ahora y, si quieres, le asigna una tecla Alt + N. Nunca sobrescribe otro set."),
                  ("Cargar un set  \u25be", [(n, (lambda n=n: m._load_profile_dialog(n))) for n in names], "El set activo se aparta y se guarda", "Cargar",
                   "Cambia a otro set guardado. El set que tienes ahora se aparta en memoria y se guarda."),
-                 ("Exportar los widgets del set activo...", m.export_state, "Archivo .json con las im\u00e1genes dentro", "Llevar a otro equipo",
-                  "Crea un archivo .json con los widgets que ves ahora y sus im\u00e1genes dentro, para abrirlo en otro equipo o compartirlo. No es un set guardado: "
+                 ("Exportar los widgets del set activo...", m.export_state, "Archivo .waset con las im\u00e1genes dentro", "Llevar a otro equipo",
+                  "Crea un archivo .waset (comprimido) con los widgets que ves ahora y sus im\u00e1genes dentro, para abrirlo en otro equipo o compartirlo. No es un set guardado: "
                   "en el otro equipo se carga con \u00abCargar un archivo\u00bb."),
                  ("Recuperar sets de una copia de seguridad...", lambda: m.show_backup_restore(), "Los sets eliminados vuelven sin pisar los existentes", "Recuperar",
                   "Abre una copia (completa .zip o autom\u00e1tica) y trae sets borrados o versiones anteriores, sin pisar los que ya existen."),
@@ -13712,15 +13848,18 @@ class DataHubWindow(QDialog):
                   "Elige una de esas copias y vuelve a ella; antes se guarda la configuraci\u00f3n actual."),
                  ("Abrir el editor de atajos de teclado", m.show_hotkeys, None, "Editar",
                   "Teclas, gestos del icono de la bandeja y esquemas de atajos (hotkeys.json y la carpeta de esquemas)."),
+                 ("Guardar mi configuraci\u00f3n como la de las instalaciones nuevas...", m.save_install_defaults, "Crea defaults/config.json", "Instalaciones nuevas",
+                  "Para quien reparte el programa: ajusta cables (grosor, peso, tama\u00f1o, curvatura...), jerarqu\u00eda, tonos y atajos a tu gusto, pulsa esto y deja el archivo "
+                  "config.json en la carpeta defaults. Se aplica solo en el primer arranque de una instalaci\u00f3n nueva."),
                  self._folder(cd)])
 
     def _sec_files(self):
         m = self.m
-        return ("Para llevar tus widgets a otro PC o compartirlos: se exportan a un archivo .json y se importan agreg\u00e1ndolos o reemplazando todo. "
-                "Las im\u00e1genes que usan viajan dentro del archivo.",
+        return ("Para llevar tus widgets a otro PC o compartirlos: se exportan a un archivo .waset (comprimido, con sus im\u00e1genes dentro) y se importan agreg\u00e1ndolos o reemplazando todo. "
+                "Los widgets guardados van en .wawidget, las formas de papel en .wapaper y varios a la vez en un pack .wapack. Los .json de antes tambi\u00e9n se leen.",
                 DATA_DIR, ["Archivo de trabajo actual: " + GLOBAL_STATE_FILE],
                 [("Exportar todos los widgets a un archivo...", m.export_state, "Puede incluir la configuraci\u00f3n", "Sacar de la aplicaci\u00f3n",
-                  "Crea un archivo .json con los widgets del set activo y sus im\u00e1genes dentro; puede incluir tambi\u00e9n la configuraci\u00f3n."),
+                  "Crea un archivo .waset con los widgets del set activo y sus im\u00e1genes dentro; puede incluir tambi\u00e9n la configuraci\u00f3n."),
                  ("Agregar widgets desde un archivo...", lambda: m.import_state(replace=False), None, "Meter en la aplicaci\u00f3n",
                   "Suma los widgets del archivo a los que ya tienes en el set activo."),
                  ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None, "Meter en la aplicaci\u00f3n",
@@ -16277,7 +16416,7 @@ class BaseNoteDialog(QDialog):
                              ("Pegar widget guardado", self._tpl_paste, "Aplica aqu\u00ed un widget guardado copiado (tambi\u00e9n vale el JSON copiado en la ventana de widgets guardados), con su texto"),
                              ("Copiar forma de papel", self._style_copy, "Copia al portapapeles solo la forma de papel (JSON): forma, colores y esquinas, sin el texto"),
                              ("Pegar forma de papel", self._style_paste, "Aplica una forma de papel copiada a esta nota, manteniendo su texto"),
-                             ("Exportar...", self._tpl_export, "Guarda el widget guardado completo de esta nota en un archivo .json")):
+                             ("Exportar...", self._tpl_export, "Guarda esta forma de papel en un archivo .wapaper (comprimido); tambi\u00e9n se puede guardar como .json")):
             b_ = QPushButton(txt)
             b_.setToolTip(tip)
             b_.clicked.connect(lambda _c=False, f=fn: f())
@@ -16777,16 +16916,12 @@ class BaseNoteDialog(QDialog):
 
     def _tpl_export(self):
         """[PACK97] Guarda el template completo en un archivo .json."""
-        base = (self.cb_styles.currentText() if self.cb_styles.currentData() else "nota_base") + ".json"
-        path, _ = QFileDialog.getSaveFileName(self, "Exportar widget guardado", os.path.join(DATA_DIR, base), "JSON (*.json)")
+        base = (self.cb_styles.currentText() if self.cb_styles.currentData() else "nota_base") + ".wapaper"
+        path, _flt = QFileDialog.getSaveFileName(self, "Exportar forma de papel", os.path.join(DATA_DIR, base), WA_FILTER['paper'])
         if not path:
             return
-        if not os.path.splitext(path)[1]:
-            path += ".json"
         try:
-            txt = self._tpl_json()
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(txt)
+            path = wa_export_template(path, json.loads(self._tpl_json()), 'paper', _flt)[0]          # [PACK130] .wapaper: comprimido
         except (OSError, TypeError, ValueError) as e:
             QMessageBox.warning(self, "Exportar", "No se pudo exportar:\n%s" % e)
             return
@@ -17213,6 +17348,7 @@ class WidgetManager(QObject):
         self.load_global_state()
         if not self.global_state:
             self._first_run_default()
+        self._apply_seed_config()
         
         self.build_tray_menu()
 
@@ -19108,7 +19244,8 @@ class WidgetManager(QObject):
         tpl_menu = QMenu("Widget guardado", aspect_menu)
         add(tpl_menu, "Cambiar por otro widget guardado...", lambda: self._change_widget_template(widget_id))
         add(tpl_menu, "Guardar este widget...", lambda: self.save_widget_as_template(widget_id))
-        add(tpl_menu, "Exportar el widget guardado...", lambda: self._export_widget_template(widget_id))
+        add(tpl_menu, "Exportar el widget guardado...", lambda: self._export_widget_template(widget_id),
+            tip="Guarda este widget en un archivo .wawidget (comprimido, con sus im\u00e1genes)")
         tpl_menu.addSeparator()
         add(tpl_menu, "Copiar widget guardado (json)", lambda: self._copy_widget_template(widget_id))       # [PACK96]
         add(tpl_menu, "Pegar widget guardado (json)", lambda: self._paste_widget_data(widget_id, True),         # [PACK98]
@@ -19124,6 +19261,11 @@ class WidgetManager(QObject):
                 tip="Reabre el editor de forma de papel con los par\u00e1metros de este widget y regenera su imagen")
         sty_menu.addSeparator()
 
+        add(sty_menu, "Exportar forma de papel a un archivo...", lambda: self._export_widget_style(widget_id),
+            tip="Guarda solo el aspecto (sin el texto ni la posici\u00f3n) en un archivo .wapaper")
+        add(sty_menu, "Aplicar forma de papel desde un archivo...", lambda: self._paste_style_from_file(widget_id),
+            tip="Aplica a este widget una forma de papel guardada en un archivo (.wapaper o .json) y conserva su texto")
+        sty_menu.addSeparator()
         add(sty_menu, "Copiar forma de papel (json)", lambda: self._copy_widget_style(widget_id),
             tip="Copia solo el aspecto (sin el texto ni la posici\u00f3n) como JSON")
         add(sty_menu, "Pegar forma de papel (json)", lambda: self._paste_widget_data(widget_id, False),
@@ -19514,14 +19656,14 @@ class WidgetManager(QObject):
 
     def _change_widget_template_from_file(self, widget_id):
         parent_widget = self.widgets.get(widget_id) 
-        path, _ = QFileDialog.getOpenFileName(parent_widget, "Seleccionar widget guardado (JSON)", DATA_DIR, "JSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(parent_widget, "Seleccionar widget guardado", DATA_DIR,
+                                              "Widgets y formas de papel (*.wawidget *.wapaper *.json);;Todos (*)")
         if not path:
             return
-            
+
         try:
-            with open(path, 'r', encoding='utf-8') as f:
-                template_data = json.load(f)
-            
+            _k, template_data = read_file_any(path)
+            import_template_images(template_data)             # [PACK130] las im\u00e1genes que traiga el archivo
             if 'geometry' not in template_data:
                 template_data['geometry'] = {}
                 
@@ -19545,17 +19687,14 @@ class WidgetManager(QObject):
     def _export_widget_template(self, widget_id):
         parent_widget = self.widgets.get(widget_id) 
         template_data = self.global_state[widget_id]['template_data']
-        default_name = f"{self.global_state[widget_id].get('template_name', 'exportado')}.json"
-        
-        path, _ = QFileDialog.getSaveFileName(parent_widget, "Exportar widget guardado", os.path.join(DATA_DIR, default_name), "JSON (*.json)")
+        default_name = wa_stem(self.global_state[widget_id].get('template_name', 'exportado')) + ".wawidget"
+
+        path, _flt = QFileDialog.getSaveFileName(parent_widget, "Exportar widget guardado", os.path.join(DATA_DIR, default_name), WA_FILTER['widget'])
         if not path:
             return
-            
+
         try:
-            template_data = copy.deepcopy(template_data)
-            n_img, skipped = embed_images_b64(template_data)          # [PACK126] las imagenes viajan dentro del archivo
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(template_data, f, indent=4)
+            path, n_img, skipped = wa_export_template(path, template_data, 'widget', _flt)          # [PACK130] .wawidget: comprimido, con sus imagenes
             print(f"INFO [{widget_id}]: Widget guardado exportado a {path}")
             self._osd("Widget guardado exportado%s%s" % ((" (con %d im\u00e1genes)" % n_img) if n_img else "",
                                                        ("; no se pudieron incluir: " + ", ".join(skipped[:4])) if skipped else ""), 2600)
@@ -19602,6 +19741,56 @@ class WidgetManager(QObject):
             return None
         return d
 
+    def _widget_style_td(self, widget_id):
+        """[PACK130] El aspecto de un widget sin posicion ni texto (lo que copia 'Copiar forma de papel'), o None."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict) or not isinstance(st.get('template_data'), dict):
+            return None
+        td = copy.deepcopy(st['template_data'])
+        if isinstance(td.get('geometry'), dict):
+            td['geometry'].pop('x', None)
+            td['geometry'].pop('y', None)
+        l1 = td.get('layer1')
+        if isinstance(l1, dict) and l1.get('type', 'text') == 'text':
+            l1['content'] = ''
+        if isinstance(td.get('base_note'), dict):
+            td['base_note'].pop('text', None)
+        return td
+
+    def _export_widget_style(self, widget_id):
+        """[PACK130] Guarda la forma de papel de este widget en un archivo .wapaper (comprimido; la imagen de la forma no se guarda: se redibuja)."""
+        td = self._widget_style_td(widget_id)
+        if td is None:
+            return None
+        parent = self.widgets.get(widget_id) or self.dialog_parent
+        base = wa_stem(self._tree_label(widget_id) if hasattr(self, '_tree_label') else 'forma') + ".wapaper"
+        path, _flt = QFileDialog.getSaveFileName(parent, "Exportar forma de papel", os.path.join(DATA_DIR, HotkeyManager.safe_profile_name(base) or "forma.wapaper"), WA_FILTER['paper'])
+        if not path:
+            return None
+        try:
+            path, n_img, skipped = wa_export_template(path, td, 'paper', _flt)
+        except Exception as e:
+            log_error("Exportar", "No se pudo exportar la forma de papel: %s" % e)
+            QMessageBox.critical(parent, "Exportar forma de papel", "No se pudo guardar el archivo:\n%s" % e)
+            return None
+        self._osd("Forma de papel exportada: %s%s" % (os.path.basename(path), (" (con %d im\u00e1genes)" % n_img) if n_img else ""), 2600)
+        return path
+
+    def _paste_style_from_file(self, widget_id):
+        """[PACK130] Aplica a este widget una forma de papel guardada en un archivo (.wapaper o .json); conserva su texto y su posicion."""
+        parent = self.widgets.get(widget_id) or self.dialog_parent
+        path, _ = QFileDialog.getOpenFileName(parent, "Aplicar forma de papel", DATA_DIR, "Formas de papel (*.wapaper *.wawidget *.json);;Todos (*)")
+        if not path:
+            return False
+        try:
+            _k, data = read_file_any(path)
+            if not isinstance(data, dict) or not any(isinstance(data.get(k), dict) for k in ('layer1', 'layer2', 'base_note')):
+                raise ValueError("no parece una forma de papel")
+        except Exception as e:
+            QMessageBox.warning(parent, "Aplicar forma de papel", "No se pudo leer el archivo:\n%s" % e)
+            return False
+        return self._paste_widget_data(widget_id, False, data=data)
+
     def _copy_widget_style(self, widget_id):
         """[PACK98] Copia el estilo del widget (su template sin posicion ni texto) como JSON."""
         st = self.global_state.get(widget_id)
@@ -19626,13 +19815,14 @@ class WidgetManager(QObject):
         QApplication.clipboard().setText(txt)
         self._osd("Forma de papel del widget copiada (JSON)" + (" (con %d im\u00e1genes)" % n_img if n_img else ""))
 
-    def _paste_widget_data(self, widget_id, with_content):
+    def _paste_widget_data(self, widget_id, with_content, data=None):
         """[PACK98] Pega el JSON del portapapeles en este widget. with_content=True: template completo (con su texto);
         False: solo el estilo (el widget conserva su texto). La posicion no cambia. Si algo falla se deja el widget como estaba."""
         st = self.global_state.get(widget_id)
         if not isinstance(st, dict) or not isinstance(st.get('template_data'), dict):
             return False
-        data = self._clip_widget_data()
+        if data is None:
+            data = self._clip_widget_data()
         if data is None:
             self._osd("El portapapeles no contiene un widget guardado (JSON)" if with_content else "El portapapeles no contiene una forma de papel (JSON)", 2800)
             return False
@@ -21517,7 +21707,7 @@ class WidgetManager(QObject):
 
     def read_backup(self, path):
         import zipfile
-        out = {'notes': None, 'profiles': {}, 'templates': {}, 'zip': None, 'media': []}
+        out = {'notes': None, 'profiles': {}, 'templates': {}, 'zip': None, 'media': [], 'settings': {}, 'hotkeys': None}
         try:
             if path.lower().endswith('.zip'):
                 with zipfile.ZipFile(path) as z:
@@ -21531,7 +21721,11 @@ class WidgetManager(QObject):
                             raw = z.read(n).decode('utf-8')
                             base = os.path.basename(n)
                             if n == 'data/widget_set.json':
-                                out['notes'] = self._only_notes(json.loads(raw))
+                                _w = json.loads(raw)
+                                out['notes'] = self._only_notes(_w)
+                                out['settings'] = {k: v for k, v in _w.items() if not isinstance(v, dict)}           # [PACK129] cables, jerarquia, tonos...
+                            elif n == 'data/hotkeys.json':
+                                out['hotkeys'] = json.loads(raw)
                             elif n.startswith('profiles/') and n.lower().endswith('.json'):
                                 out['profiles'][base[:-5]] = json.loads(raw)
                             elif n.startswith('sets_en_memoria/') and n.lower().endswith('.json'):
@@ -21542,7 +21736,9 @@ class WidgetManager(QObject):
                             log_warn("Manager", f"Copia: {n}: {e_n}")
             else:
                 with open(path, 'r', encoding='utf-8') as f:
-                    out['notes'] = self._only_notes(json.load(f))
+                    _w = json.load(f)
+                out['notes'] = self._only_notes(_w)
+                out['settings'] = {k: v for k, v in _w.items() if not isinstance(v, dict)}
         except Exception as e:
             log_warn("Manager", f"No se pudo leer la copia {path}: {e}")
 
@@ -21553,7 +21749,13 @@ class WidgetManager(QObject):
         mismo nombre entra con otro). Devuelve (copiadas, ya_estaban, {ruta_vieja: ruta_nueva})."""
         return media_from_zip(zpath, names)
 
-    def restore_backup(self, data, active=False, profiles=(), templates=False, images=False):
+    @staticmethod
+    def _restorable_settings(settings):
+        """[PACK129] Ajustes de una copia que se pueden volver a poner: todos menos los que son del equipo o de la sesion (Telegram, ranuras...)."""
+        return {k: copy.deepcopy(v) for k, v in (settings or {}).items()
+                if not isinstance(v, dict) and not str(k).startswith('telegram') and k not in CONFIG_NO_RESTORE}
+
+    def restore_backup(self, data, active=False, profiles=(), templates=False, images=False, config=False):
         """[PACK71] Restaura lo elegido de una copia (leida con read_backup). Devuelve un resumen.
         [PACK125] Si la copia lleva imagenes, se traen las de lo elegido (o todas las que faltan si se marca 'images')."""
         msg = []
@@ -21596,6 +21798,12 @@ class WidgetManager(QObject):
             self._apply_collapse_visibility()
             self._refresh_connector_overlay()
             msg.append("set activo: %d widgets" % len(notes))
+            _sc = self._restorable_settings(data.get('settings'))
+            if _sc:                                                    # [PACK129] los ajustes de cables... son del set: vuelven con el
+                self._apply_profile_scalars(_sc)
+                self.save_global_state(record_history=False)
+                self._refresh_connector_overlay()
+                msg.append("ajustes del set (cables...)")
 
         done = []
         for name in profiles:
@@ -21633,6 +21841,13 @@ class WidgetManager(QObject):
                     n += 1
             msg.append("widgets guardados: %d" % n)
 
+        if config and (data.get('settings') or data.get('hotkeys')):       # [PACK129] configuracion y atajos de la copia
+            try:
+                self._apply_config({'settings': self._restorable_settings(data.get('settings')), 'hotkeys': data.get('hotkeys')}, backup=True)
+                msg.append("configuraci\u00f3n y atajos")
+            except Exception as e_c:
+                log_warn("Manager", f"No se pudo restaurar la configuracion de la copia: {e_c}")
+                msg.append("no se pudo restaurar la configuraci\u00f3n")
         self.build_tray_menu()
         tb = getattr(self, 'template_browser', None)
         if tb is not None:
@@ -22098,19 +22313,23 @@ class WidgetManager(QObject):
         if not notes:
             return None
         safe = HotkeyManager.safe_profile_name(self._tree_label(widget_id)) or "arbol"
-        path, _ = QFileDialog.getSaveFileName(parent, "Exportar \u00e1rbol de widgets", os.path.join(DATA_DIR, safe + ".json"), "JSON (*.json)")
+        path, _flt = QFileDialog.getSaveFileName(parent, "Exportar \u00e1rbol de widgets", os.path.join(DATA_DIR, safe + ".waset"), WA_FILTER['set'])
         if not path:
             return None
         try:
+            path, as_json = wa_out_path(path, 'set', _flt)
             imgs, skipped = tree_collect_images(notes)
-            import base64
             data = dict(notes)
-            data['__config__'] = {"arbol": {"raiz": widget_id, "widgets": len(notes), "app_pack": APP_PACK},
-                                  "imagenes": {k: base64.b64encode(v).decode('ascii') for k, v in imgs.items()}}
-            tmp = path + ".tmp"
-            with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-            os.replace(tmp, path)
+            data['__config__'] = {"arbol": {"raiz": widget_id, "widgets": len(notes), "app_pack": APP_PACK}}
+            if as_json:                                       # el .json de siempre: imagenes en base64
+                import base64
+                data['__config__']["imagenes"] = {k: base64.b64encode(v).decode('ascii') for k, v in imgs.items()}
+                tmp = path + ".tmp"
+                with open(tmp, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+                os.replace(tmp, path)
+            else:                                             # [PACK130] .waset: comprimido, con las imagenes dentro
+                wa_file_write(path, 'set', data, imgs)
         except Exception as e:
             log_error("Exportar", "No se pudo exportar el arbol: %s" % e)
             QMessageBox.critical(parent, "Exportar \u00e1rbol", "No se pudo guardar el archivo:\n%s" % e)
@@ -22343,7 +22562,7 @@ class WidgetManager(QObject):
 
     def load_anything_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self.dialog_parent, "Cargar un archivo", DATA_DIR,
-                                              "Todo lo que se puede cargar (*.json *.zip);;Todos (*)")
+                                              "Todo lo que se puede cargar (*.waset *.wawidget *.wapaper *.wapack *.json *.zip);;Todos (*)")
         if path:
             return self.load_anything(path)
         return None
@@ -22362,7 +22581,14 @@ class WidgetManager(QObject):
         if _pk is not None:
             self.show_packs(install=path)
             return 'pack'
-        if path.lower().endswith('.zip'):
+        raw = None
+        if wa_file_kind(path):                  # [PACK130] .waset / .wawidget / .wapaper
+            try:
+                _wk, raw = wa_file_read(path)
+            except Exception as e:
+                QMessageBox.warning(parent, "Cargar archivo", f"No se pudo leer el archivo:\n{e}")
+                return None
+        elif path.lower().endswith('.zip'):
             if not zipfile.is_zipfile(path):
                 QMessageBox.warning(parent, "Cargar archivo", "El .zip no es una copia de seguridad v\u00e1lida.")
                 return None
@@ -22370,12 +22596,13 @@ class WidgetManager(QObject):
             dlg.add_backup(path)
             dlg.exec()
             return 'copia'
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                raw = json.load(f)
-        except Exception as e:
-            QMessageBox.warning(parent, "Cargar archivo", f"No se pudo leer el archivo:\n{e}")
-            return None
+        if raw is None:
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    raw = json.load(f)
+            except Exception as e:
+                QMessageBox.warning(parent, "Cargar archivo", f"No se pudo leer el archivo:\n{e}")
+                return None
 
         kind = self._sniff_file(raw)
         if kind == 'template':
@@ -22383,7 +22610,7 @@ class WidgetManager(QObject):
             l2 = (raw.get('layer2') or {}).get('content', '')
             if isinstance(bp, dict) and not os.path.exists(_resolve_stored(str(l2))):
                 raw['layer2'] = self._base_note_tdata(bp)['layer2']       # la imagen no viaja en el .json: se regenera
-            safe = self._tpl_safe_name(name) or "template.json"
+            safe = self._tpl_safe_name(wa_stem(path)) or "template.json"
             dest, i = safe, 2
             while os.path.exists(os.path.join(TEMPLATES_DIR, dest)):
                 dest = safe[:-5] + " %d.json" % i
@@ -22967,7 +23194,12 @@ class WidgetManager(QObject):
                     continue
                 total += size
                 picked.append((arc, media[arc], mt, size))
-            sig = hashlib.md5((cur + repr(prof) + "".join(res.values()) + repr([(a, m, s) for a, _r, m, s in picked])).encode('utf-8', 'replace')).hexdigest()
+            try:
+                _hs = os.stat(HOTKEYS_FILE)
+                hk_sig = repr((_hs.st_mtime_ns, _hs.st_size))
+            except OSError:
+                hk_sig = ""
+            sig = hashlib.md5((cur + repr(prof) + "".join(res.values()) + repr([(a, m, s) for a, _r, m, s in picked]) + hk_sig).encode('utf-8', 'replace')).hexdigest()
             self._last_full_backup = now
             if not manual and sig == getattr(self, '_last_full_sig', None):
                 return None
@@ -23193,6 +23425,90 @@ class WidgetManager(QObject):
             print(f"CRITICO: No se pudo cargar el estado global! {e}")
             self.global_state = {}
 
+    @staticmethod
+    def _seed_config_paths():
+        paths = [os.path.join(APP_DIR, "defaults", "config.json")]
+        if getattr(sys, '_MEIPASS', None):
+            paths.append(os.path.join(sys._MEIPASS, "defaults", "config.json"))
+        return paths
+
+    def _apply_seed_config(self):
+        """[PACK129] Primer arranque de una instalacion nueva: aplica defaults/config.json (ajustes como el grosor y el peso de los cables, el tama\u00f1o de los
+        cables, la jerarqu\u00eda, los matices... y los atajos de teclado). No pisa nada que ya exista y solo ocurre una vez."""
+        marker = os.path.join(DATA_DIR, ".config_seed_done")
+        if not FIRST_RUN or os.path.exists(marker):
+            return 0
+        cfg = None
+        for p in self._seed_config_paths():
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                break
+            except (OSError, ValueError):
+                continue
+        try:
+            with open(marker, 'w', encoding='utf-8') as f:
+                f.write("ok\n")
+        except OSError:
+            pass
+
+        if not isinstance(cfg, dict):
+            return 0
+        n = 0
+        for k, v in (cfg.get('settings') or {}).items():
+            if isinstance(v, dict) or str(k).startswith('telegram') or k in INSTALL_DEFAULTS_SKIP:
+                continue
+            if k not in self.global_state:
+                self.global_state[k] = copy.deepcopy(v)
+                n += 1
+        hk = cfg.get('hotkeys')
+        if isinstance(hk, dict) and not os.path.exists(HOTKEYS_FILE):
+            try:
+                with open(HOTKEYS_FILE, 'w', encoding='utf-8') as f:
+                    json.dump({"version": 1, "hotkeys": hk.get("hotkeys") or {}, "menu_keys": hk.get("menu_keys") or {},
+                               "tray_gestures": hk.get("tray_gestures") or {}}, f, indent=2, ensure_ascii=False)
+            except OSError as e:
+                log_warn("Manager", f"No se pudieron poner los atajos iniciales: {e}")
+        if n:
+            self.save_global_state(record_history=False)
+
+        log_info("Manager", f"Valores iniciales de la instalacion aplicados: {n} ajustes")
+        return n
+
+    def install_defaults_config(self):
+        """[PACK129] Mi configuracion actual (ajustes y atajos) tal como se guardaria como valores iniciales de una instalacion nueva."""
+        cfg = self._config_snapshot()
+        cfg['settings'] = {k: v for k, v in cfg['settings'].items() if k not in INSTALL_DEFAULTS_SKIP}
+        return cfg
+
+    def save_install_defaults(self, path=None):
+        """[PACK129] Guarda mi configuracion actual como la de las instalaciones nuevas (defaults/config.json): quien reparte el programa ajusta cables, tama\u00f1os,
+        grosor, peso... a su gusto, pulsa esto y deja el archivo en la carpeta defaults."""
+        parent = self.dialog_parent
+        if path is None:
+            d = os.path.join(APP_DIR, "defaults")
+            path, _ = QFileDialog.getSaveFileName(parent, "Guardar mi configuraci\u00f3n como la de las instalaciones nuevas",
+                                                  os.path.join(d if os.path.isdir(d) else APP_DIR, "config.json"), "JSON (*.json)")
+            if not path:
+                return None
+        self._sync_windows_to_state()
+        cfg = self.install_defaults_config()
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, path)
+        except OSError as e:
+            QMessageBox.warning(parent, "Valores iniciales", "No se pudo guardar el archivo:\n%s" % e)
+            return None
+
+        QMessageBox.information(parent, "Valores iniciales de las instalaciones nuevas",
+                                "Guardados %d ajustes (cables, jerarqu\u00eda, tonos, men\u00fas...) y los atajos de teclado en:\n%s\n\n"
+                                "Para que una instalaci\u00f3n nueva arranque as\u00ed, deja este archivo con el nombre \u00abconfig.json\u00bb dentro de la carpeta \u00abdefaults\u00bb "
+                                "junto al programa (en el repositorio: defaults/config.json). Se aplica una sola vez, en el primer arranque, y no pisa nada que ya exista."
+                                % (len(cfg['settings']), path))
+        return path
+
     def _config_snapshot(self):
         """Configuracion (no son notas): ajustes globales (cables, jerarquia, matices...) + atajos de teclado."""
         st = {k: copy.deepcopy(v) for k, v in self.global_state.items()
@@ -23277,13 +23593,13 @@ class WidgetManager(QObject):
 
     def import_state(self, replace=False):
         parent_widget = self.dialog_parent
-        path, _ = QFileDialog.getOpenFileName(parent_widget, "Agregar widgets desde un archivo", DATA_DIR, "JSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(parent_widget, "Agregar widgets desde un archivo", DATA_DIR,
+                                              "Widgets (*.waset *.json);;Todos (*)")
         if not path:
             return
 
         try:
-            with open(path, 'r', encoding='utf-8') as f:
-                new_state = json.load(f)
+            _k, new_state = read_file_any(path)
             if not isinstance(new_state, dict):
                 raise ValueError("el archivo no contiene widgets")
             cfg = new_state.pop('__config__', None)
@@ -23331,15 +23647,16 @@ class WidgetManager(QObject):
 
         except Exception as e:
             print(f"ERROR: No se pudo importar el estado desde {path}: {e}")
-            QMessageBox.critical(parent_widget, "Error de importaci\u00f3n", f"No se pudo cargar o leer el archivo JSON:\n{e}")
+            QMessageBox.critical(parent_widget, "Error de importaci\u00f3n", f"No se pudo cargar o leer el archivo:\n{e}")
 
     def export_state(self):
         parent_widget = self.dialog_parent
-        path, _ = QFileDialog.getSaveFileName(parent_widget, "Exportar todos los widgets a un archivo", DATA_DIR, "JSON (*.json)")
+        path, _flt = QFileDialog.getSaveFileName(parent_widget, "Exportar todos los widgets a un archivo", os.path.join(DATA_DIR, "mis_widgets.waset"), WA_FILTER['set'])
         if not path:
             return
 
         try:
+            path, _as_json = wa_out_path(path, 'set', _flt)
             data = copy.deepcopy({k: v for k, v in self.global_state.items() if isinstance(v, dict)})
             imgs, skipped = tree_collect_images(data)                  # [PACK126] las imagenes viajan dentro del archivo
             if QMessageBox.question(parent_widget, "Exportar widgets",
@@ -23347,18 +23664,21 @@ class WidgetManager(QObject):
                                     "Al importar el archivo se podr\u00e1 elegir si cargarla. Nunca incluye datos de Telegram.",
                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes:
                 data['__config__'] = self._config_snapshot()
-            if imgs:
-                import base64
-                if not isinstance(data.get('__config__'), dict):
-                    data['__config__'] = {}
-                data['__config__']['imagenes'] = {k: base64.b64encode(v).decode('ascii') for k, v in imgs.items()}
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4)
+            if _as_json:
+                if imgs:
+                    import base64
+                    if not isinstance(data.get('__config__'), dict):
+                        data['__config__'] = {}
+                    data['__config__']['imagenes'] = {k: base64.b64encode(v).decode('ascii') for k, v in imgs.items()}
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=4)
+            else:                                                 # [PACK130] .waset: comprimido, con las imagenes dentro
+                wa_file_write(path, 'set', data, imgs)
             self._osd("Widgets exportados%s%s" % ((" (con %d im\u00e1genes)" % len(imgs)) if imgs else "",
                                                  ("; no se pudieron incluir: " + ", ".join(skipped[:4])) if skipped else ""), 2600)
         except Exception as e:
             print(f"ERROR: No se pudo exportar los widgets a {path}: {e}")
-            QMessageBox.critical(parent_widget, "Error de exportaci\u00f3n", f"No se pudo guardar el archivo JSON:\n{e}")
+            QMessageBox.critical(parent_widget, "Error de exportaci\u00f3n", f"No se pudo guardar el archivo:\n{e}")
 
     def get_default_template_data(self):
         try:
@@ -23544,11 +23864,38 @@ class WidgetManager(QObject):
         lbl.show()
         self._osd_timer.start(ms)
 
+    def _base_scalars(self):
+        """[PACK130] Valores iniciales de los ajustes de un set: los de defaults/config.json si existe; si no, ninguno (valen los de fabrica del programa)."""
+        c = getattr(self, '_base_scalars_cache', None)
+        if c is None:
+            c = {}
+            for p in self._seed_config_paths():
+                try:
+                    with open(p, 'r', encoding='utf-8') as f:
+                        cfg = json.load(f)
+                except (OSError, ValueError):
+                    continue
+                if isinstance(cfg, dict) and isinstance(cfg.get('settings'), dict):
+                    c = {k: copy.deepcopy(v) for k, v in cfg['settings'].items()
+                         if not isinstance(v, dict) and not str(k).startswith('telegram') and k not in INSTALL_DEFAULTS_SKIP}
+                break
+            self._base_scalars_cache = c
+        return c
+
     def _apply_profile_scalars(self, scalars):
+        """[PACK130] Los ajustes (cables, jerarquia, tonos...) son de cada set. Lo que el set no trae se pone al valor inicial, no se queda con el del set anterior."""
+        skip = ('profile_slots', 'profile_autosave', 'profile_preload', 'current_profile', 'gesture_hints')
+        target = dict(self._base_scalars())
         for k, v in scalars.items():
-            if str(k).startswith('telegram') or k in ('profile_slots', 'profile_autosave', 'profile_preload', 'current_profile', 'gesture_hints'):
+            if str(k).startswith('telegram') or k in skip or isinstance(v, dict):
                 continue
-            self.global_state[k] = v        # ajustes del perfil (cables...)
+            target[k] = v
+        for k in list(self.global_state):
+            if isinstance(self.global_state.get(k), dict) or str(k).startswith('telegram') or k in skip or k in target:
+                continue
+            self.global_state.pop(k, None)
+        for k, v in target.items():
+            self.global_state[k] = copy.deepcopy(v)        # ajustes del set (cables...)
 
     def _close_quiet(self, windows):
         _q = self.app_is_quitting

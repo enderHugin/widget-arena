@@ -4,148 +4,427 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Widget Arena</title>
-<meta name="description" content="Notas y widgets enlazados con cables en tu escritorio. Instalación con un clic para Windows, macOS y Linux.">
+<meta name="description" content="Widgets sueltos por tu escritorio, unidos por cables: notas, imágenes, páginas web y botones, con formas de papel, sets y atajos. Instalación con un clic para Windows, macOS y Linux.">
 <link rel="icon" href="favicon.png">
 <style>
+  @font-face { font-family: "WA Kalam"; src: url("dl/fonts/Kalam-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+  @font-face { font-family: "WA Hand"; src: url("dl/fonts/PatrickHand-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
   :root {
-    --bg: #fbf8ef; --ink: #1f2430; --muted: #5d6475; --card: #ffffff; --line: #e6e0cd;
-    --accent: #facc15; --accent-ink: #3b2f00; --accent-strong: #e0b300; --cable: #6b7a99; --shadow: 0 10px 30px rgba(60, 45, 0, .14);
+    --desk: #143338; --desk-2: #0d252b; --desk-ink: #eef5f2; --desk-muted: #a9c2bd;
+    --page: #edf1ee; --ink: #12211f; --muted: #4b5f5b; --line: #cfdad5; --panel: #f9fbf9;
+    --teal: #1d6b66; --yellow: #facc15; --yellow-ink: #2e2500; --yellow-edge: #d9ad00;
+    --focus: #2563eb;
+    --hand: "WA Hand", "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive;
+    --head: "WA Kalam", "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive;
+    --ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #16181f; --ink: #eef0f6; --muted: #a2a9bb; --card: #1f222c; --line: #2d3140; --cable: #8d9bb8; --shadow: 0 10px 30px rgba(0, 0, 0, .45); }
+    :root { --page: #0f1c1d; --ink: #e8f1ee; --muted: #9db4af; --line: #25393a; --panel: #162728; --teal: #5cc4bb; }
   }
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-  .wrap { max-width: 980px; margin: 0 auto; padding: 0 20px; }
-  header.top { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; gap: 12px; }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .2px; }
-  .brand img { width: 34px; height: 34px; }
-  .lang { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 14px; cursor: pointer; }
-  .lang:hover { color: var(--ink); border-color: var(--muted); }
-  .hero { display: grid; grid-template-columns: 1.05fr .95fr; gap: 36px; align-items: center; padding: 28px 0 40px; }
-  h1 { font-size: clamp(34px, 5.4vw, 56px); line-height: 1.04; margin: 0 0 14px; letter-spacing: -.02em; }
-  .lead { font-size: 19px; color: var(--muted); margin: 0 0 26px; max-width: 34em; }
-  .cta { display: inline-flex; align-items: center; gap: 12px; background: var(--accent); color: var(--accent-ink); text-decoration: none; font-weight: 700;
-         font-size: 20px; padding: 16px 26px; border-radius: 14px; border: 2px solid var(--accent-strong); box-shadow: 0 4px 0 var(--accent-strong); transition: transform .08s, box-shadow .08s; }
-  .cta:hover { transform: translateY(1px); box-shadow: 0 3px 0 var(--accent-strong); }
-  .cta:active { transform: translateY(4px); box-shadow: 0 0 0 var(--accent-strong); }
-  .cta:focus-visible, a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid #3b82f6; outline-offset: 3px; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 17px/1.6 var(--ui); }
+  a { color: inherit; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+  [hidden] { display: none !important; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+  h1, h2, h3 { font-family: var(--head); font-weight: 700; line-height: 1.08; margin: 0; letter-spacing: -.01em; }
+  h2 { font-size: clamp(28px, 4vw, 40px); margin-bottom: 14px; }
+  h3 { font-size: 22px; margin-bottom: 6px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+
+  /* ---------- cabecera + portada: un escritorio ---------- */
+  .desk { background: radial-gradient(1200px 520px at 75% 40%, #1d4a4e 0%, transparent 70%), linear-gradient(180deg, var(--desk), var(--desk-2)); color: var(--desk-ink); }
+  header.top { display: flex; align-items: center; gap: 18px; padding: 16px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 700 21px var(--head); text-decoration: none; margin-right: auto; }
+  .brand img { width: 32px; height: 32px; }
+  nav.main { display: flex; gap: 20px; font-size: 15px; }
+  nav.main a { text-decoration: none; color: var(--desk-muted); padding: 4px 0; }
+  nav.main a:hover { color: var(--desk-ink); }
+  .lang { background: none; border: 1px solid #3e6a6a; color: var(--desk-muted); border-radius: 999px; padding: 6px 13px; font: inherit; font-size: 14px; cursor: pointer; }
+  .lang:hover { color: var(--desk-ink); border-color: var(--desk-muted); }
+  .hero { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 34px; align-items: center; padding: 18px 0 44px; }
+  h1 { font-size: clamp(34px, 4.1vw, 50px); margin-bottom: 16px; }
+  .lead { font-size: 19px; color: var(--desk-muted); max-width: 31em; margin-bottom: 26px; }
+  .cta { display: inline-flex; align-items: center; gap: 12px; background: var(--yellow); color: var(--yellow-ink); text-decoration: none; font-weight: 700; font-size: 20px;
+         padding: 15px 26px; border-radius: 12px; border: 2px solid var(--yellow-edge); box-shadow: 0 4px 0 var(--yellow-edge); transition: transform .08s, box-shadow .08s; }
+  .cta:hover { transform: translateY(1px); box-shadow: 0 3px 0 var(--yellow-edge); }
+  .cta:active { transform: translateY(4px); box-shadow: 0 0 0 var(--yellow-edge); }
   .cta svg { width: 24px; height: 24px; flex: none; }
-  .fine { color: var(--muted); font-size: 15px; margin: 14px 0 0; }
-  .others { margin: 18px 0 0; font-size: 15px; color: var(--muted); }
-  .others a { color: inherit; }
-  .art { position: relative; height: 270px; }
-  .note { position: absolute; background: linear-gradient(#fff3a6, #facc15); border: 2px solid #b8860b; border-radius: 6px; box-shadow: var(--shadow); padding: 14px 14px 18px; color: #2b2a20; font: 600 15px/1.35 "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive, system-ui; }
-  .note::before, .note::after { content: ""; display: block; height: 3px; border-radius: 3px; background: rgba(31, 39, 55, .55); margin: 6px 0; }
-  .note::after { width: 60%; }
-  .n1 { left: 2%; top: 10%; width: 44%; transform: rotate(-4deg); }
-  .n2 { right: 2%; top: 4%; width: 40%; transform: rotate(3deg); }
-  .n3 { right: 14%; bottom: 2%; width: 42%; transform: rotate(-2deg); }
-  .cables { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
-  .cables path { fill: none; stroke: var(--cable); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 1 9; }
-  section.block { padding: 26px 0; border-top: 1px solid var(--line); }
-  h2 { font-size: 24px; margin: 0 0 12px; letter-spacing: -.01em; }
-  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; counter-reset: s; padding: 0; margin: 0; list-style: none; }
-  .steps li { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; position: relative; counter-increment: s; }
-  .steps li::before { content: counter(s); display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-weight: 700; margin-bottom: 8px; }
+  .fine { color: var(--desk-muted); font-size: 14.5px; margin: 14px 0 0; }
+  .others a { color: var(--desk-ink); }
+  .others { margin: 6px 0 0; }
+
+  /* ---------- tablero (los widgets se arrastran) ---------- */
+  .stage { position: relative; }
+  .board { position: relative; width: 100%; height: calc(var(--bh, 440) * 1px); border-radius: 18px; background: rgba(255,255,255,.035);
+           box-shadow: inset 0 0 0 1px rgba(255,255,255,.09); touch-action: pan-y; user-select: none; -webkit-user-select: none; overflow: hidden; }
+  .set { position: absolute; inset: 0; opacity: 0; pointer-events: none; transition: opacity .35s; }
+  .set.on { opacity: 1; pointer-events: auto; }
+  .ropes { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  .ropes .shade { fill: none; stroke: #000; stroke-opacity: .28; stroke-width: 6; stroke-linecap: round; }
+  .ropes .rope { fill: none; stroke-width: 4.5; stroke-linecap: round; }
+  .ropes .twist { fill: none; stroke: #fff; stroke-opacity: .38; stroke-width: 4.5; stroke-dasharray: 2 7; stroke-linecap: butt; }
+  .ropes .knot { stroke: rgba(0,0,0,.35); stroke-width: 1.5; }
+  .w { position: absolute; width: calc(var(--w) * var(--s, 1) * 1px); font-size: calc(18px * var(--s, 1)); cursor: grab; touch-action: none;
+       transition: opacity .3s, transform .3s; transform: rotate(var(--r, 0deg)); will-change: left, top; }
+  .w.drag { cursor: grabbing; z-index: 5; filter: drop-shadow(0 10px 14px rgba(0,0,0,.35)); }
+  .w.gone { opacity: 0; transform: rotate(var(--r, 0deg)) scale(.85); pointer-events: none; }
+  .w .paper { display: block; width: 100%; height: auto; pointer-events: none; }
+  .w .txt { position: absolute; inset: 11% 10% 13% 10%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+            font-family: var(--hand); line-height: 1.15; color: #2a2517; gap: .35em; pointer-events: none; }
+  .w .txt b { font-weight: 400; font-size: 1.12em; }
+  .w .txt.light { color: #eef2f7; }
+  .w .btn { pointer-events: auto; font: 400 .82em var(--hand); border: 0; cursor: pointer; padding: .28em .8em; border-radius: .5em; background: #1f2f55; color: #fff;
+            box-shadow: 0 .14em 0 #0f1a36; transition: background .15s; }
+  .w .btn:hover { background: #2c4380; }
+  .w .btn.sent { background: #1c7a4d; box-shadow: 0 .14em 0 #0f4a2e; }
+  .w .kids { position: absolute; right: -6px; top: -6px; background: var(--yellow); color: var(--yellow-ink); border-radius: 999px; font: 700 12px var(--ui); padding: 2px 8px; box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+  .w.frame { background: #fffdf7; padding: 7% 7% 16%; border-radius: 3px; box-shadow: 0 8px 18px rgba(0,0,0,.3); }
+  .w.frame svg { display: block; width: 100%; height: auto; }
+  .w.frame .cap { position: absolute; left: 0; right: 0; bottom: 3%; text-align: center; font: 400 1em var(--hand); color: #3b3a33; }
+  .w.web { border-radius: 10px; background: #fbfbfa; color: #1d2430; box-shadow: 0 10px 22px rgba(0,0,0,.35); overflow: hidden; font-family: var(--ui); }
+  .w.web .bar { display: flex; align-items: center; gap: .35em; padding: .45em .6em; background: #e6e8ec; }
+  .w.web .bar i { width: .55em; height: .55em; border-radius: 50%; background: #c3c8d0; }
+  .w.web .url { margin-left: .4em; flex: 1; background: #fff; border-radius: 999px; padding: .12em .7em; font-size: .62em; color: #5b6475; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .w.web .page { padding: .7em .8em .9em; }
+  .w.web .page h4 { margin: 0 0 .35em; font: 700 .9em var(--ui); }
+  .w.web .page .ln { height: .42em; border-radius: 3px; background: #d9dde4; margin: .4em 0; }
+  .w.web .page .ln.s { width: 62%; }
+  .w.web .page .pic { height: 2.6em; border-radius: 6px; margin: .5em 0; background: linear-gradient(135deg, #f4b860, #e07a5f); }
+  .hint { position: absolute; right: 14px; top: 10px; font-size: 13px; color: var(--desk-muted); pointer-events: none; }
+  .sets { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+  .sets > span { font-size: 14px; color: var(--desk-muted); margin-right: 4px; }
+  .sets button { background: rgba(255,255,255,.07); color: var(--desk-ink); border: 1px solid #3e6a6a; border-radius: 10px; padding: 6px 12px; font: inherit; font-size: 14.5px; cursor: pointer; }
+  .sets button kbd { font: 600 12px var(--ui); background: rgba(255,255,255,.14); border-radius: 5px; padding: 1px 6px; margin-right: 7px; }
+  .sets button[aria-pressed="true"] { background: var(--yellow); color: var(--yellow-ink); border-color: var(--yellow-edge); }
+  .sets button[aria-pressed="true"] kbd { background: rgba(0,0,0,.12); }
+
+  /* ---------- secciones claras ---------- */
+  section.block { padding: 64px 0; }
+  section.block + section.block { border-top: 1px solid var(--line); }
+  .two { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 44px; align-items: center; }
+  .two.flip { grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); }
+  .two.flip > :first-child { order: 2; }
+  .copy p { max-width: 33em; }
+  .ctrl { display: flex; flex-wrap: wrap; gap: 12px 22px; margin: 18px 0 0; align-items: center; }
+  .ctrl > div { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+  .seg button { background: none; border: 0; padding: 7px 13px; font: inherit; font-size: 15px; color: var(--ink); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--teal); color: #fff; }
+  .lbl { font-size: 14.5px; color: var(--muted); margin-right: 8px; }
+  .swatches { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+  .swatches button { width: 34px; height: 34px; padding: 0; border-radius: 8px; border: 2px solid transparent; background: #0000 center/contain no-repeat; cursor: pointer; }
+  .swatches button[aria-pressed="true"] { border-color: var(--teal); }
+  .chk { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; cursor: pointer; }
+  .chk input { width: 18px; height: 18px; accent-color: var(--teal); }
+  .btn2 { display: inline-block; text-decoration: none; background: var(--teal); color: #fff; border: 0; border-radius: 10px; padding: 8px 15px; font: inherit; font-size: 15px; cursor: pointer; }
+  .btn2:hover { filter: brightness(1.1); }
+
+  /* demo de capas */
+  .lay { position: relative; height: 340px; display: grid; place-items: center; }
+  .stack { position: relative; width: 250px; height: 250px; }
+  .stack .l2, .stack .l1 { position: absolute; inset: 0; transition: transform .45s cubic-bezier(.2,.8,.2,1); }
+  .stack .l2 img { width: 100%; height: 100%; display: block; }
+  .stack .l1 { display: grid; place-items: center; padding: 14%; font: 400 22px/1.15 var(--hand); text-align: center; color: #2a2517; }
+  .stack .l1.light { color: #eef2f7; }
+  .stack .l1 > div { display: grid; gap: .45em; place-items: center; width: 100%; }
+  .stack .l1 .btn { font: 400 18px var(--hand); border: 0; padding: .25em .9em; border-radius: .5em; background: #1f2f55; color: #fff; box-shadow: 0 3px 0 #0f1a36; cursor: pointer; }
+  .stack .l1 .btn.sent { background: #1c7a4d; box-shadow: 0 3px 0 #0f4a2e; }
+  .stack .l1 .mini { width: 100%; background: #fbfbfa; border-radius: 8px; overflow: hidden; color: #1d2430; font: 600 13px var(--ui); text-align: left; box-shadow: 0 3px 8px rgba(0,0,0,.25); }
+  .stack .l1 .mini .bar { background: #e1e4e9; padding: 5px 8px; font-weight: 400; font-size: 11px; color: #5b6475; }
+  .stack .l1 .mini .pg { padding: 8px 9px 10px; }
+  .stack .l1 .mini .pg i { display: block; height: 6px; border-radius: 3px; background: #d9dde4; margin: 6px 0 0; }
+  .stack .l1 svg { width: 100%; height: auto; border-radius: 4px; }
+  .stack.x .l2 { transform: translate(-46px, 26px) rotate(-5deg); }
+  .stack.x .l1 { transform: translate(46px, -26px) rotate(3deg); }
+  .tag { position: absolute; font-size: 13px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; opacity: 0; transition: opacity .3s; white-space: nowrap; }
+  .stack.x ~ .tag { opacity: 1; }
+  .tag.t1 { right: 8%; top: 14%; }
+  .tag.t2 { left: 8%; bottom: 14%; }
+
+  /* tablero claro */
+  .board.light { background: color-mix(in srgb, var(--panel) 80%, var(--teal) 6%); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+  .board.light .ropes .shade { stroke-opacity: .18; }
+  .board.light .w { filter: drop-shadow(0 4px 6px rgba(0,0,0,.12)); }
+  .board.light .hint { color: var(--muted); }
+
+  /* formas de papel */
+  .strip { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 8px; padding: 14px 4px 22px; margin-top: 26px; }
+  .strip figure { margin: 0; flex: none; width: 118px; transition: transform .2s; }
+  .strip figure:nth-child(odd) { transform: rotate(-2.5deg) translateY(6px); }
+  .strip figure:nth-child(even) { transform: rotate(2deg); }
+  .strip figure:hover { transform: rotate(0) translateY(-8px); }
+  .strip img { width: 100%; display: block; }
+  .tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 44px; margin-top: 16px; }
+  .tools div { border-top: 1px solid var(--line); padding: 14px 0 10px; }
+  .tools h3 { font-size: 21px; }
+  .tools p { color: var(--muted); font-size: 15.5px; margin: 0; max-width: 30em; }
+  kbd { font: 600 .82em var(--ui); background: var(--panel); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 6px; white-space: nowrap; }
+
+  /* formatos */
+  .formats { margin-top: 24px; border-top: 1px solid var(--line); }
+  .fm { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 4px 24px; padding: 16px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+  .fm code { font: 700 17px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--teal); }
+  .fm p { margin: 0; color: var(--muted); }
+  .fm p b { color: var(--ink); font-weight: 600; }
+  .mk { display: inline-block; margin-top: 18px; }
+
+  /* comunidad */
+  .comm { background: var(--panel); border: 1px dashed var(--teal); border-radius: 18px; padding: 30px 30px 26px; }
+  .comm h2 { margin-bottom: 8px; }
+  .comm ul { margin: 12px 0 18px; padding-left: 20px; color: var(--muted); max-width: 40em; }
+  .comm li { margin: 5px 0; }
+
+  /* instalar */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; counter-reset: s; padding: 0; margin: 22px 0 0; list-style: none; border-top: 1px solid var(--line); }
+  .steps li { counter-increment: s; padding: 18px 22px 8px 0; }
+  .steps li + li { padding-left: 22px; border-left: 1px solid var(--line); }
+  .steps li::before { content: counter(s); font: 700 26px var(--head); color: var(--teal); display: block; margin-bottom: 4px; }
   .steps b { display: block; margin-bottom: 4px; }
   .steps p { margin: 0; color: var(--muted); font-size: 15.5px; }
-  .os-tabs { display: flex; gap: 8px; margin: 0 0 14px; flex-wrap: wrap; }
-  .os-tabs button { border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 7px 14px; border-radius: 999px; font: inherit; font-size: 15px; cursor: pointer; }
-  .os-tabs button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent-strong); color: var(--accent-ink); font-weight: 700; }
-  pre { background: #12141b; color: #e8ecf5; border-radius: 12px; padding: 14px 16px; overflow-x: auto; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 10px 0; position: relative; }
-  .copy { position: absolute; right: 8px; top: 8px; background: #2a2f3d; color: #e8ecf5; border: 1px solid #3b4254; border-radius: 8px; padding: 4px 10px; font: 13px system-ui; cursor: pointer; }
-  details { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 4px 16px; margin: 10px 0; }
-  summary { cursor: pointer; padding: 10px 0; font-weight: 600; }
-  details ul { margin: 0 0 12px; padding-left: 20px; color: var(--muted); font-size: 16px; }
+  .os-tabs { display: flex; gap: 8px; margin: 28px 0 14px; flex-wrap: wrap; }
+  .os-tabs button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 7px 14px; border-radius: 999px; font: inherit; font-size: 15px; cursor: pointer; }
+  .os-tabs button[aria-pressed="true"] { background: var(--teal); border-color: var(--teal); color: #fff; font-weight: 700; }
+  pre { background: #0d1717; color: #e8f1ee; border-radius: 12px; padding: 14px 16px; overflow-x: auto; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 10px 0; position: relative; }
+  .copybtn { position: absolute; right: 8px; top: 8px; background: #22383a; color: #e8f1ee; border: 1px solid #38595a; border-radius: 8px; padding: 4px 10px; font: 13px var(--ui); cursor: pointer; }
+  details { border-top: 1px solid var(--line); padding: 2px 0; }
+  details:last-of-type { border-bottom: 1px solid var(--line); }
+  summary { cursor: pointer; padding: 13px 0; font-weight: 600; }
+  details ul { margin: 0 0 14px; padding-left: 20px; color: var(--muted); font-size: 16px; }
   details li { margin: 4px 0; }
-  .kofi { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; text-align: center; margin: 8px 0 34px; padding: 18px 22px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
-  .kofi p { margin: 0; color: var(--muted); font-size: 15.5px; max-width: 34em; }
-  .kofi a { display: inline-flex; align-items: center; gap: 9px; padding: 11px 20px; border-radius: 999px; background: #ff5e5b; color: #fff; font-weight: 700; text-decoration: none; box-shadow: 0 6px 16px rgba(255, 94, 91, .35); transition: transform .15s, box-shadow .15s; }
-  .kofi a:hover { transform: translateY(-2px); box-shadow: 0 10px 22px rgba(255, 94, 91, .45); }
+  .kofi { display: flex; align-items: center; justify-content: space-between; gap: 16px 26px; flex-wrap: wrap; margin: 30px 0 0; padding: 20px 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; }
+  .kofi p { margin: 0; color: var(--muted); font-size: 15.5px; max-width: 36em; }
+  .kofi a { display: inline-flex; align-items: center; gap: 9px; padding: 11px 20px; border-radius: 999px; background: #ff5e5b; color: #fff; font-weight: 700; text-decoration: none; transition: transform .15s; }
+  .kofi a:hover { transform: translateY(-2px); }
   .kofi svg { width: 22px; height: 22px; flex: none; }
-  footer { padding: 28px 0 44px; color: var(--muted); font-size: 14.5px; border-top: 1px solid var(--line); }
+  footer { padding: 26px 0 44px; color: var(--muted); font-size: 14.5px; border-top: 1px solid var(--line); margin-top: 56px; }
   footer a { color: inherit; }
-  [hidden] { display: none !important; }
-  @media (max-width: 760px) {
-    .hero { grid-template-columns: 1fr; gap: 18px; }
-    .art { order: -1; height: 240px; }
+
+  @media (max-width: 860px) {
+    nav.main { display: none; }
+    .hero, .two, .two.flip { grid-template-columns: minmax(0, 1fr); gap: 26px; }
+    .two.flip > :first-child { order: 0; }
     .steps { grid-template-columns: 1fr; }
+    .steps li + li { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); }
+    .tools { grid-template-columns: 1fr; }
+    .fm { grid-template-columns: 1fr; }
     .cta { width: 100%; justify-content: center; }
+    section.block { padding: 46px 0; }
     body { font-size: 16.5px; }
   }
-  @media (prefers-reduced-motion: reduce) { .cta { transition: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .cta, .w, .set, .stack .l1, .stack .l2, .strip figure { transition: none; }
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header class="top">
-    <div class="brand"><img src="favicon.png" alt="" width="34" height="34"><span>Widget Arena</span></div>
-    <button class="lang" id="lang" type="button" aria-label="Language / Idioma">English</button>
-  </header>
+<div class="desk">
+  <div class="wrap">
+    <header class="top">
+      <a class="brand" href="#"><img src="favicon.png" alt="" width="32" height="32"><span>Widget Arena</span></a>
+      <nav class="main" aria-label="Secciones">
+        <a href="#layers" data-i="n_layers">Widgets</a>
+        <a href="#ropes" data-i="n_ropes">Cables</a>
+        <a href="#paper" data-i="n_paper">Formas de papel</a>
+        <a href="#share" data-i="n_share">Compartir</a>
+        <a href="#how" data-i="n_install">Instalar</a>
+      </nav>
+      <button class="lang" id="lang" type="button" aria-label="Language / Idioma">English</button>
+    </header>
 
-  <main>
+    <main>
     <div class="hero">
       <div>
-        <h1 data-i="h1">Notas y widgets en tu escritorio, enlazados con cables.</h1>
-        <p class="lead" data-i="lead">Crea notas, enlázalas como padres e hijos y mira cómo cuelgan sus cuerdas. Un solo clic para instalarlo: sin Python, sin administrador, sin configurar nada.</p>
+        <h1 data-i="h1">Widgets sueltos por tu escritorio, unidos por cables.</h1>
+        <p class="lead" data-i="lead">Notas, imágenes, páginas web y botones que flotan sobre tus programas. Enlázalos como padres e hijos, cambia de set con una tecla y déjalos a tu manera. Sin Python, sin administrador, un solo clic.</p>
         <a class="cta" id="cta" href="dl/install-windows.cmd" download>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16"/></svg>
           <span id="cta-text">Descargar para Windows</span>
         </a>
         <p class="fine" id="fine"></p>
+        <p class="fine others" id="others"></p>
         <p class="fine" id="ver"></p>
-        <p class="others" id="others"></p>
       </div>
-      <div class="art" aria-hidden="true">
-        <svg class="cables" viewBox="0 0 100 100" preserveAspectRatio="none"><path d="M24 24 C 40 44, 60 4, 78 18" vector-effect="non-scaling-stroke"/><path d="M78 18 C 92 50, 82 62, 65 84" vector-effect="non-scaling-stroke"/></svg>
-        <div class="note n1">Comprar café</div>
-        <div class="note n2">Llamar a Marta</div>
-        <div class="note n3">Idea del proyecto</div>
+      <div class="stage">
+        <div class="board" id="hero-board" role="group" aria-label="Tablero de ejemplo: arrastra los widgets">
+          <div class="set on" data-set="0">
+            <svg class="ropes" aria-hidden="true"></svg>
+            <div class="w" data-id="a" style="--w:176;--r:-3deg" data-x=".05" data-y=".07" data-c="#e9b949" tabindex="0" aria-label="Nota">
+              <img class="paper" src="img/papel-amarillo.png" alt=""><div class="txt"><b data-i="w_week">Semana</b><span data-i="w_week2">Entregar el informe el jueves</span></div>
+            </div>
+            <div class="w" data-id="b" data-parent="a" style="--w:168;--r:2deg" data-x=".47" data-y=".04" data-c="#6aa7e8" tabindex="0" aria-label="Nota">
+              <img class="paper" src="img/papel-doblada.png" alt=""><div class="txt"><span data-i="w_ideas">Ideas para la portada</span></div>
+            </div>
+            <div class="w web" data-id="c" data-parent="a" style="--w:232;--r:0deg" data-x=".04" data-y=".58" data-c="#7a8699" tabindex="0" aria-label="Mini-navegador">
+              <div class="bar"><i></i><i></i><i></i><span class="url">recetas.example/pan-de-masa-madre</span></div>
+              <div class="page"><h4 data-i="w_pan">Pan de masa madre</h4><div class="pic"></div><div class="ln"></div><div class="ln s"></div></div>
+            </div>
+            <div class="w" data-id="d" data-parent="b" style="--w:190;--r:-2deg" data-x=".62" data-y=".50" data-c="#e87a9f" tabindex="0" aria-label="Widget con botones">
+              <img class="paper" src="img/papel-degradado.png" alt=""><div class="txt"><span data-i="w_home">Estudio</span><button class="btn" type="button" data-send data-i="b_panel">Abrir panel</button><button class="btn" type="button" data-send data-i="b_light">Luz del estudio</button></div>
+            </div>
+          </div>
+          <div class="set" data-set="1">
+            <svg class="ropes" aria-hidden="true"></svg>
+            <div class="w" data-id="a" style="--w:170;--r:2deg" data-x=".06" data-y=".08" data-c="#3fae6b" tabindex="0" aria-label="Nota">
+              <img class="paper" src="img/papel-verde.png" alt=""><div class="txt"><b data-i="w_exam">Examen</b><span data-i="w_exam2">Tema 4 y 5, martes a las 9:00</span></div>
+            </div>
+            <div class="w frame" data-id="b" data-parent="a" style="--w:158;--r:-3deg" data-x=".08" data-y=".52" data-c="#c9a46a" tabindex="0" aria-label="Imagen con marco">
+              <svg viewBox="0 0 120 90" aria-hidden="true"><rect width="120" height="90" fill="#9fd3e6"/><circle cx="90" cy="24" r="11" fill="#fde68a"/><path d="M0 90V60l28-24 26 22 22-16 44 30v18z" fill="#4f8f6a"/><path d="M0 90V74l36-14 30 12 54-10v28z" fill="#356b52"/></svg>
+              <div class="cap" data-i="w_trip">Fin de semana</div>
+            </div>
+            <div class="w" data-id="c" data-parent="a" style="--w:176;--r:3deg" data-x=".60" data-y=".10" data-c="#8b7cf0" tabindex="0" aria-label="Nota redonda">
+              <img class="paper" src="img/papel-redonda.png" alt=""><div class="txt"><span data-i="w_break">Descanso a las 11</span></div>
+            </div>
+            <div class="w" data-id="d" data-parent="b" style="--w:172;--r:-1deg" data-x=".48" data-y=".56" data-c="#475569" tabindex="0" aria-label="Nota oscura">
+              <img class="paper" src="img/papel-oscura.png" alt=""><div class="txt light"><b data-i="w_read">Lecturas</b><span data-i="w_read2">Capítulo 7, resumen</span></div>
+            </div>
+          </div>
+          <div class="hint" data-i="hint">Arrastra cualquier widget</div>
+        </div>
+        <div class="sets" role="group" aria-label="Sets">
+          <span data-i="sets_l">Sets de widgets:</span>
+          <button type="button" data-set-btn="0" aria-pressed="true"><kbd>Ctrl + 1</kbd><span data-i="set1">Semana</span></button>
+          <button type="button" data-set-btn="1" aria-pressed="false"><kbd>Ctrl + 2</kbd><span data-i="set2">Estudio</span></button>
+        </div>
       </div>
     </div>
+    </main>
+  </div>
+</div>
 
-    <section class="block" id="how">
-      <h2 data-i="h-how">Cómo se instala</h2>
-      <ol class="steps">
-        <li><b data-i="s1t">Descarga el instalador</b><p data-i="s1p">Pulsa el botón de arriba. Es un archivo pequeño.</p></li>
-        <li><b data-i="s2t">Ábrelo</b><p id="s2p"></p></li>
-        <li><b data-i="s3t">Espera unos minutos</b><p data-i="s3p">La primera vez prepara su propio Python y descarga las librerías (unos cientos de MB). Después se abre solo y queda en tu menú de aplicaciones.</p></li>
-      </ol>
-    </section>
-
-    <section class="block">
-      <div class="os-tabs" id="tabs" role="group" aria-label="Sistema operativo">
-        <button type="button" data-os="win">Windows</button>
-        <button type="button" data-os="mac">macOS</button>
-        <button type="button" data-os="linux">Linux</button>
+<div class="wrap">
+  <section class="block" id="layers">
+    <div class="two">
+      <div class="copy">
+        <h2 data-i="h_layers">Cada widget tiene dos capas que combinas a tu gusto</h2>
+        <p data-i="p_layers">Abajo, la forma de papel. Encima, lo que quieras poner: texto, una imagen, una página web o botones. Cada capa tiene su propio color, fuente, giro y tamaño, así que una misma nota puede ser un post-it, un marco con foto o un mini-navegador.</p>
+        <div class="ctrl">
+          <div><span class="lbl" data-i="l_content">Contenido</span>
+            <span class="seg" id="seg-content" role="group" aria-label="Contenido">
+              <button type="button" data-k="text" aria-pressed="true" data-i="c_text">Texto</button><button type="button" data-k="img" aria-pressed="false" data-i="c_img">Imagen</button><button type="button" data-k="web" aria-pressed="false" data-i="c_web">Página web</button><button type="button" data-k="btn" aria-pressed="false" data-i="c_btn">Botones</button>
+            </span></div>
+          <div><span class="lbl" data-i="l_paper">Papel</span><span class="swatches" id="swatches"></span></div>
+          <label class="chk"><input type="checkbox" id="explode"> <span data-i="l_split">Separar las capas</span></label>
+        </div>
       </div>
-      <div id="os-help"></div>
-    </section>
+      <div class="lay" aria-live="polite">
+        <div class="stack" id="stack">
+          <div class="l2"><img id="l2img" src="img/papel-amarillo.png" alt=""></div>
+          <div class="l1" id="l1">
+            <div data-k="text"><b data-i="w_week">Semana</b><span data-i="w_week2">Entregar el informe el jueves</span></div>
+            <div data-k="img" hidden><svg viewBox="0 0 120 90" aria-hidden="true"><rect width="120" height="90" fill="#9fd3e6"/><circle cx="90" cy="24" r="11" fill="#fde68a"/><path d="M0 90V60l28-24 26 22 22-16 44 30v18z" fill="#4f8f6a"/><path d="M0 90V74l36-14 30 12 54-10v28z" fill="#356b52"/></svg></div>
+            <div data-k="web" hidden><div class="mini"><div class="bar">recetas.example/pan</div><div class="pg"><span data-i="w_pan">Pan de masa madre</span><i></i><i style="width:70%"></i><i style="width:85%"></i></div></div></div>
+            <div data-k="btn" hidden><button class="btn" type="button" data-send data-i="b_panel">Abrir panel</button><button class="btn" type="button" data-send data-i="b_light">Luz del estudio</button></div>
+          </div>
+        </div>
+        <span class="tag t1" data-i="tag1">Capa 1: el contenido</span>
+        <span class="tag t2" data-i="tag2">Capa 2: la forma de papel</span>
+      </div>
+    </div>
+  </section>
 
-    <section class="block">
-      <details>
-        <summary data-i="d1">¿Qué hace exactamente el instalador?</summary>
-        <ul data-list="d1l"></ul>
-      </details>
-      <details>
-        <summary data-i="d2">¿Cómo se desinstala?</summary>
-        <ul data-list="d2l"></ul>
-      </details>
-      <details>
-        <summary data-i="d3">¿Por qué mi sistema avisa de que no lo conoce?</summary>
-        <ul data-list="d3l"></ul>
-      </details>
-    </section>
-    <section class="kofi">
+  <section class="block" id="ropes">
+    <div class="two flip">
+      <div class="copy">
+        <h2 data-i="h_ropes">Los widgets se enlazan como un árbol</h2>
+        <p data-i="p_ropes">Un widget puede ser hijo de otro. Los cables cuelgan como cuerdas y se balancean al moverlos, y los hijos pueden seguir al padre cuando lo arrastras. Para ordenar la vista, pliega las ramas: los hijos desaparecen y vuelven en el mismo sitio.</p>
+        <p class="muted" data-ih="p_ropes2">Ctrl + arrastrar una nota sobre otra la hace hija suya; con Alt, madre. Con Ctrl + Alt + Mayús + arrastrar nace una hija donde sueltes.</p>
+        <div class="ctrl">
+          <button class="btn2" id="fold" type="button" data-i="b_fold">Plegar hijos</button>
+          <label class="chk"><input type="checkbox" id="follow" checked> <span data-i="l_follow">Los hijos siguen al padre</span></label>
+        </div>
+      </div>
+      <div class="stage">
+        <div class="board light" id="tree-board" role="group" aria-label="Árbol de ejemplo">
+          <div class="set on" data-set="0">
+            <svg class="ropes" aria-hidden="true"></svg>
+            <div class="w" data-id="r" style="--w:150;--r:-2deg" data-x=".39" data-y=".05" data-c="#e9b949" tabindex="0"><img class="paper" src="img/papel-amarillo.png" alt=""><div class="txt"><b data-i="t_root">Proyecto</b></div></div>
+            <div class="w" data-id="k1" data-parent="r" style="--w:128;--r:2deg" data-x=".04" data-y=".40" data-c="#6aa7e8" tabindex="0"><img class="paper" src="img/papel-doblada.png" alt=""><div class="txt"><span data-i="t_design">Diseño</span></div></div>
+            <div class="w" data-id="k2" data-parent="r" style="--w:128;--r:-2deg" data-x=".42" data-y=".42" data-c="#3fae6b" tabindex="0"><img class="paper" src="img/papel-verde.png" alt=""><div class="txt"><span data-i="t_text">Texto</span></div></div>
+            <div class="w" data-id="k3" data-parent="r" style="--w:128;--r:3deg" data-x=".74" data-y=".38" data-c="#e87a9f" tabindex="0"><img class="paper" src="img/papel-degradado.png" alt=""><div class="txt"><span data-i="t_ship">Entrega</span></div></div>
+            <div class="w" data-id="g1" data-parent="k2" style="--w:116;--r:-3deg" data-x=".40" data-y=".74" data-c="#8b7cf0" tabindex="0"><img class="paper" src="img/papel-redonda.png" alt=""><div class="txt"><span data-i="t_rev">Revisión</span></div></div>
+          </div>
+          <div class="hint" data-i="hint">Arrastra cualquier widget</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="paper">
+    <h2 data-i="h_paper">Formas de papel que se dibujan, no se buscan</h2>
+    <p class="muted" style="max-width:40em" data-i="p_paper">Doblez de esquina, cinta, borde, degradado, sombra y esquinas redondeadas: el editor dibuja el papel a partir de unos parámetros. Es lo que ves aquí: imágenes generadas por el propio programa. Como se redibujan solas, no pesan al compartirlas.</p>
+    <div class="strip" aria-hidden="true">
+      <figure><img src="img/papel-amarillo.png" alt="" loading="lazy"></figure><figure><img src="img/papel-doblada.png" alt="" loading="lazy"></figure><figure><img src="img/papel-cinta.png" alt="" loading="lazy"></figure>
+      <figure><img src="img/papel-degradado.png" alt="" loading="lazy"></figure><figure><img src="img/papel-marron.png" alt="" loading="lazy"></figure><figure><img src="img/papel-redonda.png" alt="" loading="lazy"></figure>
+      <figure><img src="img/papel-verde.png" alt="" loading="lazy"></figure><figure><img src="img/papel-oscura.png" alt="" loading="lazy"></figure>
+    </div>
+    <div class="tools">
+      <div><h3 data-i="f1t">Sets de widgets</h3><p data-ih="f1p">Guarda lo que tienes en pantalla con un nombre y cambia entre sets al instante con <kbd>Ctrl</kbd> + <kbd>1</kbd>…<kbd>0</kbd>. Cada set recuerda sus propios cables y ajustes.</p></div>
+      <div><h3 data-i="f2t">Botones y enlaces dentro del texto</h3><p data-i="f2p">Un botón puede abrir una página en el mini-navegador o lanzar una llamada HTTP en segundo plano, sin abrir ninguna ventana.</p></div>
+      <div><h3 data-i="f3t">Color a mano</h3><p data-ih="f3p"><kbd>Ctrl</kbd> + rueda sobre un widget cambia su tono, y los cables toman sus colores. Con <kbd>Mayús</kbd> el ajuste es fino.</p></div>
+      <div><h3 data-i="f4t">Todo configurable</h3><p data-i="f4p">Grosor, peso y curvatura de los cables, jerarquía, atajos de teclado y gestos del icono de la bandeja. Tus datos son archivos JSON en tu carpeta, con copias de seguridad.</p></div>
+    </div>
+  </section>
+
+  <section class="block" id="share">
+    <div class="two">
+      <div class="copy">
+        <h2 data-i="h_share">Llévatelo a otro equipo o compártelo</h2>
+        <p data-i="p_share">Todo lo que creas se guarda en un archivo comprimido con sus imágenes dentro. Se abre arrastrándolo a la ventana de Widget Arena o con «Cargar un archivo»: el programa averigua qué es. Nunca lleva datos de Telegram.</p>
+        <a class="btn2 mk" href="dl/notas-de-colores.wapack" download data-i="b_example">Descargar un pack de ejemplo</a>
+      </div>
+      <div class="formats">
+        <div class="fm"><code>.wapack</code><p data-ih="x_pack"><b>Un pack:</b> varios widgets guardados y sets, listos para estrenar.</p></div>
+        <div class="fm"><code>.waset</code><p data-ih="x_set"><b>Widgets enlazados:</b> un árbol, o todos los de tu set, con la configuración si quieres.</p></div>
+        <div class="fm"><code>.wawidget</code><p data-ih="x_widget"><b>Un widget guardado:</b> su aspecto y su contenido.</p></div>
+        <div class="fm"><code>.wapaper</code><p data-ih="x_paper"><b>Una forma de papel:</b> solo el aspecto, sin texto ni posición.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="comm">
+      <h2 data-i="h_comm">Galería de escritorios: en preparación</h2>
+      <p data-i="p_comm">Queremos un sitio donde enseñes tu escritorio y puedas bajarte los de otras personas: sets, widgets y formas de papel en los archivos de arriba.</p>
+      <ul>
+        <li data-i="c1">Cada envío se revisa antes de publicarse, con un filtro de palabras y una mirada humana.</li>
+        <li data-i="c2">Lo que se publica es un archivo que puedes abrir en el programa, no una captura suelta.</li>
+        <li data-i="c3">Todavía no hay galería ni subida de archivos: esta página es estática. Si te interesa, dínoslo.</li>
+      </ul>
+      <a class="btn2" href="__REPO_URL__/issues" target="_blank" rel="noopener" data-i="b_comm">Contar qué te gustaría ver</a>
+    </div>
+  </section>
+
+  <section class="block" id="how">
+    <h2 data-i="h_how">Cómo se instala</h2>
+    <ol class="steps">
+      <li><b data-i="s1t">Descarga el instalador</b><p data-i="s1p">Pulsa el botón de arriba. Es un archivo pequeño.</p></li>
+      <li><b data-i="s2t">Ábrelo</b><p id="s2p"></p></li>
+      <li><b data-i="s3t">Espera unos minutos</b><p data-i="s3p">La primera vez prepara su propio Python y descarga las librerías (unos cientos de MB). Después se abre solo y queda en tu menú de aplicaciones.</p></li>
+    </ol>
+    <div class="os-tabs" id="tabs" role="group" aria-label="Sistema operativo">
+      <button type="button" data-os="win">Windows</button>
+      <button type="button" data-os="mac">macOS</button>
+      <button type="button" data-os="linux">Linux</button>
+    </div>
+    <div id="os-help"></div>
+    <div style="margin-top:28px">
+      <details><summary data-i="d1">¿Qué hace exactamente el instalador?</summary><ul data-list="d1l"></ul></details>
+      <details><summary data-i="d2">¿Cómo se desinstala?</summary><ul data-list="d2l"></ul></details>
+      <details><summary data-i="d3">¿Por qué mi sistema avisa de que no lo conoce?</summary><ul data-list="d3l"></ul></details>
+    </div>
+    <div class="kofi">
       <p data-i="kofi_t">¿Te resulta útil? Es gratis y sin anuncios; si quieres apoyar su desarrollo, puedes invitarme a un café.</p>
       <a href="https://ko-fi.com/jaimeluisolguinmesina" target="_blank" rel="noopener">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h13v6a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5V8z"/><path d="M16 9h2a3 3 0 0 1 0 6h-2"/><path d="M7 2v2M11 2v2"/></svg>
         <span data-i="kofi_b">Invítame a un café</span>
       </a>
-    </section>
-  </main>
+    </div>
+  </section>
 
   <footer>
     <span data-i="foot">Software libre con licencia MIT.</span>
@@ -159,14 +438,45 @@
   var PACK = "__PACK__", VERSION = "__VERSION__";
   var T = {
     es: {
-      h1: "Notas y widgets en tu escritorio, enlazados con cables.",
-      lead: "Crea notas, enlázalas como padres e hijos y mira cómo cuelgan sus cuerdas. Un solo clic para instalarlo: sin Python, sin administrador, sin configurar nada.",
+      n_layers: "Widgets", n_ropes: "Cables", n_paper: "Formas de papel", n_share: "Compartir", n_install: "Instalar",
+      h1: "Widgets sueltos por tu escritorio, unidos por cables.",
+      lead: "Notas, imágenes, páginas web y botones que flotan sobre tus programas. Enlázalos como padres e hijos, cambia de set con una tecla y déjalos a tu manera. Sin Python, sin administrador, un solo clic.",
+      hint: "Arrastra cualquier widget", sets_l: "Sets de widgets:", set1: "Semana", set2: "Estudio",
+      w_week: "Semana", w_week2: "Entregar el informe el jueves", w_ideas: "Ideas para la portada", w_pan: "Pan de masa madre", w_home: "Estudio",
+      b_panel: "Abrir panel", b_light: "Luz del estudio", sent: "Enviado",
+      w_exam: "Examen", w_exam2: "Temas 4 y 5, martes a las 9:00", w_trip: "Fin de semana", w_break: "Descanso a las 11", w_read: "Lecturas", w_read2: "Capítulo 7, resumen",
+      h_layers: "Cada widget tiene dos capas que combinas a tu gusto",
+      p_layers: "Abajo, la forma de papel. Encima, lo que quieras poner: texto, una imagen, una página web o botones. Cada capa tiene su propio color, fuente, giro y tamaño, así que una misma nota puede ser un post-it, un marco con foto o un mini-navegador.",
+      l_content: "Contenido", c_text: "Texto", c_img: "Imagen", c_web: "Página web", c_btn: "Botones", l_paper: "Papel", l_split: "Separar las capas",
+      tag1: "Capa 1: el contenido", tag2: "Capa 2: la forma de papel",
+      h_ropes: "Los widgets se enlazan como un árbol",
+      p_ropes: "Un widget puede ser hijo de otro. Los cables cuelgan como cuerdas y se balancean al moverlos, y los hijos pueden seguir al padre cuando lo arrastras. Para ordenar la vista, pliega las ramas: los hijos desaparecen y vuelven en el mismo sitio.",
+      p_ropes2: "<kbd>Ctrl</kbd> + arrastrar una nota sobre otra la hace hija suya; con <kbd>Alt</kbd>, madre. Con <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Mayús</kbd> + arrastrar nace una hija donde sueltes.",
+      b_fold: "Plegar hijos", b_unfold: "Desplegar hijos", l_follow: "Los hijos siguen al padre",
+      t_root: "Proyecto", t_design: "Diseño", t_text: "Texto", t_ship: "Entrega", t_rev: "Revisión", hidden_n: "ocultos",
+      h_paper: "Formas de papel que se dibujan, no se buscan",
+      p_paper: "Doblez de esquina, cinta, borde, degradado, sombra y esquinas redondeadas: el editor dibuja el papel a partir de unos parámetros. Es lo que ves aquí: imágenes generadas por el propio programa. Como se redibujan solas, no pesan al compartirlas.",
+      f1t: "Sets de widgets", f1p: "Guarda lo que tienes en pantalla con un nombre y cambia entre sets al instante con <kbd>Ctrl</kbd> + <kbd>1</kbd>…<kbd>0</kbd>. Cada set recuerda sus propios cables y ajustes.",
+      f2t: "Botones y enlaces dentro del texto", f2p: "Un botón puede abrir una página en el mini-navegador o lanzar una llamada HTTP en segundo plano, sin abrir ninguna ventana.",
+      f3t: "Color a mano", f3p: "<kbd>Ctrl</kbd> + rueda sobre un widget cambia su tono, y los cables toman sus colores. Con <kbd>Mayús</kbd> el ajuste es fino.",
+      f4t: "Todo configurable", f4p: "Grosor, peso y curvatura de los cables, jerarquía, atajos de teclado y gestos del icono de la bandeja. Tus datos son archivos JSON en tu carpeta, con copias de seguridad.",
+      h_share: "Llévatelo a otro equipo o compártelo",
+      p_share: "Todo lo que creas se guarda en un archivo comprimido con sus imágenes dentro. Se abre arrastrándolo a la ventana de Widget Arena o con «Cargar un archivo»: el programa averigua qué es. Nunca lleva datos de Telegram.",
+      b_example: "Descargar un pack de ejemplo",
+      x_pack: "<b>Un pack:</b> varios widgets guardados y sets, listos para estrenar.", x_set: "<b>Widgets enlazados:</b> un árbol, o todos los de tu set, con la configuración si quieres.",
+      x_widget: "<b>Un widget guardado:</b> su aspecto y su contenido.", x_paper: "<b>Una forma de papel:</b> solo el aspecto, sin texto ni posición.",
+      h_comm: "Galería de escritorios: en preparación",
+      p_comm: "Queremos un sitio donde enseñes tu escritorio y puedas bajarte los de otras personas: sets, widgets y formas de papel en los archivos de arriba.",
+      c1: "Cada envío se revisa antes de publicarse, con un filtro de palabras y una mirada humana.",
+      c2: "Lo que se publica es un archivo que puedes abrir en el programa, no una captura suelta.",
+      c3: "Todavía no hay galería ni subida de archivos: esta página es estática. Si te interesa, dínoslo.",
+      b_comm: "Contar qué te gustaría ver",
       cta_win: "Descargar para Windows", cta_mac: "Descargar para macOS", cta_linux: "Descargar para Linux", cta_any: "Elegir mi sistema",
       fine_win: "Se instala solo para tu usuario. Si Windows avisa, mira «¿Por qué mi sistema avisa?» más abajo.",
       fine_mac: "Se instala solo para tu usuario, en la carpeta Aplicaciones de tu cuenta.",
       fine_linux: "Se instala solo para tu usuario. Pide la contraseña solo si faltan librerías del sistema.",
       fine_any: "Widget Arena es para ordenador (Windows, macOS o Linux). Abre esta página desde tu ordenador.",
-      others: "¿Otro sistema?", "h-how": "Cómo se instala", s1t: "Descarga el instalador", s1p: "Pulsa el botón de arriba. Es un archivo pequeño.",
+      others: "¿Otro sistema?", h_how: "Cómo se instala", s1t: "Descarga el instalador", s1p: "Pulsa el botón de arriba. Es un archivo pequeño.",
       s2t: "Ábrelo", s3t: "Espera unos minutos", s3p: "La primera vez prepara su propio Python y descarga las librerías (unos cientos de MB). Después se abre solo y queda en tu menú de aplicaciones.",
       s2_win: "Haz doble clic en install-windows.cmd (en Descargas). Si Windows muestra «Windows protegió su PC»: Más información → Ejecutar de todas formas.",
       s2_mac: "Abre el .zip y haz doble clic en «Widget Arena.command». Si macOS dice que no puede verificarlo: clic derecho → Abrir.",
@@ -188,19 +498,48 @@
             "El código es abierto: puedes leer exactamente lo que hace el instalador en el repositorio de GitHub antes de ejecutarlo.",
             "Windows: «Más información» → «Ejecutar de todas formas». macOS: clic derecho sobre el archivo → «Abrir»."],
       kofi_t: "¿Te resulta útil? Es gratis y sin anuncios; si quieres apoyar su desarrollo, puedes invitarme a un café.",
-      kofi_b: "Invítame a un café",
-      ver: "Versión actual",
-      foot: "Software libre con licencia MIT."
+      kofi_b: "Invítame a un café", ver: "Versión actual", foot: "Software libre con licencia MIT."
     },
     en: {
-      h1: "Notes and widgets on your desktop, linked with cables.",
-      lead: "Create notes, link them as parents and children and watch their ropes hang. One click to install: no Python, no admin rights, nothing to configure.",
+      n_layers: "Widgets", n_ropes: "Cables", n_paper: "Paper shapes", n_share: "Share", n_install: "Install",
+      h1: "Widgets scattered across your desktop, joined by cables.",
+      lead: "Notes, images, web pages and buttons that float over your programs. Link them as parents and children, switch sets with one key and arrange them your way. No Python, no admin rights, one click.",
+      hint: "Drag any widget", sets_l: "Widget sets:", set1: "Week", set2: "Study",
+      w_week: "Week", w_week2: "Hand in the report on Thursday", w_ideas: "Ideas for the cover", w_pan: "Sourdough bread", w_home: "Studio",
+      b_panel: "Open panel", b_light: "Studio light", sent: "Sent",
+      w_exam: "Exam", w_exam2: "Units 4 and 5, Tuesday at 9:00", w_trip: "Weekend away", w_break: "Break at 11", w_read: "Reading", w_read2: "Chapter 7, summary",
+      h_layers: "Every widget has two layers you can mix freely",
+      p_layers: "Below, the paper shape. On top, whatever you want to put there: text, an image, a web page or buttons. Each layer has its own colour, font, rotation and size, so the same note can be a sticky note, a photo frame or a mini-browser.",
+      l_content: "Content", c_text: "Text", c_img: "Image", c_web: "Web page", c_btn: "Buttons", l_paper: "Paper", l_split: "Pull the layers apart",
+      tag1: "Layer 1: the content", tag2: "Layer 2: the paper shape",
+      h_ropes: "Widgets link up like a tree",
+      p_ropes: "A widget can be the child of another. Cables hang like ropes and sway when you move them, and children can follow their parent when you drag it. To tidy the view, fold the branches: children disappear and come back in the same place.",
+      p_ropes2: "<kbd>Ctrl</kbd> + drag a note onto another to make it its child; with <kbd>Alt</kbd>, its parent. <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + drag creates a child where you drop it.",
+      b_fold: "Fold children", b_unfold: "Unfold children", l_follow: "Children follow their parent",
+      t_root: "Project", t_design: "Design", t_text: "Writing", t_ship: "Delivery", t_rev: "Review", hidden_n: "hidden",
+      h_paper: "Paper shapes that are drawn, not searched for",
+      p_paper: "Folded corner, tape, border, gradient, shadow and rounded corners: the editor draws the paper from a few parameters. What you see here are images generated by the program itself. Because they are redrawn on load, they add no weight when you share them.",
+      f1t: "Widget sets", f1p: "Save what is on screen under a name and switch between sets instantly with <kbd>Ctrl</kbd> + <kbd>1</kbd>…<kbd>0</kbd>. Each set remembers its own cables and settings.",
+      f2t: "Buttons and links inside the text", f2p: "A button can open a page in the mini-browser or fire an HTTP call in the background, without opening any window.",
+      f3t: "Colour by hand", f3p: "<kbd>Ctrl</kbd> + wheel over a widget changes its hue, and the cables take its colours. With <kbd>Shift</kbd> the adjustment is fine.",
+      f4t: "Configurable all the way", f4p: "Cable thickness, weight and curvature, hierarchy, keyboard shortcuts and tray icon gestures. Your data is JSON files in your folder, with backups.",
+      h_share: "Take it to another computer or share it",
+      p_share: "Everything you create is saved in a compressed file with its images inside. Open it by dragging it onto the Widget Arena window or with “Load a file”: the program works out what it is. It never carries Telegram data.",
+      b_example: "Download an example pack",
+      x_pack: "<b>A pack:</b> several saved widgets and sets, ready to use.", x_set: "<b>Linked widgets:</b> a tree, or all the widgets in your set, with the settings if you want.",
+      x_widget: "<b>A saved widget:</b> its look and its content.", x_paper: "<b>A paper shape:</b> just the look, without text or position.",
+      h_comm: "Desktop gallery: coming soon",
+      p_comm: "We want a place where you can show your desktop and download other people's: sets, widgets and paper shapes in the files above.",
+      c1: "Every submission is reviewed before it is published, with a word filter and a human look.",
+      c2: "What gets published is a file you can open in the program, not just a screenshot.",
+      c3: "There is no gallery or file upload yet: this page is static. If you are interested, tell us.",
+      b_comm: "Tell us what you would like to see",
       cta_win: "Download for Windows", cta_mac: "Download for macOS", cta_linux: "Download for Linux", cta_any: "Choose my system",
       fine_win: "Installs for your user only. If Windows shows a warning, see “Why does my system warn me?” below.",
       fine_mac: "Installs for your user only, in your account's Applications folder.",
       fine_linux: "Installs for your user only. It asks for your password only if system libraries are missing.",
       fine_any: "Widget Arena is for computers (Windows, macOS or Linux). Open this page from your computer.",
-      others: "Another system?", "h-how": "How to install", s1t: "Download the installer", s1p: "Press the button above. It is a small file.",
+      others: "Another system?", h_how: "How to install", s1t: "Download the installer", s1p: "Press the button above. It is a small file.",
       s2t: "Open it", s3t: "Wait a few minutes", s3p: "The first time it prepares its own Python and downloads the libraries (a few hundred MB). Then it opens by itself and stays in your applications menu.",
       s2_win: "Double-click install-windows.cmd (in Downloads). If Windows shows “Windows protected your PC”: More info → Run anyway.",
       s2_mac: "Open the .zip and double-click “Widget Arena.command”. If macOS says it cannot verify it: right-click → Open.",
@@ -222,15 +561,14 @@
             "The code is open source: you can read exactly what the installer does in the GitHub repository before running it.",
             "Windows: “More info” → “Run anyway”. macOS: right-click the file → “Open”."],
       kofi_t: "Find it useful? It is free and ad-free; if you want to support its development, you can buy me a coffee.",
-      kofi_b: "Buy me a coffee",
-      ver: "Current version",
-      foot: "Free software under the MIT license."
+      kofi_b: "Buy me a coffee", ver: "Current version", foot: "Free software under the MIT license."
     }
   };
   var FILES = { win: "dl/install-windows.cmd", mac: "dl/install-macos.zip", linux: "dl/install-linux.sh" };
   var NAMES = { win: "Windows", mac: "macOS", linux: "Linux" };
   var lang = (navigator.language || "es").toLowerCase().indexOf("es") === 0 ? "es" : "en";
   try { var saved = localStorage.getItem("wa-lang"); if (saved === "es" || saved === "en") lang = saved; } catch (e) {}
+  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   function detect() {
     var ua = (navigator.userAgent || "").toLowerCase();
@@ -242,49 +580,243 @@
     return "any";
   }
   var os = detect();
-  var shown = os === "any" ? "win" : os;      // pestaña de ayuda mostrada
+  var shown = os === "any" ? "win" : os;
 
-  function $(s) { return document.querySelector(s); }
+  function $(s, r) { return (r || document).querySelector(s); }
+  function $$(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
   function absolute(path) { return (BASE.indexOf("http") === 0 ? BASE.replace(/\/$/, "") : location.href.replace(/[^\/]*$/, "").replace(/\/$/, "")) + "/" + path; }
-  function cmd(kind) {
-    return "curl -fsSL " + absolute("dl/install-linux.sh") + " | bash";
+  function cmd() { return "curl -fsSL " + absolute("dl/install-linux.sh") + " | bash"; }
+
+  /* ================= tablero: widgets que se arrastran, unidos por cuerdas ================= */
+  var SVGNS = "http://www.w3.org/2000/svg";
+  function svgEl(n, a) { var e = document.createElementNS(SVGNS, n); for (var k in a) e.setAttribute(k, a[k]); return e; }
+
+  function Group(board, set, opt) {
+    var g = this; g.board = board; g.set = set; g.opt = opt;
+    g.svg = $(".ropes", set); g.nodes = {}; g.cables = []; g.loop = false; g.follow = true;
+    $$(".w", set).forEach(function (el) {
+      var n = { el: el, id: el.getAttribute("data-id"), parent: el.getAttribute("data-parent"), x: +el.getAttribute("data-x"), y: +el.getAttribute("data-y"),
+                color: el.getAttribute("data-c") || "#888", hidden: false, collapsed: false, kids: [] };
+      g.nodes[n.id] = n;
+    });
+    Object.keys(g.nodes).forEach(function (id) {
+      var n = g.nodes[id]; if (!n.parent) return;
+      var p = g.nodes[n.parent]; p.kids.push(n);
+      var gr = svgEl("linearGradient", { id: "gr-" + board.uid + "-" + set.getAttribute("data-set") + "-" + id, gradientUnits: "userSpaceOnUse" });
+      gr.appendChild(svgEl("stop", { offset: "0", "stop-color": p.color })); gr.appendChild(svgEl("stop", { offset: "1", "stop-color": n.color }));
+      var defs = svgEl("defs", {}); defs.appendChild(gr); g.svg.appendChild(defs);
+      var c = { a: p, b: n, gr: gr, wob: 0, v: 0, shade: svgEl("path", { "class": "shade" }), rope: svgEl("path", { "class": "rope", stroke: "url(#" + gr.id + ")" }),
+                twist: svgEl("path", { "class": "twist" }), k1: svgEl("circle", { "class": "knot", r: 5 }), k2: svgEl("circle", { "class": "knot", r: 5 }) };
+      c.k1.setAttribute("fill", p.color); c.k2.setAttribute("fill", n.color);
+      [c.shade, c.rope, c.twist, c.k1, c.k2].forEach(function (e) { g.svg.appendChild(e); });
+      g.cables.push(c);
+    });
+    Object.keys(g.nodes).forEach(function (id) { g.bind(g.nodes[id]); });
   }
+  Group.prototype.size = function () { return { w: this.board.el.clientWidth, h: this.board.el.clientHeight }; };
+  Group.prototype.place = function (n) { n.el.style.left = (n.x * 100) + "%"; n.el.style.top = (n.y * 100) + "%"; };
+  Group.prototype.rect = function (n) { var s = this.size(); return { x: n.x * s.w, y: n.y * s.h, w: n.el.offsetWidth, h: n.el.offsetHeight }; };
+  Group.prototype.descendants = function (n) { var out = []; (function walk(m) { m.kids.forEach(function (k) { out.push(k); walk(k); }); })(n); return out; };
+  Group.prototype.clamp = function (n) {
+    var s = this.size(), r = { w: n.el.offsetWidth, h: n.el.offsetHeight };
+    n.x = Math.max(0, Math.min(n.x, 1 - r.w / s.w)); n.y = Math.max(0, Math.min(n.y, 1 - r.h / s.h));
+  };
+  Group.prototype.anchor = function (r, to) {
+    var cx = r.x + r.w / 2, cy = r.y + r.h / 2, dx = to.x - cx, dy = to.y - cy;
+    if (!dx && !dy) return { x: cx, y: cy };
+    var t = Math.min(dx ? (r.w / 2) / Math.abs(dx) : 1e9, dy ? (r.h / 2) / Math.abs(dy) : 1e9) * 0.82;
+    return { x: cx + dx * t, y: cy + dy * t };
+  };
+  Group.prototype.draw = function () {
+    var g = this;
+    g.cables.forEach(function (c) {
+      var vis = !c.a.hidden && !c.b.hidden;
+      [c.shade, c.rope, c.twist, c.k1, c.k2].forEach(function (e) { e.style.display = vis ? "" : "none"; });
+      if (!vis) return;
+      var ra = g.rect(c.a), rb = g.rect(c.b);
+      var ca = { x: ra.x + ra.w / 2, y: ra.y + ra.h / 2 }, cb = { x: rb.x + rb.w / 2, y: rb.y + rb.h / 2 };
+      var A = g.anchor(ra, cb), B = g.anchor(rb, ca);
+      var len = Math.hypot(B.x - A.x, B.y - A.y), sag = len * 0.2 + 16 + c.wob;
+      var sw = c.wob * 0.6;
+      var d = "M" + A.x.toFixed(1) + " " + A.y.toFixed(1) + " C" + (A.x + (B.x - A.x) / 3 + sw).toFixed(1) + " " + (A.y + (B.y - A.y) / 3 + sag).toFixed(1) + " " +
+              (A.x + 2 * (B.x - A.x) / 3 + sw).toFixed(1) + " " + (A.y + 2 * (B.y - A.y) / 3 + sag).toFixed(1) + " " + B.x.toFixed(1) + " " + B.y.toFixed(1);
+      c.rope.setAttribute("d", d); c.twist.setAttribute("d", d);
+      c.shade.setAttribute("d", d); c.shade.setAttribute("transform", "translate(0 3)");
+      c.gr.setAttribute("x1", A.x); c.gr.setAttribute("y1", A.y); c.gr.setAttribute("x2", B.x); c.gr.setAttribute("y2", B.y);
+      c.k1.setAttribute("cx", A.x); c.k1.setAttribute("cy", A.y); c.k2.setAttribute("cx", B.x); c.k2.setAttribute("cy", B.y);
+    });
+  };
+  Group.prototype.kick = function (n, amount) {
+    if (reduce) return;
+    this.cables.forEach(function (c) { if (c.a === n || c.b === n) c.v += amount; });
+    this.run();
+  };
+  Group.prototype.run = function () {
+    var g = this; if (g.loop) return; g.loop = true;
+    (function step() {
+      var busy = false;
+      g.cables.forEach(function (c) {
+        c.v += -0.085 * c.wob - 0.09 * c.v; c.wob += c.v;
+        if (Math.abs(c.wob) > 0.15 || Math.abs(c.v) > 0.15) busy = true; else { c.wob = 0; c.v = 0; }
+      });
+      g.draw();
+      if (busy) requestAnimationFrame(step); else g.loop = false;
+    })();
+  };
+  Group.prototype.layout = function () { var g = this; Object.keys(g.nodes).forEach(function (id) { g.clamp(g.nodes[id]); g.place(g.nodes[id]); }); g.draw(); };
+  Group.prototype.bind = function (n) {
+    var g = this, el = n.el, st = null;
+    g.place(n);
+    el.addEventListener("pointerdown", function (e) {
+      if (e.target.closest && e.target.closest("button")) return;
+      var s = g.size();
+      st = { px: e.clientX, py: e.clientY, x: n.x, y: n.y, ids: [] };
+      if (g.follow && g.opt.follow) g.descendants(n).forEach(function (k) { st.ids.push({ k: k, x: k.x, y: k.y }); });
+      el.classList.add("drag"); el.setPointerCapture(e.pointerId); e.preventDefault();
+    });
+    el.addEventListener("pointermove", function (e) {
+      if (!st) return;
+      var s = g.size(), dx = (e.clientX - st.px) / s.w, dy = (e.clientY - st.py) / s.h;
+      var ox = n.x, oy = n.y;
+      n.x = st.x + dx; n.y = st.y + dy; g.clamp(n); g.place(n);
+      var rx = n.x - st.x, ry = n.y - st.y;
+      st.ids.forEach(function (o) { o.k.x = o.x + rx; o.k.y = o.y + ry; g.clamp(o.k); g.place(o.k); });
+      g.kick(n, Math.hypot((n.x - ox) * s.w, (n.y - oy) * s.h) * 0.12 * (n.x < ox ? -1 : 1));
+      g.draw();
+    });
+    function end(e) { if (!st) return; st = null; el.classList.remove("drag"); }
+    el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
+    el.addEventListener("keydown", function (e) {
+      var d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key]; if (!d) return;
+      e.preventDefault(); n.x += d[0] * 0.02; n.y += d[1] * 0.02; g.clamp(n); g.place(n); g.kick(n, d[0] * 3); g.draw();
+    });
+  };
+  Group.prototype.setCollapsed = function (n, on) {
+    var g = this; n.collapsed = on;
+    g.descendants(n).forEach(function (k) { k.hidden = on; k.el.classList.toggle("gone", on); k.el.setAttribute("aria-hidden", on ? "true" : "false"); if (on) k.el.setAttribute("tabindex", "-1"); else k.el.setAttribute("tabindex", "0"); });
+    g.badge(n); g.draw();
+  };
+  Group.prototype.badge = function (n) {
+    var b = $(".kids", n.el);
+    if (!n.collapsed) { if (b) b.remove(); return; }
+    if (!b) { b = document.createElement("span"); b.className = "kids"; n.el.appendChild(b); }
+    b.textContent = "+" + this.descendants(n).length + " " + T[lang].hidden_n;
+  };
+
+  var uid = 0;
+  function Board(el, opt) {
+    var b = this; b.el = el; b.uid = ++uid; b.groups = [];
+    b.opt = opt || {};
+    $$(".set", el).forEach(function (s) { b.groups.push(new Group(b, s, b.opt)); });
+    b.fit();
+  }
+  Board.prototype.fit = function () {
+    var w = this.el.clientWidth || 600, narrow = w < 520;
+    this.el.style.setProperty("--bh", Math.round(w * (narrow ? 1.05 : this.opt.ratio || 0.8)));
+    this.el.style.setProperty("--s", Math.max(0.66, Math.min(1.12, w / 640)).toFixed(3));
+    this.groups.forEach(function (g) { g.layout(); });
+  };
+
+  var hero = new Board($("#hero-board"), { follow: true });
+  var tree = new Board($("#tree-board"), { follow: true, ratio: 0.9 });
+  var treeG = tree.groups[0];
+  window.addEventListener("resize", function () { hero.fit(); tree.fit(); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { hero.fit(); tree.fit(); });
+
+  // sets de la portada
+  var cur = 0;
+  function showSet(i) {
+    cur = i;
+    $$("#hero-board .set").forEach(function (s, k) { s.classList.toggle("on", k === i); });
+    $$("[data-set-btn]").forEach(function (b) { b.setAttribute("aria-pressed", String(+b.getAttribute("data-set-btn") === i)); });
+    hero.groups[i].layout();
+    if (!reduce) hero.groups[i].cables.forEach(function (c) { c.v += 6; }), hero.groups[i].run();
+  }
+  $$("[data-set-btn]").forEach(function (b) { b.addEventListener("click", function () { showSet(+b.getAttribute("data-set-btn")); }); });
+
+  // botones dentro de los widgets: confirman que "enviaron" algo
+  function wireSend(root) {
+    $$("[data-send]", root).forEach(function (b) {
+      if (b._w) return; b._w = 1;
+      b.addEventListener("click", function () {
+        var t = T[lang], key = b.getAttribute("data-i"), t0 = t[key];
+        b.classList.add("sent"); b.textContent = t.sent + " ✓";
+        setTimeout(function () { b.classList.remove("sent"); b.textContent = T[lang][key]; }, 1400);
+      });
+    });
+  }
+  wireSend(document);
+
+  // plegar hijos
+  var folded = false;
+  $("#fold").addEventListener("click", function () {
+    folded = !folded; treeG.setCollapsed(treeG.nodes.r, folded);
+    $("#fold").textContent = T[lang][folded ? "b_unfold" : "b_fold"];
+  });
+  $("#follow").addEventListener("change", function () { treeG.follow = this.checked; });
+
+  // capas
+  var papers = [["amarillo", "#fde68a"], ["doblada", "#bfdbfe"], ["degradado", "#fbcfe8"], ["verde", "#bbf7d0"], ["cinta", "#fef3c7"], ["redonda", "#ddd6fe"], ["marron", "#e7d5b8"], ["oscura", "#334155"]];
+  var sw = $("#swatches");
+  papers.forEach(function (p, i) {
+    var b = document.createElement("button"); b.type = "button"; b.setAttribute("aria-pressed", String(i === 0)); b.setAttribute("aria-label", p[0]);
+    b.style.backgroundImage = "url(img/papel-" + p[0] + ".png)";
+    b.addEventListener("click", function () {
+      $("#l2img").src = "img/papel-" + p[0] + ".png"; $("#l1").classList.toggle("light", p[0] === "oscura");
+      $$("button", sw).forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+    });
+    sw.appendChild(b);
+  });
+  $$("#seg-content button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var k = b.getAttribute("data-k");
+      $$("#l1 > div").forEach(function (d) { d.hidden = d.getAttribute("data-k") !== k; });
+      $$("#seg-content button").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+    });
+  });
+  $("#explode").addEventListener("change", function () { $("#stack").classList.toggle("x", this.checked); });
+
+  /* ================= texto, idioma, instalador ================= */
   function render() {
     var t = T[lang];
     document.documentElement.lang = lang;
     $("#lang").textContent = lang === "es" ? "English" : "Español";
-    document.querySelectorAll("[data-i]").forEach(function (el) { var k = el.getAttribute("data-i"); if (t[k]) el.textContent = t[k]; });
-    document.querySelectorAll("[data-list]").forEach(function (ul) {
+    $$("[data-i]").forEach(function (el) { var k = el.getAttribute("data-i"); if (t[k] && !el.classList.contains("sent")) el.textContent = t[k]; });
+    $$("[data-ih]").forEach(function (el) { var k = el.getAttribute("data-ih"); if (t[k]) el.innerHTML = t[k]; });
+    $$("[data-list]").forEach(function (ul) {
       ul.innerHTML = ""; t[ul.getAttribute("data-list")].forEach(function (s) { var li = document.createElement("li"); li.textContent = s; ul.appendChild(li); });
     });
+    $("#fold").textContent = t[folded ? "b_unfold" : "b_fold"];
+    treeG.badge(treeG.nodes.r);
     var cta = $("#cta");
     if (os === "any") { cta.setAttribute("href", "#how"); cta.removeAttribute("download"); $("#cta-text").textContent = t.cta_any; }
     else { cta.setAttribute("href", FILES[os]); cta.setAttribute("download", ""); $("#cta-text").textContent = t["cta_" + os]; }
     $("#fine").textContent = t["fine_" + os];
     $("#ver").textContent = t.ver + ": pack " + PACK + " (" + VERSION + ")";
     var o = $("#others"); o.textContent = t.others + " ";
-    ["win", "mac", "linux"].forEach(function (k, i) {
+    ["win", "mac", "linux"].forEach(function (k) {
       if (k === os) return;
       var a = document.createElement("a"); a.href = FILES[k]; a.setAttribute("download", ""); a.textContent = NAMES[k];
       o.appendChild(a); o.appendChild(document.createTextNode(" · "));
     });
     if (o.lastChild && o.lastChild.nodeType === 3) o.removeChild(o.lastChild);
     $("#s2p").textContent = t["s2_" + shown];
-    document.querySelectorAll("#tabs button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-os") === shown)); });
+    $$("#tabs button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-os") === shown)); });
     var box = $("#os-help"); box.innerHTML = "";
     var p = document.createElement("p"); p.textContent = t["os_" + shown]; box.appendChild(p);
     if (shown !== "win") {
-      var pre = document.createElement("pre"); pre.textContent = cmd(shown);
-      var b = document.createElement("button"); b.type = "button"; b.className = "copy"; b.textContent = t.copy;
+      var pre = document.createElement("pre"); pre.textContent = cmd();
+      var b = document.createElement("button"); b.type = "button"; b.className = "copybtn"; b.textContent = t.copy;
       b.onclick = function () {
         var done = function () { b.textContent = t.copied; setTimeout(function () { b.textContent = t.copy; }, 1500); };
-        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd(shown)).then(done, function () {});
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd()).then(done, function () {});
       };
       pre.appendChild(b); box.appendChild(pre);
     }
+    hero.fit(); tree.fit();
   }
   $("#lang").addEventListener("click", function () { lang = lang === "es" ? "en" : "es"; try { localStorage.setItem("wa-lang", lang); } catch (e) {} render(); });
-  document.querySelectorAll("#tabs button").forEach(function (b) { b.addEventListener("click", function () { shown = b.getAttribute("data-os"); render(); }); });
+  $$("#tabs button").forEach(function (b) { b.addEventListener("click", function () { shown = b.getAttribute("data-os"); render(); }); });
   render();
 })();
 </script>

@@ -13,7 +13,7 @@ Funciona en Windows, macOS y Linux, con instalación de un clic.
 - **Jerarquizar**: padres, hijos, nietos… Los hijos pueden seguir al padre cuando lo arrastras, y puedes mover una rama entera.
 - **Plegar y desplegar**: oculta los hijos de una nota (o de todas) para ver solo lo que importa, y recupéralos cuando quieras.
 - **Sets de widgets**: guarda conjuntos completos de widgets y cambia entre ellos al instante con el teclado.
-- **Packs de widgets**: comparte o estrena widgets guardados y sets en un solo archivo `.wapack`; exporta lo que ya tienes.
+- **Packs y archivos de widgets**: comparte o estrena widgets en un solo archivo: `.wapack` (varios widgets guardados y sets), `.waset` (un árbol o todos los widgets de un set), `.wawidget` (un widget guardado) y `.wapaper` (una forma de papel). Todos van comprimidos con sus imágenes.
 - **Configurable a fondo**: cables (grosor, opacidad, degradado, cuerda, calidad de dibujo), formas de papel, widgets guardados, atajos de teclado y gestos del icono de bandeja.
 - **Rápido y ligero**: la calidad de dibujo de los cables se adapta sola al ordenador.
 - **Tus datos son tuyos**: todo se guarda en archivos JSON en tu carpeta de usuario, con copias de seguridad.
@@ -96,7 +96,11 @@ o a tus sets. Las notas base no guardan imagen: se vuelven a dibujar y se pueden
 (*Exportar mis widgets y sets...*), y tus notas, widgets guardados y sets de siempre se leen sin cambios.
 
 Con el primer arranque se instala un pack de ejemplo, **Notas de colores** (8 colores y dos tableros). Descárgalo también desde la página: `dl/notas-de-colores.wapack`.
-El formato está descrito en [docs/FORMATO-WAPACK.md](docs/FORMATO-WAPACK.md).
+El formato está descrito en [docs/FORMATO-WAPACK.md](docs/FORMATO-WAPACK.md); los demás archivos, en [docs/FORMATOS-ARCHIVO.md](docs/FORMATOS-ARCHIVO.md).
+
+### Valores iniciales de una instalación nueva
+
+Quien reparte el programa puede dejar ajustados los cables (grosor, peso de la cuerda, tamaño, curvatura...), la jerarquía, los tonos y los atajos: en el programa, *Guardar y cargar → Configuración y atajos → Guardar mi configuración como la de las instalaciones nuevas...* crea un `config.json`; déjalo en `defaults/`. Se aplica una sola vez, en el primer arranque, y no pisa nada que ya exista. Esos mismos valores son los que usa un set que no trae un ajuste propio (los ajustes son de cada set).
 
 ## Gestos y atajos más útiles
 
@@ -148,6 +152,7 @@ compila un ejecutable o deja el programa en modo portable.
 - `herramientas.py`: instalar / desinstalar / compilar / librerías de cualquier `.py` de la carpeta.
 - `defaults/`: lo que se copia en el primer arranque (notas de bienvenida, perfil de ejemplo, estilo de nota y el pack de ejemplo en `defaults/packs/`).
 - `docs/FORMATO-WAPACK.md`: especificación del formato de los packs.
+- `docs/FORMATOS-ARCHIVO.md`: especificación de `.waset`, `.wawidget` y `.wapaper`.
 - `installers/`: `install-windows.cmd` (con PowerShell dentro) e `install-unix.sh` (Linux y macOS). Descargan `uv`, un Python 3.12 propio, y llaman a `herramientas.py install`.
 - `site/` y `tools/build_site.sh`: la página con el botón único y el montaje de lo que se publica.
 - `.github/workflows/pages.yml`: publica la página en GitHub Pages en cada cambio; calcula las URLs solo.
