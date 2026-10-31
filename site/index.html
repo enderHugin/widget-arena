@@ -118,6 +118,7 @@
   .swatches { display: inline-flex; gap: 6px; flex-wrap: wrap; }
   .swatches button { width: 34px; height: 34px; padding: 0; border-radius: 8px; border: 2px solid transparent; background: #0000 center/contain no-repeat; cursor: pointer; }
   .swatches button[aria-pressed="true"] { border-color: var(--teal); }
+  #fswatches button { box-shadow: inset 0 0 0 1px rgba(0,0,0,.22); }
   .chk { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; cursor: pointer; }
   .chk input { width: 18px; height: 18px; accent-color: var(--teal); }
   .btn2 { display: inline-block; text-decoration: none; background: var(--teal); color: #fff; border: 0; border-radius: 10px; padding: 8px 15px; font: inherit; font-size: 15px; cursor: pointer; }
@@ -130,7 +131,17 @@
   .stack .l2 img { width: 100%; height: 100%; display: block; }
   .stack .l1 { display: grid; place-items: center; padding: 14%; font: 400 22px/1.15 var(--hand); text-align: center; color: #2a2517; }
   .stack .l1.light { color: #eef2f7; }
-  .stack .l1 > div { display: grid; gap: .45em; place-items: center; width: 100%; }
+  .stack .l1 > .nt { display: grid; gap: .45em; place-items: center; width: 100%; }
+  .stack .l1 .bts { display: grid; gap: .4em; margin-top: .3em; }
+  .stack .l1 .fr { position: absolute; inset: 6%; border: 24px solid var(--fc, #8a5a2b); border-radius: 3px; box-shadow: inset 0 0 0 2px rgba(0,0,0,.28), inset 0 5px 12px rgba(0,0,0,.4), 0 8px 16px rgba(0,0,0,.3); pointer-events: none; }
+  .stack .l2 .pic { position: absolute; inset: 9%; overflow: hidden; border-radius: 3px; background: #fbfbfa; }
+  .stack .l2 .pic svg { width: 100%; height: 100%; display: block; border-radius: 0; }
+  .stack .l2 .pic .mini { width: 100%; height: 100%; border-radius: 0; box-shadow: none; background: #fbfbfa; color: #1d2430; font: 600 13px var(--ui); text-align: left; }
+  .stack .l2 .pic .mini .bar { background: #e1e4e9; padding: 5px 8px; font-weight: 400; font-size: 11px; color: #5b6475; }
+  .stack .l2 .pic .mini .pg { padding: 10px 12px; }
+  .stack .l2 .pic .mini .pg i { display: block; height: 6px; border-radius: 3px; background: #d9dde4; margin: 7px 0 0; }
+  .rule { font-size: 14.5px; margin-top: 14px; max-width: 33em; }
+  .sub { font-size: 21px; line-height: 1.35; max-width: 27em; margin: 0 0 14px; color: var(--desk-ink, inherit); }
   .stack .l1 .btn { font: 400 18px var(--hand); border: 0; padding: .25em .9em; border-radius: .5em; background: #1f2f55; color: #fff; box-shadow: 0 3px 0 #0f1a36; cursor: pointer; }
   .stack .l1 .btn.sent { background: #1c7a4d; box-shadow: 0 3px 0 #0f4a2e; }
   .stack .l1 .mini { width: 100%; background: #fbfbfa; border-radius: 8px; overflow: hidden; color: #1d2430; font: 600 13px var(--ui); text-align: left; box-shadow: 0 3px 8px rgba(0,0,0,.25); }
@@ -142,7 +153,7 @@
   .stack.x .l1 { transform: translate(46px, -26px) rotate(3deg); }
   .tag { position: absolute; font-size: 13px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; opacity: 0; transition: opacity .3s; white-space: nowrap; }
   .stack.x ~ .tag { opacity: 1; }
-  .tag.t1 { right: 8%; top: 14%; }
+  .tag.t1 { right: 2%; top: 4%; }
   .tag.t2 { left: 8%; bottom: 14%; }
 
   /* tablero claro */
@@ -228,7 +239,7 @@
       <a class="brand" href="#"><img src="favicon.png" alt="" width="32" height="32"><span>Widget Arena</span></a>
       <nav class="main" aria-label="Secciones">
         <a href="#layers" data-i="n_layers">Widgets</a>
-        <a href="#ropes" data-i="n_ropes">Cables</a>
+        <a href="#ropes" data-i="n_ropes">Jerarquías</a>
         <a href="#paper" data-i="n_paper">Formas de papel</a>
         <a href="#share" data-i="n_share">Compartir</a>
         <a href="#how" data-i="n_install">Instalar</a>
@@ -239,8 +250,9 @@
     <main>
     <div class="hero">
       <div>
-        <h1 data-i="h1">Widgets sueltos por tu escritorio, unidos por cables.</h1>
-        <p class="lead" data-i="lead">Notas, imágenes, páginas web y botones que flotan sobre tus programas. Enlázalos como padres e hijos, cambia de set con una tecla y déjalos a tu manera. Sin Python, sin administrador, un solo clic.</p>
+        <h1 data-i="h1">Widgets sueltos por tu escritorio.</h1>
+        <p class="sub" data-i="sub">Y si quieres, jerarquizables: enlázalos con cables como padres e hijos y contrae o expande las ramas.</p>
+        <p class="lead" data-i="lead">Notas, imágenes, páginas web y botones que flotan sobre tus programas. Cambia de set con una tecla y déjalos a tu manera. Sin Python, sin administrador, un solo clic.</p>
         <a class="cta" id="cta" href="dl/install-windows.cmd" download>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 20h16"/></svg>
           <span id="cta-text">Descargar para Windows</span>
@@ -300,29 +312,34 @@
   <section class="block" id="layers">
     <div class="two">
       <div class="copy">
-        <h2 data-i="h_layers">Cada widget tiene dos capas que combinas a tu gusto</h2>
-        <p data-i="p_layers">Abajo, la forma de papel. Encima, lo que quieras poner: texto, una imagen, una página web o botones. Cada capa tiene su propio color, fuente, giro y tamaño, así que una misma nota puede ser un post-it, un marco con foto o un mini-navegador.</p>
+        <h2 data-i="h_layers">Cada widget tiene dos capas</h2>
+        <p data-i="p_layers">Una nota lleva el texto en la capa 1 y su fondo, la forma de papel, en la capa 2. Un marco lleva el marco en la capa 1 y, debajo, en la capa 2, una imagen enmarcada o una página web. Cada capa tiene su propio color, fuente, giro y tamaño.</p>
         <div class="ctrl">
-          <div><span class="lbl" data-i="l_content">Contenido</span>
-            <span class="seg" id="seg-content" role="group" aria-label="Contenido">
-              <button type="button" data-k="text" aria-pressed="true" data-i="c_text">Texto</button><button type="button" data-k="img" aria-pressed="false" data-i="c_img">Imagen</button><button type="button" data-k="web" aria-pressed="false" data-i="c_web">Página web</button><button type="button" data-k="btn" aria-pressed="false" data-i="c_btn">Botones</button>
+          <div><span class="lbl" data-i="l_type">Tipo de widget</span>
+            <span class="seg" id="seg-type" role="group" aria-label="Tipo de widget">
+              <button type="button" data-k="nota" aria-pressed="true" data-i="k_note">Nota</button><button type="button" data-k="img" aria-pressed="false" data-i="k_img">Marco con imagen</button><button type="button" data-k="web" aria-pressed="false" data-i="k_web">Marco con página web</button>
             </span></div>
-          <div><span class="lbl" data-i="l_paper">Papel</span><span class="swatches" id="swatches"></span></div>
+          <div id="row-paper"><span class="lbl" data-i="l_paper">Fondo</span><span class="swatches" id="swatches"></span></div>
+          <div id="row-frame" hidden><span class="lbl" data-i="l_frame">Marco</span><span class="swatches" id="fswatches"></span></div>
+          <label class="chk" id="row-btn"><input type="checkbox" id="btns"> <span data-i="l_btns">Botones en la capa 1</span></label>
           <label class="chk"><input type="checkbox" id="explode"> <span data-i="l_split">Separar las capas</span></label>
         </div>
+        <p class="muted rule" id="rule" data-i="rule_note">Capa 1 es texto: el widget se trata como una nota, y es ahí donde funcionan los botones.</p>
       </div>
       <div class="lay" aria-live="polite">
         <div class="stack" id="stack">
-          <div class="l2"><img id="l2img" src="img/papel-amarillo.png" alt=""></div>
+          <div class="l2">
+            <img id="l2img" src="img/papel-amarillo.png" alt="">
+            <div class="pic" id="l2pic" hidden><svg viewBox="0 0 120 90" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect width="120" height="90" fill="#9fd3e6"/><circle cx="90" cy="24" r="11" fill="#fde68a"/><path d="M0 90V60l28-24 26 22 22-16 44 30v18z" fill="#4f8f6a"/><path d="M0 90V74l36-14 30 12 54-10v28z" fill="#356b52"/></svg></div>
+            <div class="pic" id="l2web" hidden><div class="mini"><div class="bar">recetas.example/pan</div><div class="pg"><span data-i="w_pan">Pan de masa madre</span><i></i><i style="width:70%"></i><i style="width:85%"></i><i style="width:60%"></i></div></div></div>
+          </div>
           <div class="l1" id="l1">
-            <div data-k="text"><b data-i="w_week">Semana</b><span data-i="w_week2">Entregar el informe el jueves</span></div>
-            <div data-k="img" hidden><svg viewBox="0 0 120 90" aria-hidden="true"><rect width="120" height="90" fill="#9fd3e6"/><circle cx="90" cy="24" r="11" fill="#fde68a"/><path d="M0 90V60l28-24 26 22 22-16 44 30v18z" fill="#4f8f6a"/><path d="M0 90V74l36-14 30 12 54-10v28z" fill="#356b52"/></svg></div>
-            <div data-k="web" hidden><div class="mini"><div class="bar">recetas.example/pan</div><div class="pg"><span data-i="w_pan">Pan de masa madre</span><i></i><i style="width:70%"></i><i style="width:85%"></i></div></div></div>
-            <div data-k="btn" hidden><button class="btn" type="button" data-send data-i="b_panel">Abrir panel</button><button class="btn" type="button" data-send data-i="b_light">Luz del estudio</button></div>
+            <div class="nt" id="l1note"><b data-i="w_week">Semana</b><span data-i="w_week2">Entregar el informe el jueves</span><div class="bts" id="l1btns" hidden><button class="btn" type="button" data-send data-i="b_panel">Abrir panel</button><button class="btn" type="button" data-send data-i="b_light">Luz del estudio</button></div></div>
+            <div class="fr" id="l1frame" hidden></div>
           </div>
         </div>
-        <span class="tag t1" data-i="tag1">Capa 1: el contenido</span>
-        <span class="tag t2" data-i="tag2">Capa 2: la forma de papel</span>
+        <span class="tag t1" data-i="tag1_note">Capa 1: texto y botones</span>
+        <span class="tag t2" data-i="tag2_note">Capa 2: el fondo (forma de papel)</span>
       </div>
     </div>
   </section>
@@ -330,11 +347,11 @@
   <section class="block" id="ropes">
     <div class="two flip">
       <div class="copy">
-        <h2 data-i="h_ropes">Los widgets se enlazan como un árbol</h2>
-        <p data-i="p_ropes">Un widget puede ser hijo de otro. Los cables cuelgan como cuerdas y se balancean al moverlos, y los hijos pueden seguir al padre cuando lo arrastras. Para ordenar la vista, pliega las ramas: los hijos desaparecen y vuelven en el mismo sitio.</p>
+        <h2 data-i="h_ropes">Si quieres, se enlazan como un árbol</h2>
+        <p data-i="p_ropes">Un widget puede ser hijo de otro. Los cables cuelgan como cuerdas y se balancean al moverlos, y los hijos pueden seguir al padre cuando lo arrastras. Para ordenar la vista, contrae las ramas: los hijos desaparecen y al expandir vuelven en el mismo sitio.</p>
         <p class="muted" data-ih="p_ropes2">Ctrl + arrastrar una nota sobre otra la hace hija suya; con Alt, madre. Con Ctrl + Alt + Mayús + arrastrar nace una hija donde sueltes.</p>
         <div class="ctrl">
-          <button class="btn2" id="fold" type="button" data-i="b_fold">Plegar hijos</button>
+          <button class="btn2" id="fold" type="button" data-i="b_fold">Contraer hijos</button>
           <label class="chk"><input type="checkbox" id="follow" checked> <span data-i="l_follow">Los hijos siguen al padre</span></label>
         </div>
       </div>
@@ -359,7 +376,7 @@
     <p class="muted" style="max-width:40em" data-i="p_paper">Doblez de esquina, cinta, borde, degradado, sombra y esquinas redondeadas: el editor dibuja el papel a partir de unos parámetros. Es lo que ves aquí: imágenes generadas por el propio programa. Como se redibujan solas, no pesan al compartirlas.</p>
     <div class="strip" aria-hidden="true">
       <figure><img src="img/papel-amarillo.png" alt="" loading="lazy"></figure><figure><img src="img/papel-doblada.png" alt="" loading="lazy"></figure><figure><img src="img/papel-cinta.png" alt="" loading="lazy"></figure>
-      <figure><img src="img/papel-degradado.png" alt="" loading="lazy"></figure><figure><img src="img/papel-marron.png" alt="" loading="lazy"></figure><figure><img src="img/papel-redonda.png" alt="" loading="lazy"></figure>
+      <figure><img src="img/papel-degradado.png" alt="" loading="lazy"></figure><figure><img src="img/papel-oliva.png" alt="" loading="lazy"></figure><figure><img src="img/papel-redonda.png" alt="" loading="lazy"></figure>
       <figure><img src="img/papel-verde.png" alt="" loading="lazy"></figure><figure><img src="img/papel-oscura.png" alt="" loading="lazy"></figure>
     </div>
     <div class="tools">
@@ -438,21 +455,24 @@
   var PACK = "__PACK__", VERSION = "__VERSION__";
   var T = {
     es: {
-      n_layers: "Widgets", n_ropes: "Cables", n_paper: "Formas de papel", n_share: "Compartir", n_install: "Instalar",
-      h1: "Widgets sueltos por tu escritorio, unidos por cables.",
-      lead: "Notas, imágenes, páginas web y botones que flotan sobre tus programas. Enlázalos como padres e hijos, cambia de set con una tecla y déjalos a tu manera. Sin Python, sin administrador, un solo clic.",
+      n_layers: "Widgets", n_ropes: "Jerarquías", n_paper: "Formas de papel", n_share: "Compartir", n_install: "Instalar",
+      h1: "Widgets sueltos por tu escritorio.",
+      sub: "Y si quieres, jerarquizables: enlázalos con cables como padres e hijos y contrae o expande las ramas.",
+      lead: "Notas, imágenes, páginas web y botones que flotan sobre tus programas. Cambia de set con una tecla y déjalos a tu manera. Sin Python, sin administrador, un solo clic.",
       hint: "Arrastra cualquier widget", sets_l: "Sets de widgets:", set1: "Semana", set2: "Estudio",
       w_week: "Semana", w_week2: "Entregar el informe el jueves", w_ideas: "Ideas para la portada", w_pan: "Pan de masa madre", w_home: "Estudio",
       b_panel: "Abrir panel", b_light: "Luz del estudio", sent: "Enviado",
       w_exam: "Examen", w_exam2: "Temas 4 y 5, martes a las 9:00", w_trip: "Fin de semana", w_break: "Descanso a las 11", w_read: "Lecturas", w_read2: "Capítulo 7, resumen",
-      h_layers: "Cada widget tiene dos capas que combinas a tu gusto",
-      p_layers: "Abajo, la forma de papel. Encima, lo que quieras poner: texto, una imagen, una página web o botones. Cada capa tiene su propio color, fuente, giro y tamaño, así que una misma nota puede ser un post-it, un marco con foto o un mini-navegador.",
-      l_content: "Contenido", c_text: "Texto", c_img: "Imagen", c_web: "Página web", c_btn: "Botones", l_paper: "Papel", l_split: "Separar las capas",
-      tag1: "Capa 1: el contenido", tag2: "Capa 2: la forma de papel",
-      h_ropes: "Los widgets se enlazan como un árbol",
-      p_ropes: "Un widget puede ser hijo de otro. Los cables cuelgan como cuerdas y se balancean al moverlos, y los hijos pueden seguir al padre cuando lo arrastras. Para ordenar la vista, pliega las ramas: los hijos desaparecen y vuelven en el mismo sitio.",
+      h_layers: "Cada widget tiene dos capas",
+      p_layers: "Una nota lleva el texto en la capa 1 y su fondo, la forma de papel, en la capa 2. Un marco lleva el marco en la capa 1 y, debajo, en la capa 2, una imagen enmarcada o una página web. Cada capa tiene su propio color, fuente, giro y tamaño.",
+      l_type: "Tipo de widget", k_note: "Nota", k_img: "Marco con imagen", k_web: "Marco con página web", l_paper: "Fondo", l_frame: "Marco", l_btns: "Botones en la capa 1", l_split: "Separar las capas",
+      rule_note: "Capa 1 es texto: el widget se trata como una nota, y es ahí donde funcionan los botones.",
+      rule_frame: "Capa 1 no es texto: el widget se trata como un marco para una imagen enmarcada o una página web.",
+      tag1_note: "Capa 1: texto y botones", tag1_frame: "Capa 1: el marco", tag2_note: "Capa 2: el fondo (forma de papel)", tag2_img: "Capa 2: la imagen enmarcada", tag2_web: "Capa 2: la página web",
+      h_ropes: "Si quieres, se enlazan como un árbol",
+      p_ropes: "Es opcional: cada widget puede vivir suelto. Pero uno puede ser hijo de otro. Los cables cuelgan como cuerdas y se balancean al moverlos, y los hijos pueden seguir al padre cuando lo arrastras. Para ordenar la vista, contrae las ramas: los hijos desaparecen y al expandir vuelven en el mismo sitio.",
       p_ropes2: "<kbd>Ctrl</kbd> + arrastrar una nota sobre otra la hace hija suya; con <kbd>Alt</kbd>, madre. Con <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Mayús</kbd> + arrastrar nace una hija donde sueltes.",
-      b_fold: "Plegar hijos", b_unfold: "Desplegar hijos", l_follow: "Los hijos siguen al padre",
+      b_fold: "Contraer hijos", b_unfold: "Expandir hijos", l_follow: "Los hijos siguen al padre",
       t_root: "Proyecto", t_design: "Diseño", t_text: "Texto", t_ship: "Entrega", t_rev: "Revisión", hidden_n: "ocultos",
       h_paper: "Formas de papel que se dibujan, no se buscan",
       p_paper: "Doblez de esquina, cinta, borde, degradado, sombra y esquinas redondeadas: el editor dibuja el papel a partir de unos parámetros. Es lo que ves aquí: imágenes generadas por el propio programa. Como se redibujan solas, no pesan al compartirlas.",
@@ -501,21 +521,24 @@
       kofi_b: "Invítame a un café", ver: "Versión actual", foot: "Software libre con licencia MIT."
     },
     en: {
-      n_layers: "Widgets", n_ropes: "Cables", n_paper: "Paper shapes", n_share: "Share", n_install: "Install",
-      h1: "Widgets scattered across your desktop, joined by cables.",
-      lead: "Notes, images, web pages and buttons that float over your programs. Link them as parents and children, switch sets with one key and arrange them your way. No Python, no admin rights, one click.",
+      n_layers: "Widgets", n_ropes: "Hierarchies", n_paper: "Paper shapes", n_share: "Share", n_install: "Install",
+      h1: "Widgets scattered across your desktop.",
+      sub: "And if you want, hierarchical: link them with cables as parents and children, and collapse or expand the branches.",
+      lead: "Notes, images, web pages and buttons that float over your programs. Switch sets with one key and arrange them your way. No Python, no admin rights, one click.",
       hint: "Drag any widget", sets_l: "Widget sets:", set1: "Week", set2: "Study",
       w_week: "Week", w_week2: "Hand in the report on Thursday", w_ideas: "Ideas for the cover", w_pan: "Sourdough bread", w_home: "Studio",
       b_panel: "Open panel", b_light: "Studio light", sent: "Sent",
       w_exam: "Exam", w_exam2: "Units 4 and 5, Tuesday at 9:00", w_trip: "Weekend away", w_break: "Break at 11", w_read: "Reading", w_read2: "Chapter 7, summary",
-      h_layers: "Every widget has two layers you can mix freely",
-      p_layers: "Below, the paper shape. On top, whatever you want to put there: text, an image, a web page or buttons. Each layer has its own colour, font, rotation and size, so the same note can be a sticky note, a photo frame or a mini-browser.",
-      l_content: "Content", c_text: "Text", c_img: "Image", c_web: "Web page", c_btn: "Buttons", l_paper: "Paper", l_split: "Pull the layers apart",
-      tag1: "Layer 1: the content", tag2: "Layer 2: the paper shape",
-      h_ropes: "Widgets link up like a tree",
-      p_ropes: "A widget can be the child of another. Cables hang like ropes and sway when you move them, and children can follow their parent when you drag it. To tidy the view, fold the branches: children disappear and come back in the same place.",
+      h_layers: "Every widget has two layers",
+      p_layers: "A note has its text on layer 1 and its background, the paper shape, on layer 2. A frame has the frame itself on layer 1 and, underneath on layer 2, a framed image or a web page. Each layer has its own colour, font, rotation and size.",
+      l_type: "Widget type", k_note: "Note", k_img: "Frame with image", k_web: "Frame with web page", l_paper: "Background", l_frame: "Frame", l_btns: "Buttons on layer 1", l_split: "Pull the layers apart",
+      rule_note: "Layer 1 is text: the widget is treated as a note, and that is where the buttons work.",
+      rule_frame: "Layer 1 is not text: the widget is treated as a frame for a framed image or a web page.",
+      tag1_note: "Layer 1: text and buttons", tag1_frame: "Layer 1: the frame", tag2_note: "Layer 2: the background (paper shape)", tag2_img: "Layer 2: the framed image", tag2_web: "Layer 2: the web page",
+      h_ropes: "If you want, they link up like a tree",
+      p_ropes: "It is optional: every widget can live on its own. But one can be the child of another. Cables hang like ropes and sway when you move them, and children can follow their parent when you drag it. To tidy the view, collapse the branches: children disappear and come back in the same place when you expand.",
       p_ropes2: "<kbd>Ctrl</kbd> + drag a note onto another to make it its child; with <kbd>Alt</kbd>, its parent. <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + drag creates a child where you drop it.",
-      b_fold: "Fold children", b_unfold: "Unfold children", l_follow: "Children follow their parent",
+      b_fold: "Collapse children", b_unfold: "Expand children", l_follow: "Children follow their parent",
       t_root: "Project", t_design: "Design", t_text: "Writing", t_ship: "Delivery", t_rev: "Review", hidden_n: "hidden",
       h_paper: "Paper shapes that are drawn, not searched for",
       p_paper: "Folded corner, tape, border, gradient, shadow and rounded corners: the editor draws the paper from a few parameters. What you see here are images generated by the program itself. Because they are redrawn on load, they add no weight when you share them.",
@@ -756,7 +779,7 @@
   $("#follow").addEventListener("change", function () { treeG.follow = this.checked; });
 
   // capas
-  var papers = [["amarillo", "#fde68a"], ["doblada", "#bfdbfe"], ["degradado", "#fbcfe8"], ["verde", "#bbf7d0"], ["cinta", "#fef3c7"], ["redonda", "#ddd6fe"], ["marron", "#e7d5b8"], ["oscura", "#334155"]];
+  var papers = [["amarillo", "#fde68a"], ["doblada", "#bfdbfe"], ["degradado", "#fbcfe8"], ["verde", "#bbf7d0"], ["cinta", "#fef3c7"], ["redonda", "#ddd6fe"], ["oliva", "#c3c388"], ["oscura", "#334155"]];
   var sw = $("#swatches");
   papers.forEach(function (p, i) {
     var b = document.createElement("button"); b.type = "button"; b.setAttribute("aria-pressed", String(i === 0)); b.setAttribute("aria-label", p[0]);
@@ -767,13 +790,30 @@
     });
     sw.appendChild(b);
   });
-  $$("#seg-content button").forEach(function (b) {
+  var frames = [["#8a5a2b", "madera"], ["#23262d", "negro"], ["#f1efe9", "blanco"], ["#c9a227", "oro"]];
+  var fsw = $("#fswatches");
+  frames.forEach(function (f, i) {
+    var b = document.createElement("button"); b.type = "button"; b.setAttribute("aria-pressed", String(i === 0)); b.setAttribute("aria-label", f[1]);
+    b.style.backgroundColor = f[0]; b.style.backgroundImage = "none";
     b.addEventListener("click", function () {
-      var k = b.getAttribute("data-k");
-      $$("#l1 > div").forEach(function (d) { d.hidden = d.getAttribute("data-k") !== k; });
-      $$("#seg-content button").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+      $("#stack").style.setProperty("--fc", f[0]);
+      $$("button", fsw).forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
     });
+    fsw.appendChild(b);
   });
+  $("#btns").addEventListener("change", function () { $("#l1btns").hidden = !this.checked; });
+  function setType(k) {
+    var note = k === "nota";
+    $("#l1note").hidden = !note; $("#l1frame").hidden = note;
+    $("#l2img").hidden = !note; $("#l2pic").hidden = k !== "img"; $("#l2web").hidden = k !== "web";
+    $("#row-paper").hidden = !note; $("#row-btn").hidden = !note; $("#row-frame").hidden = note;
+    $$("#seg-type button").forEach(function (x) { x.setAttribute("aria-pressed", String(x.getAttribute("data-k") === k)); });
+    $(".tag.t1").setAttribute("data-i", note ? "tag1_note" : "tag1_frame");
+    $(".tag.t2").setAttribute("data-i", note ? "tag2_note" : k === "img" ? "tag2_img" : "tag2_web");
+    $("#rule").setAttribute("data-i", note ? "rule_note" : "rule_frame");
+    render();
+  }
+  $$("#seg-type button").forEach(function (b) { b.addEventListener("click", function () { setType(b.getAttribute("data-k")); }); });
   $("#explode").addEventListener("change", function () { $("#stack").classList.toggle("x", this.checked); });
 
   /* ================= texto, idioma, instalador ================= */
