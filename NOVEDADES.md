@@ -1,3 +1,9 @@
+## Pack 131 · 2026-10-31
+- **Marcos editables**, igual que las formas de papel: menú del widget → *Aspecto* → *Marco* → *Generar marco...* / *Editar este marco...*. El editor deja fijar el tamaño y el grosor de cada lado, el color, el bisel, la textura, las sombras y el filo, con puntos de partida (Madera, Negro, Blanco, Oro, Plata, Rojo laca, Fino negro, Paspartú), vista previa sobre un paisaje y *Copiar marco / Pegar marco* en JSON. El marco es un PNG con el centro transparente en la capa 1 (la imagen o la web de la capa 2 se ajusta al hueco); sus parámetros se guardan en el widget, así que se puede volver a editar, y el PNG viaja con el widget en `.waset`, `.wawidget` y las copias.
+- **El efecto resorte también actúa sobre la cuerda** (antes la física de cuerda lo anulaba y solo se veía en la miniatura).
+- **Copias de seguridad más completas:** guardan y restauran las fuentes (configuración) y los esquemas de atajos, y la configuración incluye la rotación de sets. Las copias completas **ya no llevan el token ni el chat de Telegram**.
+- **Web:** el texto de «formas de papel y marcos propios» refleja que los marcos ya tienen editor.
+
 ## Pack 130 · 2026-10-31
 - **Valores iniciales de las instalaciones nuevas** (`defaults/config.json`): cables, cuerda, resorte, corona, jerarquía y nota base con los ajustes del autor. Se aplican una sola vez en el primer arranque y no pisan nada existente.
 - **Instalador: entornos a medias.** Si una instalación anterior dejó un `.venv` sin `pyvenv.cfg` («No pyvenv.cfg file»), el instalador y `herramientas.py` lo detectan, lo borran y lo rehacen. Las carpetas de Python a medias (sin `Lib\os.py`) también se limpian antes de reintentar.

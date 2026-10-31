@@ -898,6 +898,46 @@ CABLE_STYLE = {
 }
 
 
+def _strip_secrets_text(txt):
+    """[PACK131] Las copias de seguridad no llevan los datos de Telegram (token del bot y chat): quita las claves telegram* de un JSON de ajustes."""
+    try:
+        d = json.loads(txt)
+    except (ValueError, TypeError):
+        return txt
+    if not isinstance(d, dict) or not any(str(k).startswith('telegram') for k in d):
+        return txt
+    return json.dumps({k: v for k, v in d.items() if not str(k).startswith('telegram')}, indent=2, ensure_ascii=False, default=str)
+
+
+def _spring_on_poly(pl, a, b, amp, waves):
+    """[PACK131] Suma el efecto resorte (onda sinusoidal perpendicular a la recta A-B, con entrada y salida suaves) a la polilinea de una cuerda fisica.
+    pl = (puntos Nx2, longitudes acumuladas); a, b = QPointF de los anclajes. Devuelve la misma forma de tupla."""
+    import math
+    Q, cum = pl
+    if amp <= 0.0 or len(Q) < 3:
+        return pl
+    dx, dy = float(b.x() - a.x()), float(b.y() - a.y())
+    L = math.hypot(dx, dy)
+    tot = float(cum[-1])
+    if L < 1e-6 or tot < 1e-6:
+        return pl
+    waves = max(0.05, float(waves))
+    n = max(len(Q), min(600, int(28 * waves) + 16))
+    if n > len(Q):                                      # con pocos nudos (calidad ligera) se densifica para que la onda no se vea quebrada
+        s = np.linspace(0.0, tot, n)
+        Q = np.stack([np.interp(s, cum, Q[:, 0]), np.interp(s, cum, Q[:, 1])], axis=1)
+        cum = s
+    t = np.asarray(cum, dtype=float) / tot
+    e = np.minimum(1.0, np.minimum(t, 1.0 - t) / 0.12)
+    off = amp * (e * e * (3.0 - 2.0 * e)) * np.sin(2.0 * math.pi * waves * t)
+    nx, ny = -dy / L, dx / L
+    Q2 = np.array(Q, dtype=float)
+    Q2[:, 0] += nx * off
+    Q2[:, 1] += ny * off
+    seg = np.hypot(np.diff(Q2[:, 0]), np.diff(Q2[:, 1]))
+    return Q2, np.concatenate([[0.0], np.cumsum(seg)])
+
+
 def _cable_path(a, b, k, fx=None):
     """Trazado de un cable entre dos puntos. k = curvatura: 0 = recta, 1 = curva en S (la de siempre), >1 = mas marcada.
     Es una interpolacion entre los puntos de control de la recta (1/3 y 2/3) y los de la S.
@@ -7353,6 +7393,9 @@ class ConnectorOverlay(QWidget):
                 start_pt = QPointF(_rope[2][0] - offset.x(), _rope[2][1] - offset.y())
                 end_pt = QPointF(_rope[3][0] - offset.x(), _rope[3][1] - offset.y())
                 pl = (_rope[0] - np.array([offset.x(), offset.y()], dtype=float), _rope[1])      # [PACK109] polilinea directa
+                _fxr = self.manager.cable_fx(_clen)
+                if _fxr and _fxr[1] > 0.05:             # [PACK131] el resorte tambien sobre la cuerda fisica (el peso ya lo da la propia cuerda)
+                    pl = _spring_on_poly(pl, start_pt, end_pt, _fxr[1], _fxr[2])
                 path = None
                 _mn, _mx = pl[0].min(axis=0), pl[0].max(axis=0)
                 _bb = QRectF(float(_mn[0]), float(_mn[1]), float(_mx[0] - _mn[0]), float(_mx[1] - _mn[1]))
@@ -11150,6 +11193,13 @@ def font_cfg():
     return _FONT_CFG
 
 
+def font_cfg_reload():
+    """[PACK131] Vuelve a leer fuentes.json (tras traerlo de una copia)."""
+    global _FONT_CFG
+    _FONT_CFG = {}
+    return font_cfg()
+
+
 def font_cfg_save():
     try:
         tmp = FONTS_CFG + '.tmp'
@@ -11474,7 +11524,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 130                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 131                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -11776,11 +11826,12 @@ def _ensure_generated_layer(td):
     """Si la capa 2 es la imagen de una nota base (la genera el programa) y su archivo ya no esta, se dibuja de nuevo desde base_note.
     Asi un estilo viaja sin imagen y se puede seguir editando. Devuelve True si cambio algo."""
     try:
+        _fch = _ensure_frame_layer(td)
         if not _is_generated_layer(td):
-            return False
+            return _fch
         l2 = td['layer2']
         if _find_stored_file(str(l2.get('content') or ''), 2) and l2.get('source') != 'generated':
-            return False
+            return _fch
         old = l2.get('content')
         new = _gen_base_note_image(td['base_note'])
         l2['content'] = new
@@ -14615,7 +14666,7 @@ CABLE_DIALOG_SPEC = [
             ('_cable_fx_weight', "Cantidad (0 % = sin efecto)", 'i', " %", 'fx'),
             ('_cable_fx_weight_px', "Ca\u00edda m\u00e1xima en un cable muy cercano", 'i', " px", 'fx')],
          "Cuelga hacia abajo entre los dos widgets, m\u00e1s cuanto m\u00e1s cerca estan, sin depender de c\u00f3mo est\u00e9n alineados (se suma a la curvatura en S; ponla a 0 % para usar solo estos efectos). Con los widgets en vertical exacto no hay un 'abajo' perpendicular y el peso se desvanece: ah\u00ed se nota el resorte."),
-        ("Efecto resorte: el cable ondula como una sinusoide", [
+        ("Efecto resorte: el cable ondula como una sinusoide (tambi\u00e9n con la cuerda activa)", [
             ('_cable_fx_spring', "Cantidad (0 % = sin efecto)", 'i', " %", 'fx'),
             ('_cable_fx_spring_px', "Amplitud m\u00e1xima de la onda en un cable cercano", 'i', " px", 'fx'),
             ('_cable_fx_f_near', "Ondas completas en un cable cercano", 'f', "", 'fx'),
@@ -15084,6 +15135,489 @@ def _grad_brush(p, w, h, pad):
 
     g.setColorAt(1.0, c2)
     return QBrush(g)
+
+
+# ---------------------------------------------------------------- [PACK131] marcos editables
+FRAME_DEFAULTS = {'w': 300, 'h': 300, 'bt': 26, 'br': 26, 'bb': 26, 'bl': 26, 'radius': 3, 'iradius': 0,
+                  'color': '#8a5a2b', 'grad': True, 'color2': '#5e3b1a', 'grad_angle': 90,
+                  'bevel': 5, 'bevel_light': 45, 'bevel_dark': 40, 'tex': 1, 'tex_amt': 35,
+                  'ishadow': 10, 'ishadow_op': 45, 'line': 2, 'line_op': 55,
+                  'shadow': 14, 'shadow_op': 40, 'shadow_dx': 0, 'shadow_dy': 6, 'shadow_color': '#000000'}
+FRAME_RANGES = {'w': (40, 1600), 'h': (40, 1600), 'bt': (1, 500), 'br': (1, 500), 'bb': (1, 500), 'bl': (1, 500), 'radius': (0, 300), 'iradius': (0, 300),
+                'grad_angle': (0, 359), 'bevel': (0, 60), 'bevel_light': (0, 100), 'bevel_dark': (0, 100), 'tex': (0, 3), 'tex_amt': (0, 100),
+                'ishadow': (0, 80), 'ishadow_op': (0, 100), 'line': (0, 20), 'line_op': (0, 100),
+                'shadow': (0, 80), 'shadow_op': (0, 100), 'shadow_dx': (-80, 80), 'shadow_dy': (-80, 80)}
+FRAME_TEXTURES = ("Ninguna", "Veta de madera", "Metal cepillado", "Granulado")
+FRAME_PRESETS = [
+    ("Madera", {}),
+    ("Negro", {'color': '#23262d', 'grad': False, 'bevel': 4, 'bevel_light': 35, 'tex': 0, 'radius': 2}),
+    ("Blanco", {'color': '#f1efe9', 'grad': False, 'bevel': 5, 'bevel_light': 75, 'bevel_dark': 22, 'tex': 0, 'ishadow': 14}),
+    ("Oro", {'color': '#d6b13a', 'color2': '#8d6b0c', 'grad': True, 'grad_angle': 135, 'bevel': 7, 'tex': 2, 'tex_amt': 30}),
+    ("Plata", {'color': '#d3d7dd', 'color2': '#7d838c', 'grad': True, 'grad_angle': 135, 'bevel': 6, 'tex': 2, 'tex_amt': 35}),
+    ("Rojo laca", {'color': '#a31621', 'color2': '#6d0d15', 'grad': True, 'grad_angle': 90, 'bevel': 4, 'tex': 0}),
+    ("Fino negro", {'color': '#16181d', 'grad': False, 'bt': 10, 'br': 10, 'bb': 10, 'bl': 10, 'bevel': 2, 'tex': 0, 'radius': 0, 'ishadow': 6}),
+    ("Paspart\u00fa", {'color': '#f6f3ea', 'grad': False, 'bt': 54, 'br': 54, 'bb': 54, 'bl': 54, 'bevel': 0, 'tex': 0, 'ishadow': 18, 'line': 2, 'radius': 1, 'shadow': 8}),
+]
+
+
+def _fr_clean(raw):
+    """Parametros de un marco validados: solo claves conocidas, del tipo correcto y dentro de rango; lo que falta toma su valor por defecto."""
+    q = dict(FRAME_DEFAULTS)
+    for k, dv in FRAME_DEFAULTS.items():
+        if not isinstance(raw, dict) or k not in raw:
+            continue
+        v = raw[k]
+        try:
+            if isinstance(dv, bool):
+                q[k] = bool(v)
+            elif isinstance(dv, int):
+                lo, hi = FRAME_RANGES[k]
+                q[k] = max(lo, min(hi, int(round(float(v)))))
+            elif isinstance(dv, str):
+                if QColor(str(v)).isValid():
+                    q[k] = QColor(str(v)).name()
+        except (TypeError, ValueError):
+            pass
+
+    for a, b in (('bl', 'br'), ('bt', 'bb')):               # el hueco no puede desaparecer
+        dim = q['w'] if a == 'bl' else q['h']
+        room = max(8, dim - 8)
+        if q[a] + q[b] > room:
+            f = room / float(q[a] + q[b])
+            q[a], q[b] = max(1, int(q[a] * f)), max(1, int(q[b] * f))
+    return q
+
+
+def _frame_layout(p):
+    """Medidas de la imagen de un marco: margen para la sombra, tamano total y rectangulo del hueco (x, y, ancho, alto) dentro de la imagen."""
+    p = _fr_clean(p)
+    sh, dx, dy = p['shadow'], p['shadow_dx'], p['shadow_dy']
+    pad = (sh + max(abs(dx), abs(dy)) + 2) if sh > 0 else (max(abs(dx), abs(dy)) + 2)
+    hw, hh = max(4, p['w'] - p['bl'] - p['br']), max(4, p['h'] - p['bt'] - p['bb'])
+    return {'pad': pad, 'W': p['w'] + 2 * pad, 'H': p['h'] + 2 * pad, 'hole': (pad + p['bl'], pad + p['bt'], hw, hh)}
+
+
+def render_frame(p):
+    """Imagen (QImage ARGB) de un marco: aro con ingletes, bisel, textura, sombra exterior y sombra interior; el hueco es transparente."""
+    from PySide6.QtCore import QPointF
+    import math, random
+    p = _fr_clean(p)
+    L = _frame_layout(p)
+    pad, W, H = L['pad'], L['W'], L['H']
+    hx, hy, hw, hh = L['hole']
+    w, h = p['w'], p['h']
+    ox, oy, ow, oh = pad, pad, w, h
+    img = QImage(W, H, QImage.Format_ARGB32_Premultiplied)
+    img.fill(Qt.transparent)
+    q = QPainter(img)
+    q.setRenderHint(QPainter.Antialiasing)
+    outer = _rounded_rect_path(ox, oy, ow, oh, [p['radius']] * 4)
+    hole = _rounded_rect_path(hx, hy, hw, hh, [p['iradius']] * 4)
+    ring = outer.subtracted(hole)
+    if p['shadow'] > 0 and p['shadow_op'] > 0:
+        sp = QTransform().translate(p['shadow_dx'], p['shadow_dy']).map(ring)
+
+        q.drawImage(0, 0, _soft_shadow(img.size(), sp, p['shadow'], QColor(p['shadow_color']), p['shadow_op'] / 100.0))
+    q.setCompositionMode(QPainter.CompositionMode_Clear)
+    q.setPen(Qt.NoPen)
+    q.setBrush(Qt.black)
+    q.drawPath(ring)
+    q.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    if p['grad']:
+        a = math.radians(p['grad_angle'])
+        dx_, dy_ = math.cos(a), math.sin(a)
+        half = (abs(dx_) * ow + abs(dy_) * oh) / 2.0
+        cx_, cy_ = ox + ow / 2.0, oy + oh / 2.0
+        g = QLinearGradient(cx_ - dx_ * half, cy_ - dy_ * half, cx_ + dx_ * half, cy_ + dy_ * half)
+        g.setColorAt(0.0, QColor(p['color']))
+        g.setColorAt(1.0, QColor(p['color2']))
+        brush = QBrush(g)
+    else:
+        brush = QBrush(QColor(p['color']))
+    q.setBrush(brush)
+
+    q.drawPath(ring)
+
+    def poly(pts):
+        pa = QPainterPath()
+        pa.moveTo(*pts[0])
+        for x_, y_ in pts[1:]:
+            pa.lineTo(x_, y_)
+        pa.closeSubpath()
+        return pa
+    sides = {'t': [(ox, oy), (ox + ow, oy), (hx + hw, hy), (hx, hy)],
+             'r': [(ox + ow, oy), (ox + ow, oy + oh), (hx + hw, hy + hh), (hx + hw, hy)],
+             'b': [(ox + ow, oy + oh), (ox, oy + oh), (hx, hy + hh), (hx + hw, hy + hh)],
+             'l': [(ox, oy + oh), (ox, oy), (hx, hy), (hx, hy + hh)]}
+    q.save()
+    q.setClipPath(ring)
+    light, dark = p['bevel_light'] * 2.55, p['bevel_dark'] * 2.55
+    for k, col in (('t', QColor(255, 255, 255, int(light * 0.30))), ('l', QColor(255, 255, 255, int(light * 0.16))),
+                   ('b', QColor(0, 0, 0, int(dark * 0.36))), ('r', QColor(0, 0, 0, int(dark * 0.22)))):
+        q.setPen(Qt.NoPen)
+        q.setBrush(col)
+
+        q.drawPath(poly(sides[k]))
+    if p['tex'] and p['tex_amt'] > 0:
+        rng = random.Random(1234)
+        amt = p['tex_amt'] / 100.0
+        for k, pts in sides.items():
+            q.save()
+            q.setClipPath(poly(pts), Qt.IntersectClip)
+            xs, ys = [x_ for x_, _y in pts], [y_ for _x, y_ in pts]
+            x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+            horiz = k in ('t', 'b')
+            if p['tex'] == 3:
+                q.setPen(Qt.NoPen)
+                n = int((x1 - x0) * (y1 - y0) * 0.18)
+                for _i in range(min(n, 20000)):
+                    q.setBrush(QColor(255, 255, 255, int(90 * amt)) if rng.random() < 0.5 else QColor(0, 0, 0, int(90 * amt)))
+                    q.drawRect(QRectF(rng.uniform(x0, x1), rng.uniform(y0, y1), 1.2, 1.2))
+            else:
+                step = 2.0 if p['tex'] == 1 else 1.0
+                pos = (y0 if horiz else x0)
+                end = (y1 if horiz else x1)
+                while pos < end:
+                    a_ = int(255 * amt * (rng.uniform(0.1, 0.55) if p['tex'] == 1 else rng.uniform(0.04, 0.22)))
+                    q.setPen(QPen(QColor(255, 255, 255, a_) if rng.random() < 0.45 else QColor(0, 0, 0, a_), 1.0 if p['tex'] == 2 else rng.uniform(0.8, 1.8)))
+                    a0, a1 = (x0, x1) if horiz else (y0, y1)
+                    s = a0
+                    while s < a1:
+                        ln = (a1 - a0) if p['tex'] == 2 else rng.uniform(25, 140)
+                        if horiz:
+                            q.drawLine(QPointF(s, pos), QPointF(min(a1, s + ln), pos))
+                        else:
+                            q.drawLine(QPointF(pos, s), QPointF(pos, min(a1, s + ln)))
+                        s += ln + (0 if p['tex'] == 2 else rng.uniform(4, 40))
+                    pos += step * rng.uniform(0.7, 1.5)
+            q.restore()
+
+    b = min(float(p['bevel']), min(p['bt'], p['br'], p['bb'], p['bl']) / 2.0 - 0.5)
+    if b >= 0.5:
+        outer_s = {'t': [(ox, oy), (ox + ow, oy), (ox + ow - b, oy + b), (ox + b, oy + b)],
+                   'r': [(ox + ow, oy), (ox + ow, oy + oh), (ox + ow - b, oy + oh - b), (ox + ow - b, oy + b)],
+                   'b': [(ox + ow, oy + oh), (ox, oy + oh), (ox + b, oy + oh - b), (ox + ow - b, oy + oh - b)],
+                   'l': [(ox, oy + oh), (ox, oy), (ox + b, oy + b), (ox + b, oy + oh - b)]}
+        inner_s = {'t': [(hx - b, hy - b), (hx + hw + b, hy - b), (hx + hw, hy), (hx, hy)],
+                   'r': [(hx + hw + b, hy - b), (hx + hw + b, hy + hh + b), (hx + hw, hy + hh), (hx + hw, hy)],
+                   'b': [(hx + hw + b, hy + hh + b), (hx - b, hy + hh + b), (hx, hy + hh), (hx + hw, hy + hh)],
+                   'l': [(hx - b, hy + hh + b), (hx - b, hy - b), (hx, hy), (hx, hy + hh)]}
+        q.setPen(Qt.NoPen)
+        for k in 'tl':
+            q.setBrush(QColor(255, 255, 255, int(min(255, light * 0.75))))
+            q.drawPath(poly(outer_s[k]))
+            q.setBrush(QColor(0, 0, 0, int(min(255, dark * 0.60))))
+            q.drawPath(poly(inner_s[k]))
+        for k in 'br':
+            q.setBrush(QColor(0, 0, 0, int(min(255, dark * 0.75))))
+            q.drawPath(poly(outer_s[k]))
+            q.setBrush(QColor(255, 255, 255, int(min(255, light * 0.45))))
+            q.drawPath(poly(inner_s[k]))
+
+    if p['line'] > 0 and p['line_op'] > 0:
+        q.setBrush(Qt.NoBrush)
+        q.setPen(QPen(QColor(0, 0, 0, int(255 * p['line_op'] / 100.0)), p['line'] * 2.0))
+        q.drawPath(hole)
+    q.restore()
+    q.setCompositionMode(QPainter.CompositionMode_Clear)
+    q.setPen(Qt.NoPen)
+    q.setBrush(Qt.black)
+    q.drawPath(hole)
+    q.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    if p['ishadow'] > 0 and p['ishadow_op'] > 0:
+        q.save()
+        q.setClipPath(hole)
+        q.drawImage(0, 0, _soft_shadow(img.size(), ring, p['ishadow'], QColor(0, 0, 0), p['ishadow_op'] / 100.0))
+        q.restore()
+    q.end()
+    return img
+
+
+def _gen_frame_image(p):
+    """Ruta guardable de la imagen de un marco con los parametros p (la dibuja si hace falta; el nombre sale de los parametros)."""
+    p = _fr_clean(p)
+    tag = hashlib.md5(json.dumps(p, sort_keys=True).encode('utf-8')).hexdigest()[:16]
+    path = os.path.join(FRAMES_DIR, "marco_%s.png" % tag)
+    if not os.path.exists(path):
+        os.makedirs(FRAMES_DIR, exist_ok=True)
+        render_frame(p).save(path, 'PNG')
+    return _store_path(path)
+
+
+def _ensure_frame_layer(td):
+    """Si la capa 1 es la imagen de un marco editable y su archivo ya no esta, se dibuja de nuevo desde frame_shape. True si cambio algo."""
+    try:
+        fs = td.get('frame_shape') if isinstance(td, dict) else None
+        l1 = td.get('layer1') if isinstance(td, dict) else None
+        if not isinstance(fs, dict) or not isinstance(l1, dict) or l1.get('type') != 'png':
+            return False
+        c = str(l1.get('content') or '')
+        if not os.path.basename(c.replace('\\', '/')).startswith('marco_') or _find_stored_file(c, 1):
+            return False
+        l1['content'] = _gen_frame_image(fs)
+        return True
+    except Exception as e:
+        log_warn("Marcos", "No se pudo dibujar de nuevo el marco: %s" % e)
+        return False
+
+
+def _frame_sample_picture(w, h):
+    """Paisaje de ejemplo para ver el marco con algo dentro."""
+    from PySide6.QtCore import QPointF
+    im = QImage(max(1, w), max(1, h), QImage.Format_ARGB32_Premultiplied)
+    im.fill(QColor('#9fd3e6'))
+    q = QPainter(im)
+    q.setRenderHint(QPainter.Antialiasing)
+    q.setPen(Qt.NoPen)
+    q.setBrush(QColor('#fde68a'))
+    q.drawEllipse(QPointF(w * 0.76, h * 0.26), min(w, h) * 0.10, min(w, h) * 0.10)
+    for col, pts in (('#4f8f6a', [(0, 1.0), (0, 0.62), (0.25, 0.42), (0.5, 0.62), (0.7, 0.5), (1.0, 0.72), (1.0, 1.0)]),
+                     ('#356b52', [(0, 1.0), (0, 0.78), (0.3, 0.64), (0.6, 0.78), (1.0, 0.68), (1.0, 1.0)])):
+        pa = QPainterPath()
+        pa.moveTo(pts[0][0] * w, pts[0][1] * h)
+        for x_, y_ in pts[1:]:
+            pa.lineTo(x_ * w, y_ * h)
+        pa.closeSubpath()
+        q.setBrush(QColor(col))
+
+        q.drawPath(pa)
+    q.end()
+    return im
+
+
+class FrameDialog(QDialog):
+    """[PACK131] Editor de marcos: grosor de cada lado, color o degradado, bisel, textura y sombras, con una vista previa sobre un paisaje de ejemplo."""
+
+    def __init__(self, manager, parent=None, start=None, editing=False):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QSpinBox as _SB, QTabWidget, QScrollArea
+        self.setWindowTitle("Editar marco" if editing else "Generar marco")
+        self._mgr = manager
+        self.p = _fr_clean(start)
+        self._building = True
+        self._sync = []
+        root = QHBoxLayout(self)
+        left = QVBoxLayout()
+        root.addLayout(left, 1)
+        prow = QHBoxLayout()
+        prow.addWidget(QLabel("Punto de partida:"))
+        for name, d in FRAME_PRESETS:
+            b = QPushButton(name)
+            b.clicked.connect(lambda _c=False, d=d: self._apply(d))
+            prow.addWidget(b)
+        prow.addStretch(1)
+
+        left.addLayout(prow)
+        xrow = QHBoxLayout()
+        xrow.addWidget(QLabel("JSON:"))
+        for txt, fn, tip in (("Copiar marco", self._copy, "Copia los par\u00e1metros de este marco al portapapeles (JSON)"),
+                             ("Pegar marco", self._paste, "Aplica aqu\u00ed unos par\u00e1metros de marco copiados")):
+            b = QPushButton(txt)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _c=False, f=fn: f())
+            xrow.addWidget(b)
+        xrow.addStretch(1)
+        left.addLayout(xrow)
+        tabs = QTabWidget()
+        left.addWidget(tabs, 1)
+
+        def page(title):
+            w_ = QWidget()
+            f_ = QFormLayout(w_)
+            f_.setRowWrapPolicy(QFormLayout.WrapLongRows)
+            sa = QScrollArea()
+            sa.setWidgetResizable(True)
+            sa.setFrameShape(QFrame.NoFrame)
+            sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            sa.setWidget(w_)
+            tabs.addTab(sa, title)
+            return f_
+
+        def spin(key, suffix=" px"):
+            s = _SB()
+            lo, hi = FRAME_RANGES[key]
+            s.setRange(lo, hi)
+            s.setSuffix(suffix)
+            s.setValue(int(self.p[key]))
+            s.valueChanged.connect(lambda v, k=key: self._set(k, int(v)))
+            self._sync.append(lambda s=s, k=key: s.setValue(int(self.p[k])))
+            return s
+
+        def color_btn(key):
+            b = QPushButton()
+            b.setFixedWidth(70)
+
+            def paint():
+                b.setStyleSheet("background:%s;border:1px solid #666;min-height:18px;" % self.p[key])
+
+            def pick():
+                c = QColorDialog.getColor(QColor(self.p[key]), self, "Color")
+                if c.isValid():
+                    self._set(key, c.name())
+                    paint()
+            b.clicked.connect(pick)
+            self._sync.append(paint)
+            paint()
+            return b
+
+        f1 = page("Tama\u00f1o y grosor")
+        row = QHBoxLayout()
+        self.sp_w, self.sp_h = spin('w'), spin('h')
+        row.addWidget(self.sp_w)
+        row.addWidget(QLabel("\u00d7"))
+        row.addWidget(self.sp_h)
+        f1.addRow("Tama\u00f1o exterior (ancho \u00d7 alto)", row)
+        self.chk_same = QCheckBox("El mismo grosor en los cuatro lados")
+        self.chk_same.setChecked(len({self.p['bt'], self.p['br'], self.p['bb'], self.p['bl']}) == 1)
+        f1.addRow(self.chk_same)
+        self.sp_b = {k: spin(k) for k in ('bt', 'br', 'bb', 'bl')}
+        for k, lab in (('bt', "Grosor arriba"), ('br', "Grosor a la derecha"), ('bb', "Grosor abajo"), ('bl', "Grosor a la izquierda")):
+            f1.addRow(lab, self.sp_b[k])
+        f1.addRow("Esquina exterior", spin('radius'))
+        f1.addRow("Esquina del hueco", spin('iradius'))
+        f2 = page("Color y relieve")
+        f2.addRow("Color", color_btn('color'))
+        self.chk_grad = QCheckBox("Degradado hacia otro color")
+
+        self.chk_grad.setChecked(bool(self.p['grad']))
+        self.chk_grad.toggled.connect(lambda on: self._set('grad', bool(on)))
+        self._sync.append(lambda: self.chk_grad.setChecked(bool(self.p['grad'])))
+        f2.addRow(self.chk_grad)
+        f2.addRow("Segundo color", color_btn('color2'))
+        f2.addRow("Direcci\u00f3n del degradado", spin('grad_angle', " \u00b0"))
+        f2.addRow("Bisel (ancho)", spin('bevel'))
+        f2.addRow("Luz del bisel", spin('bevel_light', " %"))
+        f2.addRow("Sombra del bisel", spin('bevel_dark', " %"))
+        self.cb_tex = QComboBox()
+        self.cb_tex.addItems(FRAME_TEXTURES)
+        self.cb_tex.setCurrentIndex(int(self.p['tex']))
+        self.cb_tex.currentIndexChanged.connect(lambda i: self._set('tex', int(i)))
+        self._sync.append(lambda: self.cb_tex.setCurrentIndex(int(self.p['tex'])))
+        f2.addRow("Textura", self.cb_tex)
+        f2.addRow("Intensidad de la textura", spin('tex_amt', " %"))
+        f3 = page("Sombras y filo")
+        f3.addRow("Sombra sobre la imagen (tama\u00f1o)", spin('ishadow'))
+
+        f3.addRow("Sombra sobre la imagen (opacidad)", spin('ishadow_op', " %"))
+        f3.addRow("Filo oscuro del hueco (grosor)", spin('line'))
+        f3.addRow("Filo oscuro del hueco (opacidad)", spin('line_op', " %"))
+        f3.addRow("Sombra exterior (tama\u00f1o)", spin('shadow'))
+        f3.addRow("Sombra exterior (opacidad)", spin('shadow_op', " %"))
+        f3.addRow("Sombra exterior: desplazamiento horizontal", spin('shadow_dx'))
+        f3.addRow("Sombra exterior: desplazamiento vertical", spin('shadow_dy'))
+        f3.addRow("Color de la sombra exterior", color_btn('shadow_color'))
+        right = QVBoxLayout()
+        root.addLayout(right, 1)
+        self.preview = QLabel()
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setMinimumSize(340, 340)
+        right.addWidget(self.preview, 1)
+        right.addWidget(QLabel("La vista previa muestra el marco sobre un paisaje de ejemplo."))
+        self.chk_fit = QCheckBox("Ajustar la imagen o la p\u00e1gina de la capa 2 al hueco del marco")
+        self.chk_fit.setChecked(True)
+        right.addWidget(self.chk_fit)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("Aplicar" if editing else "Generar")
+        bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        right.addWidget(bb)
+        self.chk_same.toggled.connect(self._same_toggled)
+        self._building = False
+        self.resize(900, 560)
+        self._refresh()
+
+    def _same_toggled(self, on):
+        if on:
+            v = self.p['bt']
+            self._set_many({'bt': v, 'br': v, 'bb': v, 'bl': v})
+
+    def _set(self, key, value):
+        if self._building:
+            return
+        if key in ('bt', 'br', 'bb', 'bl') and self.chk_same.isChecked():
+            self._set_many({'bt': value, 'br': value, 'bb': value, 'bl': value})
+            return
+        self.p[key] = value
+        self.p = _fr_clean(self.p)
+        self._refresh()
+
+    def _set_many(self, d):
+        self.p.update(d)
+        self.p = _fr_clean(self.p)
+        self._building = True
+        for f in self._sync:
+            f()
+        self._building = False
+        self._refresh()
+
+    def _apply(self, d):
+        q = dict(FRAME_DEFAULTS)
+        q.update(d)
+        q['w'], q['h'] = self.p['w'], self.p['h']
+        self.p = _fr_clean(q)
+        self._building = True
+        self.chk_same.setChecked(len({self.p['bt'], self.p['br'], self.p['bb'], self.p['bl']}) == 1)
+        for f in self._sync:
+            f()
+        self._building = False
+        self._refresh()
+
+    def _refresh(self):
+        L = _frame_layout(self.p)
+        fr = render_frame(self.p)
+        bg = QImage(fr.size(), QImage.Format_ARGB32_Premultiplied)
+        bg.fill(QColor('#e9ecef'))
+        q = QPainter(bg)
+        q.setPen(Qt.NoPen)
+        q.setBrush(QColor('#dde1e6'))
+        cell = 12
+        for yy in range(0, bg.height(), cell):
+            for xx in range(0, bg.width(), cell):
+                if ((xx // cell) + (yy // cell)) % 2:
+                    q.drawRect(xx, yy, cell, cell)
+        hx, hy, hw, hh = L['hole']
+        t = 3
+        q.drawImage(hx - t, hy - t, _frame_sample_picture(hw + 2 * t, hh + 2 * t))
+        q.drawImage(0, 0, fr)
+        q.end()
+
+        pm = QPixmap.fromImage(bg)
+        box = self.preview.size() - QSize(8, 8) if self.preview.width() > 60 else QSize(340, 340)
+        self.preview.setPixmap(pm.scaled(max(100, box.width()), max(100, box.height()), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if hasattr(self, 'preview') and not self._building:
+            self._refresh()
+
+    def _copy(self):
+        QApplication.clipboard().setText(json.dumps({"frame_shape": self.p}, indent=2, ensure_ascii=False))
+
+    def _paste(self):
+        try:
+            obj = json.loads(QApplication.clipboard().text())
+        except ValueError:
+            QMessageBox.information(self, "Pegar marco", "El portapapeles no tiene un marco copiado (JSON).")
+            return
+        if isinstance(obj, dict) and isinstance(obj.get('frame_shape'), dict):
+            obj = obj['frame_shape']
+        if not isinstance(obj, dict) or not any(k in obj for k in FRAME_DEFAULTS):
+            QMessageBox.information(self, "Pegar marco", "El portapapeles no tiene un marco copiado (JSON).")
+            return
+        q = dict(self.p)
+        q.update({k: v for k, v in obj.items() if k in FRAME_DEFAULTS})
+        self.p = _fr_clean(q)
+        self._building = True
+        for f in self._sync:
+            f()
+        self._building = False
+
+        self._refresh()
+
+    def get_params(self):
+        return _fr_clean(self.p)
 
 
 def render_base_note(p, with_text=False):
@@ -19272,6 +19806,13 @@ class WidgetManager(QObject):
             tip="Aplica una forma de papel copiada a este widget y conserva su texto",
             enabled=self._clip_widget_data() is not None)
         aspect_menu.addMenu(sty_menu)
+        fr_menu = QMenu("Marco", aspect_menu)                           # [PACK131]
+        fr_menu.setToolTipsVisible(True)
+        add(fr_menu, "Generar marco...", lambda: self.generate_frame(widget_id),
+            tip="Dibuja un marco (un PNG con el centro transparente) como capa 1: grosor de cada lado, color, bisel, textura y sombras")
+        add(fr_menu, "Editar este marco...", lambda: self.edit_frame(widget_id), enabled=self._is_frame(state),
+            tip="Reabre el editor de marcos con los par\u00e1metros de este widget y vuelve a dibujarlo")
+        aspect_menu.addMenu(fr_menu)
         crown_menu = QMenu("Corona", aspect_menu)
         add(crown_menu, "Tono, saturaci\u00f3n, brillo y opacidad...", lambda: self.edit_crown_style(widget_id))
         add(crown_menu, "Orientaci\u00f3n de la imagen (inclinaci\u00f3n de la corona)...", lambda: self.edit_upright_angle(widget_id))
@@ -20707,6 +21248,124 @@ class WidgetManager(QObject):
         self.build_tray_menu()
         self._refresh_connector_overlay()
 
+    @staticmethod
+    def _is_frame(st):
+        """[PACK131] True si la capa 1 del widget es la imagen de un marco editable (la dibuja el programa)."""
+        td = st.get('template_data') if isinstance(st, dict) else None
+        if not isinstance(td, dict) or not isinstance(td.get('frame_shape'), dict):
+            return False
+        l1 = td.get('layer1') if isinstance(td.get('layer1'), dict) else {}
+        return l1.get('type') == 'png' and os.path.basename(str(l1.get('content') or '').replace('\\', '/')).startswith('marco_')
+
+    @staticmethod
+    def _frame_scale(td):
+        """Escala a la que se muestra hoy la imagen del marco (ancho de su capa 1 / ancho real de la imagen); 1.0 si no es un marco dibujado por el programa."""
+        try:
+            l1 = td.get('layer1') if isinstance(td.get('layer1'), dict) else {}
+            c = str(l1.get('content', ''))
+            if not os.path.basename(c.replace('\\', '/')).startswith('marco_'):
+                return 1.0
+            real = _find_stored_file(c, 1) if c else None
+            gw = float((l1.get('geometry') or {}).get('w') or 0)
+            if gw <= 0 or not real:
+                return 1.0
+            from PySide6.QtGui import QImageReader
+            rw = QImageReader(real).size().width()
+            if rw <= 0:
+                return 1.0
+            s = gw / rw
+            return 1.0 if (abs(s - 1.0) < 0.02 or not (0.2 <= s <= 5.0)) else s
+        except Exception:
+            return 1.0
+
+    def _frame_start(self, widget_id):
+        st = self.global_state.get(widget_id) or {}
+        td = st.get('template_data') if isinstance(st.get('template_data'), dict) else {}
+        if self._is_frame(st):
+            return dict(td['frame_shape'])
+        try:
+            start = json.loads(self.global_state.get('frame_settings') or '{}')
+        except Exception:
+            start = {}
+        start = dict(start) if isinstance(start, dict) else {}
+        g = (td.get('layer1') or {}).get('geometry') or {}
+        if int(g.get('w') or 0) >= 40 and int(g.get('h') or 0) >= 40:        # el marco nuevo mide lo que mide hoy la capa 1
+            start['w'], start['h'] = int(g['w']), int(g['h'])
+        return start
+
+    def generate_frame(self, widget_id):
+        """[PACK131] Dibuja un marco como capa 1 del widget (PNG con el centro transparente) y ajusta la capa 2 al hueco."""
+        win, st = self.widgets.get(widget_id), self.global_state.get(widget_id)
+        if win is None or not isinstance(st, dict):
+            return None
+        td = st.get('template_data') or {}
+        l1 = td.get('layer1') if isinstance(td.get('layer1'), dict) else {}
+        if l1.get('type') == 'text' and re.sub(r'<[^>]+>', '', str(l1.get('content') or '')).strip():
+            r = QMessageBox.question(self.dialog_parent, "Generar marco",
+                                     "La capa 1 de este widget es texto (es una nota). Con un marco pasa a ser un marco para una imagen o una p\u00e1gina web y el texto se pierde.\n\n\u00bfContinuar?")
+            if r != QMessageBox.Yes:
+                return None
+        dlg = FrameDialog(self, self.dialog_parent, self._frame_start(widget_id), editing=False)
+        if not dlg.exec():
+            return None
+        self.apply_frame(widget_id, dlg.get_params(), fit=dlg.chk_fit.isChecked())
+        return dlg.get_params()
+
+    def edit_frame(self, widget_id):
+        """[PACK131] Reabre el editor con los parametros del marco de este widget."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict) or not self._is_frame(st):
+            return None
+        dlg = FrameDialog(self, self.dialog_parent, self._frame_start(widget_id), editing=True)
+        if not dlg.exec():
+            return None
+        self.apply_frame(widget_id, dlg.get_params(), fit=dlg.chk_fit.isChecked())
+        return dlg.get_params()
+
+    def apply_frame(self, widget_id, p, fit=True):
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict):
+            return
+        p = _fr_clean(p)
+        self.global_state['frame_settings'] = json.dumps(p)
+        rel = _gen_frame_image(p)
+        L = _frame_layout(p)
+        td = st['template_data']
+        l1 = td.setdefault('layer1', {})
+        og = l1.get('geometry') or {}
+        sc = self._frame_scale(td)
+        W, H = int(round(L['W'] * sc)), int(round(L['H'] * sc))
+        cx = og.get('x', 0) + og.get('w', W) / 2.0
+        cy = og.get('y', 0) + og.get('h', H) / 2.0
+        gx, gy = int(round(cx - W / 2.0)), int(round(cy - H / 2.0))
+        l1.update({"type": "png", "content": rel, "background": "transparent", "scaled_contents": True,
+                   "geometry": {"x": gx, "y": gy, "w": W, "h": H}})
+
+        l1.setdefault('rotation', 0)
+        l1.setdefault('image_effects', {})
+        td['frame_shape'] = dict(p)
+        l2 = td.get('layer2') if isinstance(td.get('layer2'), dict) else None
+        if fit and l2 is not None and l2.get('type') in ('png', 'web'):
+            hx, hy, hw, hh = L['hole']
+            t = 3 * sc                                          # la imagen se mete un poco bajo el marco para que no asome el fondo
+            l2['geometry'] = {"x": int(round(gx + hx * sc - t)), "y": int(round(gy + hy * sc - t)),
+                              "w": int(round(hw * sc + 2 * t)), "h": int(round(hh * sc + 2 * t))}
+            if l2.get('type') == 'png':
+                l2['scaled_contents'] = True
+        win = self.widgets.get(widget_id)
+        if win is not None:
+            win._paper_frame_cache = None
+            win.load_template_data(td)
+            try:
+                win._recalculate_and_normalize()
+            except Exception as e:
+                log_warn(widget_id, "No se pudo normalizar tras generar el marco: %s" % e)
+            win._save_changes_to_manager()
+
+        self.save_global_state()
+        self.build_tray_menu()
+        self._refresh_connector_overlay()
+
     def edit_crown_style(self, widget_id):
         """Dialogo de la corona de un widget (apagar, tono, saturacion, brillo, opacidad); se guarda en su JSON."""
         win, st = self.widgets.get(widget_id), self.global_state.get(widget_id)
@@ -21953,6 +22612,8 @@ class WidgetManager(QObject):
             if opts.get('settings'):
                 cfg['settings'] = {k: v for k, v in ws.items() if not isinstance(v, dict) and not str(k).startswith('telegram') and k != 'current_profile'}
             hk = _imp_json(j(root, "data", "hotkeys.json")) if opts.get('hotkeys') else None
+            if isinstance(hk, dict):
+                hk.pop('rotation', None)                      # [PACK131] la rotacion nombra sets de la otra instalacion
             if hk:
                 cfg['hotkeys'] = hk
             if cfg:
@@ -21963,6 +22624,15 @@ class WidgetManager(QObject):
                     log_warn("Importar", "ajustes: %s" % e)
                     rep.append("No se pudieron importar los ajustes: %s" % e)
 
+        if opts.get('settings'):                                           # [PACK131] fuente predeterminada
+            _fsrc = j(root, "data", "fuentes.json")
+            if os.path.isfile(_fsrc):
+                try:
+                    shutil.copy2(_fsrc, FONTS_CFG)
+                    font_cfg_reload()
+                    rep.append("Fuente predeterminada importada")
+                except OSError as e_f:
+                    log_warn("Importar", "fuentes: %s" % e_f)
         if opts.get('hotkeys'):
             n = 0
             for f in _imp_names(root, ("data", "hotkey_profiles")):
@@ -23169,12 +23839,24 @@ class WidgetManager(QObject):
                         st = os.stat(os.path.join(PROFILES_DIR, f))
                         prof.append((f, st.st_mtime_ns, st.st_size))
                         texts.append(self._read_text_quiet(os.path.join(PROFILES_DIR, f)))
-            cur = json.dumps(self.global_state, indent=2, ensure_ascii=False, default=str)
+            cur = _strip_secrets_text(json.dumps(self.global_state, indent=2, ensure_ascii=False, default=str))        # [PACK131] sin Telegram
             res = {}
             for name, r in getattr(self, '_resident', {}).items():
                 data = dict(r.get('scalars', {}))
                 data.update(r.get('notes', {}))
-                res[name] = json.dumps(data, indent=2, ensure_ascii=False, default=str)
+                res[name] = _strip_secrets_text(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+            hk_profiles = []
+            if os.path.isdir(HOTKEY_PROFILES_DIR):           # [PACK131] esquemas de atajos guardados
+                for f in sorted(os.listdir(HOTKEY_PROFILES_DIR)):
+                    if f.lower().endswith('.json'):
+                        st = os.stat(os.path.join(HOTKEY_PROFILES_DIR, f))
+                        hk_profiles.append((f, st.st_mtime_ns, st.st_size))
+            try:
+                _fs = os.stat(FONTS_CFG)
+                font_sig = repr((_fs.st_mtime_ns, _fs.st_size))
+            except OSError:
+                font_sig = ""
+            extra_sig = repr(hk_profiles) + font_sig
             if os.path.isdir(TEMPLATES_DIR):
                 for f in sorted(os.listdir(TEMPLATES_DIR)):
                     if f.lower().endswith('.json'):
@@ -23199,7 +23881,7 @@ class WidgetManager(QObject):
                 hk_sig = repr((_hs.st_mtime_ns, _hs.st_size))
             except OSError:
                 hk_sig = ""
-            sig = hashlib.md5((cur + repr(prof) + "".join(res.values()) + repr([(a, m, s) for a, _r, m, s in picked]) + hk_sig).encode('utf-8', 'replace')).hexdigest()
+            sig = hashlib.md5((cur + repr(prof) + "".join(res.values()) + repr([(a, m, s) for a, _r, m, s in picked]) + hk_sig + extra_sig).encode('utf-8', 'replace')).hexdigest()
             self._last_full_backup = now
             if not manual and sig == getattr(self, '_last_full_sig', None):
                 return None
@@ -23209,8 +23891,12 @@ class WidgetManager(QObject):
                 z.writestr('data/widget_set.json', cur)
                 if os.path.exists(HOTKEYS_FILE):
                     z.write(HOTKEYS_FILE, 'data/hotkeys.json')
+                if os.path.exists(FONTS_CFG):                                  # [PACK131] fuente predeterminada
+                    z.write(FONTS_CFG, 'data/fuentes.json')
+                for f, _m, _s in hk_profiles:
+                    z.write(os.path.join(HOTKEY_PROFILES_DIR, f), 'data/hotkey_profiles/' + f)
                 for f, _m, _s in prof:
-                    z.write(os.path.join(PROFILES_DIR, f), 'profiles/' + f)
+                    z.writestr('profiles/' + f, _strip_secrets_text(self._read_text_quiet(os.path.join(PROFILES_DIR, f))))
                 for name, txt in res.items():
                     z.writestr('sets_en_memoria/' + (HotkeyManager.safe_profile_name(name) or 'set') + '.json', txt)
                 if os.path.isdir(TEMPLATES_DIR):
@@ -23479,6 +24165,7 @@ class WidgetManager(QObject):
         """[PACK129] Mi configuracion actual (ajustes y atajos) tal como se guardaria como valores iniciales de una instalacion nueva."""
         cfg = self._config_snapshot()
         cfg['settings'] = {k: v for k, v in cfg['settings'].items() if k not in INSTALL_DEFAULTS_SKIP}
+        cfg['hotkeys'].pop('rotation', None)                     # [PACK131] los nombres de TUS sets no van en los valores de una instalacion nueva
         return cfg
 
     def save_install_defaults(self, path=None):
@@ -23513,7 +24200,9 @@ class WidgetManager(QObject):
         """Configuracion (no son notas): ajustes globales (cables, jerarquia, matices...) + atajos de teclado."""
         st = {k: copy.deepcopy(v) for k, v in self.global_state.items()
               if not isinstance(v, dict) and not str(k).startswith('telegram')}
-        return {"settings": st, "hotkeys": self.hotkeys.cfg_snapshot()}
+        hk = self.hotkeys.cfg_snapshot()
+        hk["rotation"] = list(self.hotkeys.rotation)             # [PACK131] los sets de la rotacion tambien forman parte de la configuracion
+        return {"settings": st, "hotkeys": hk}
 
     def _backup_config(self):
         """Copia de la configuracion actual en config_backups/ (se conservan las 30 ultimas)."""
@@ -23542,6 +24231,8 @@ class WidgetManager(QObject):
         self.global_state.update(sets)
         if isinstance(cfg.get('hotkeys'), dict):
             self.hotkeys.set_cfg(cfg['hotkeys'])
+            if isinstance(cfg['hotkeys'].get('rotation'), list):         # [PACK131]
+                self.hotkeys.rotation = [str(x) for x in cfg['hotkeys']['rotation'] if str(x).strip()]
             self.hotkeys.save()
             self.hotkeys.apply()
         self.save_global_state()
