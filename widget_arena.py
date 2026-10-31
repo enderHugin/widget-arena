@@ -7514,8 +7514,9 @@ HOTKEY_COMMANDS = [
     ("set_loadc_9", "Cargar el set de la ranura 9 (o el set n.9 de la lista) - Ctrl+cifra", "Ctrl+9", True, False),
     ("set_loadc_10", "Cargar el set de la ranura 10 (o el set n.10 de la lista) - Ctrl+cifra", "Ctrl+0", True, False),
     ("open_gestures", "Abrir la guia de gestos y atajos", "F1", False, False),
-    ("profile_next", "Set siguiente (orden alfabetico)", "Ctrl+Shift+Down", False, False),
-    ("profile_prev", "Set anterior (orden alfabetico)", "Ctrl+Shift+Up", False, False),
+    ("profile_next", "Set siguiente de la rotaci\u00f3n", "Ctrl+Shift+Down", False, False),
+    ("profile_prev", "Set anterior de la rotaci\u00f3n", "Ctrl+Shift+Up", False, False),
+    ("set_rotation", "Elegir los sets de la rotaci\u00f3n...", "", False, False),
     ("clone_set", "Duplicar el set activo como set nuevo (pide nombre y ranura)", "", False, False),
 ]
 # [PACK104] Rutas del menu del widget que cambiaron (nombres de [PACK78] -> estructura nueva); el orden importa: lo especifico antes.
@@ -7560,7 +7561,7 @@ MENU_PATH_TO_CMD = {
     "tray/Plegar todos los hijos": "toggle_collapse_all", "tray/Ajustes/Atajos de teclado...": "open_hotkeys",
     "tray/Navegador de widgets...": "open_browser", "tray/Gu\u00eda de gestos y atajos...": "open_gestures",
     "tray/Mostrar u ocultar la consola": "toggle_console", "tray/Sets de widgets/Set siguiente": "profile_next",
-    "tray/Sets de widgets/Set anterior": "profile_prev", "tray/Sets de widgets/Duplicar el set activo como set nuevo...": "clone_set",
+    "tray/Sets de widgets/Set anterior": "profile_prev", "tray/Sets de widgets/Elegir los sets de la rotaci\u00f3n...": "set_rotation", "tray/Sets de widgets/Duplicar el set activo como set nuevo...": "clone_set",
     "tray/Edici\u00f3n/Deshacer \u00faltimo cambio": "undo_global", "tray/Edici\u00f3n/Rehacer": "redo_global",
 }
 _WIDGET_PATH_MOVES = tuple(_WIDGET_PATH_MOVES_A + [mv for n in (1, 2) for mv in (
@@ -8045,6 +8046,7 @@ class HotkeyManager(QObject):
         super().__init__(manager)
         self.m = manager
         self.cfg = {"hotkeys": {}, "menu_keys": {}, "tray_gestures": {}}
+        self.rotation = []                     # [PACK122] sets por los que rotan Ctrl / Alt + doble clic y Ctrl+May\u00fas+flechas ([] = todos)
         self._shortcuts, self._win_ids, self._filter = [], {}, None
         self.load()
         self.apply()
@@ -8077,6 +8079,8 @@ class HotkeyManager(QObject):
                 self.cfg["menu_keys"] = {k: str(v) for k, v in data["menu_keys"].items()}
             if isinstance(data.get("tray_gestures"), dict):
                 self.cfg["tray_gestures"] = {k: str(v) for k, v in data["tray_gestures"].items()}
+            if isinstance(data.get("rotation"), list):
+                self.rotation = [str(x) for x in data["rotation"] if str(x).strip()]
             for _cid in [f"set_save_{_i}" for _i in range(1, 11)]:      # migracion: se guardaron como locales en la version anterior
                 _c = self.cfg["hotkeys"].get(_cid)
                 if _c and not _c.get("global") and _hk_norm_seq(_c.get("key", "")) == _hk_norm_seq(self.command_table()[_cid][2]):
@@ -8158,7 +8162,7 @@ class HotkeyManager(QObject):
             tmp = HOTKEYS_FILE + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"version": 1, "hotkeys": self.cfg["hotkeys"], "menu_keys": self.cfg["menu_keys"],
-                           "tray_gestures": self.cfg.get("tray_gestures", {})},
+                           "tray_gestures": self.cfg.get("tray_gestures", {}), "rotation": list(self.rotation)},
                           f, indent=2, ensure_ascii=False)
             os.replace(tmp, HOTKEYS_FILE)
         except Exception as e:
@@ -8168,6 +8172,11 @@ class HotkeyManager(QObject):
         """Comando asignado a un gesto del icono de bandeja ('' = nada)."""
         tg = self.cfg.get("tray_gestures", {})
         return tg[gesture] if gesture in tg else TRAY_GESTURE_DEFAULTS.get(gesture, "")
+
+    def set_rotation(self, names):
+        """[PACK122] Fija (y guarda) la lista de sets de la rotacion; vacia = todos, por orden alfabetico."""
+        self.rotation = [str(n) for n in names]
+        self.save()
 
     def set_tray_command(self, gesture, cmd):
         self.cfg.setdefault("tray_gestures", {})[gesture] = cmd or ""
@@ -8297,7 +8306,7 @@ class HotkeyManager(QObject):
             "collapse_all": lambda: m.toggle_collapse_all(True), "expand_all": lambda: m.toggle_collapse_all(False),
             "undo_global": m.undo_global, "redo_global": m.redo_global,
             "toggle_console": m.toggle_console_visibility, "open_gestures": m.show_gesture_guide,
-            "profile_next": lambda: m.cycle_profile(1), "profile_prev": lambda: m.cycle_profile(-1),
+            "profile_next": lambda: m.cycle_profile(1), "profile_prev": lambda: m.cycle_profile(-1), "set_rotation": m.edit_set_rotation,
             "clone_set": m.clone_current_set,
         }
         if cmd_id in table:
@@ -8995,12 +9004,82 @@ class WidgetBrowserWindow(QMainWindow):
 # Templates de widgets: navegador para crear widgets desde un template y para crear / editar templates
 # ======================================================================
 TRAY_GESTURES = [
-    ("click", "Clic"), ("ctrl+click", "Ctrl + clic"), ("alt+click", "Alt + clic"),
-    ("ctrl+alt+click", "Ctrl + Alt + clic"), ("double", "Doble clic"), ("ctrl+double", "Ctrl + doble clic"),
-    ("alt+double", "Alt + doble clic"), ("ctrl+alt+double", "Ctrl + Alt + doble clic"), ("middle", "Clic central"),
+    ("click", "Clic"), ("ctrl+click", "Ctrl + clic"), ("alt+click", "Alt + clic"), ("shift+click", "May\u00fas + clic"),
+    ("ctrl+alt+click", "Ctrl + Alt + clic"), ("double", "Doble clic"), ("shift+double", "May\u00fas + doble clic"),
+    ("ctrl+double", "Ctrl + doble clic"), ("alt+double", "Alt + doble clic"), ("ctrl+alt+double", "Ctrl + Alt + doble clic"),
+    ("middle", "Clic central"),
 ]
-TRAY_GESTURE_DEFAULTS = {"double": "new_default", "ctrl+double": "toggle_collapse_all",
-                         "alt+double": "toggle_all", "ctrl+alt+double": "open_browser", "middle": "open_browser"}
+# [PACK122] doble clic: sin tecla = mostrar / ocultar todos; May\u00fas = widget nuevo predeterminado; Ctrl / Alt = set anterior / siguiente de la rotacion.
+TRAY_GESTURE_DEFAULTS = {"double": "toggle_all", "shift+double": "new_default", "ctrl+double": "profile_prev",
+                         "alt+double": "profile_next", "ctrl+alt+double": "open_browser", "middle": "open_browser"}
+
+
+class SetRotationDialog(QDialog):
+    """[PACK122] Elige y ordena los sets de widgets por los que se rota con Ctrl / Alt + doble clic en el icono de bandeja
+    y con Ctrl+May\u00fas+flechas. Sin ninguno marcado rotan todos, por orden alfab\u00e9tico."""
+
+    def __init__(self, names, chosen, parent=None):
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        super().__init__(parent)
+        self.setWindowTitle("Sets de la rotaci\u00f3n")
+        self.setMinimumWidth(440)
+        self._names = list(names)
+        v = QVBoxLayout(self)
+        info = QLabel("Marca los sets de widgets por los que quieres rotar con <b>Ctrl + doble clic</b> (anterior) y <b>Alt + doble clic</b> "
+                      "(siguiente) en el icono de la bandeja, y con <b>Ctrl+May\u00fas+\u2191/\u2193</b>. El orden de la lista es el orden de la "
+                      "rotaci\u00f3n. Si no marcas ninguno, rotan todos por orden alfab\u00e9tico.")
+        info.setWordWrap(True)
+        v.addWidget(info)
+        self.lst = QListWidget()
+        chosen = [n for n in chosen if n in self._names]
+        use_all = not chosen
+        for n in (self._names if use_all else chosen + [x for x in self._names if x not in chosen]):
+            it = QListWidgetItem(n)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if (use_all or n in chosen) else Qt.Unchecked)
+            self.lst.addItem(it)
+
+        v.addWidget(self.lst, 1)
+        row = QHBoxLayout()
+        for text, fn in (("Subir", self._up), ("Bajar", self._down), ("Marcar todos", self._mark_all), ("Desmarcar todos", self._mark_none)):
+            b = QPushButton(text)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        row.addStretch(1)
+        v.addLayout(row)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+
+    def _move(self, d):
+        r = self.lst.currentRow()
+        if r < 0 or not (0 <= r + d < self.lst.count()):
+            return
+        it = self.lst.takeItem(r)
+        self.lst.insertItem(r + d, it)
+        self.lst.setCurrentRow(r + d)
+
+    def _up(self, _c=False):
+        self._move(-1)
+
+    def _down(self, _c=False):
+        self._move(1)
+
+    def _set_all(self, st):
+        for i in range(self.lst.count()):
+            self.lst.item(i).setCheckState(st)
+
+    def _mark_all(self, _c=False):
+        self._set_all(Qt.Checked)
+
+    def _mark_none(self, _c=False):
+        self._set_all(Qt.Unchecked)
+
+    def selected(self):
+        """Sets marcados, en el orden de la lista; [] si no hay ninguno marcado o son todos por orden alfabetico (= la rotacion por defecto)."""
+        sel = [self.lst.item(i).text() for i in range(self.lst.count()) if self.lst.item(i).checkState() == Qt.Checked]
+        return [] if (not sel or sel == self._names) else sel
 
 
 _TPL_PREVIEW_CACHE = {}
@@ -9179,7 +9258,7 @@ class TemplateBrowser(QWidget):
         self.preview.setMinimumHeight(170)
         self.preview.setStyleSheet("background:#2b2b2f;border-radius:6px;")
         rl.addWidget(self.preview)
-        self.chk_default = QCheckBox("Este widget guardado ser\u00e1 el predeterminado (doble clic en el icono de bandeja)")
+        self.chk_default = QCheckBox("Este widget guardado ser\u00e1 el predeterminado (May\u00fas + doble clic en el icono de bandeja)")
         rl.addWidget(self.chk_default)
         self.tabs = QTabWidget()
         self.form_host = QWidget()
@@ -11247,7 +11326,8 @@ def font_boot(m):
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
-APP_PACK = 121                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
+APP_PACK = 122                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -13377,7 +13457,7 @@ HOTKEY_GROUPS = {
     "redo_global": "Edici\u00f3n y recarga", "undo_widget": "Con un widget enfocado",
     "redo_widget": "Con un widget enfocado", "reload_widget": "Con un widget enfocado", "open_gestures": "Aplicaci\u00f3n",
     **{f"set_{_k}_{_n}": "Sets y ranuras" for _k in ("load", "save", "loadc") for _n in range(1, 11)},
-    "profile_next": "Sets y ranuras", "profile_prev": "Sets y ranuras", "clone_set": "Sets y ranuras",
+    "profile_next": "Sets y ranuras", "profile_prev": "Sets y ranuras", "set_rotation": "Sets y ranuras", "clone_set": "Sets y ranuras",
 }
 
 
@@ -13538,14 +13618,30 @@ class HotkeyEditor(QWidget):
             self._menu_tree(g_w, m.build_widget_context_menu(wid, full=True), "widget", True)
         else:
             self._leaf(g_w, "(crea un widget para ver su men\u00fa)", None, False)
-        g_g = self._group(None, "Gestos del icono de bandeja (se lee Ctrl / Alt al hacer clic)")
+        g_g = self._group(None, "Gestos del icono de bandeja (se leen Ctrl / Alt / May\u00fas al hacer clic)")
         for g, glabel in TRAY_GESTURES:
             self._leaf(g_g, glabel, None, False, gesture=g)
+        it_rot = self._leaf(g_g, "Sets de la rotaci\u00f3n (gestos Ctrl / Alt + doble clic y Ctrl+May\u00fas+\u2191/\u2193)", None, False)      # [PACK122]
+        self._rot_btn = QPushButton(self._rotation_text())
+        self._rot_btn.setToolTip("Elige y ordena los sets por los que se rota")
+        self._rot_btn.clicked.connect(self._edit_rotation)
+        self.tree.setItemWidget(it_rot, 1, self._rot_btn)
         self.tree.blockSignals(False)
         self._building = False
         self._refresh_profiles()
         self._mark_conflicts()
         self._filter(self.search.text())
+
+    def _rotation_text(self):
+        rot = self.m._rotation_explicit()
+        return ("%d sets elegidos..." % len(rot)) if rot else "Todos (alfab\u00e9tico)..."
+
+    def _edit_rotation(self, _c=False):
+        self.m.edit_set_rotation(self)
+        try:
+            self._rot_btn.setText(self._rotation_text())
+        except RuntimeError:
+            pass
 
     def _refresh_profiles(self, select=None):
         cur = select or self.profiles.currentText()
@@ -16805,7 +16901,7 @@ class WidgetManager(QObject):
     def setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(self.app.windowIcon())
-        self.tray_icon.setToolTip("WidgetArena")
+        self.tray_icon.setToolTip("WidgetArena %s \u00b7 pack %d" % (APP_VERSION, APP_PACK))
         self.tray_icon.activated.connect(self._handle_tray_activation)
         self.tray_icon.show()
 
@@ -17483,6 +17579,7 @@ class WidgetManager(QObject):
             self.hotkeys.decorate(menu, "tray")
         _style_menu(menu, _MENU_GROUPS_T, _MENU_RULES_T, decorate=self._menu_style_on())       # [PACK78]
         self.tray_icon.setContextMenu(menu)
+        self._update_tray_tooltip()          # [PACK122] el numero de ranura puede haber cambiado
         if getattr(self, 'browser', None) is not None:
             self.browser.schedule_refresh()
         
@@ -17987,7 +18084,7 @@ class WidgetManager(QObject):
 
 
     def _tray_mods(self):
-        """'', 'ctrl', 'alt' o 'ctrl+alt' segun las teclas pulsadas; None si hay Shift o Win."""
+        """'', 'ctrl', 'alt', 'shift' o sus combinaciones (en ese orden) segun las teclas pulsadas; None si hay Win. [PACK122] Mayus ya cuenta."""
         c = a = s = w = False
         try:
             if sys.platform == "win32":
@@ -18000,9 +18097,9 @@ class WidgetManager(QObject):
                               bool(mm & Qt.ShiftModifier), bool(mm & Qt.MetaModifier))
         except Exception:
             pass
-        if s or w:
+        if w:
             return None
-        return "+".join(n for n, f in (("ctrl", c), ("alt", a)) if f)
+        return "+".join(n for n, f in (("ctrl", c), ("alt", a), ("shift", s)) if f)
 
     def tray_gesture(self, reason):
         kind = {QSystemTrayIcon.Trigger: "click", QSystemTrayIcon.DoubleClick: "double",
@@ -18322,9 +18419,51 @@ class WidgetManager(QObject):
 
     # (el guardado como template vive ahora en save_widget_as_template(widget_id, name=None), mas abajo)
 
+    def _all_set_names(self):
+        return [os.path.splitext(os.path.basename(p))[0] for p in self._list_profiles()]
+
+    def _rotation_explicit(self):
+        """[PACK122] Sets elegidos para la rotacion que existen todavia ([] = no hay lista: rotan todos)."""
+        hk = getattr(self, 'hotkeys', None)
+        names = set(self._all_set_names())
+        return [n for n in (getattr(hk, 'rotation', None) or []) if n in names]
+
+    def _rotation_names(self):
+        return self._rotation_explicit() or self._all_set_names()
+
+    def edit_set_rotation(self, parent=None):
+        """[PACK122] Dialogo para elegir y ordenar los sets de la rotacion (Ctrl / Alt + doble clic, Ctrl+May\u00fas+flechas)."""
+        names = self._all_set_names()
+        if not names:
+            self._osd("No hay sets guardados")
+            return
+        dlg = SetRotationDialog(names, self._rotation_explicit(), parent or self.dialog_parent)
+        if not dlg.exec():
+            return
+        self.hotkeys.set_rotation(dlg.selected())
+        self.build_tray_menu()
+        rot = self._rotation_explicit()
+        self._osd(("Rotaci\u00f3n: " + " \u2192 ".join(rot)) if rot else "Rotaci\u00f3n: todos los sets (orden alfab\u00e9tico)", 2400)
+
+    def _update_tray_tooltip(self):
+        """[PACK122] Al pasar el rat\u00f3n por el icono: versi\u00f3n y n\u00famero del pack, y n\u00famero (ranura) y nombre del set activo."""
+        ti = getattr(self, 'tray_icon', None)
+        if ti is None:
+            return
+        txt = "WidgetArena %s \u00b7 pack %d" % (APP_VERSION, APP_PACK)
+        try:
+            cur = self.current_profile_name
+            if cur:
+                inv = {v: k for k, v in self._slots().items()}
+                num = (" %d" % (int(inv[cur]) % 10)) if cur in inv else ""
+                txt += "\nSet%s \u00b7 %s" % (num, cur)
+        except Exception:
+            pass
+        ti.setToolTip(txt)
+
     def cycle_profile(self, step=1):
-        """Perfil siguiente / anterior (orden alfabetico)."""
-        names = [os.path.splitext(os.path.basename(p))[0] for p in self._list_profiles()]
+        """Set siguiente / anterior de la rotaci\u00f3n ([PACK122] la lista elegida; sin lista, todos por orden alfab\u00e9tico)."""
+        names = self._rotation_names()
         if not names:
             self._osd("No hay sets guardados")
             return
@@ -22723,6 +22862,7 @@ class WidgetManager(QObject):
 
     def _set_current_profile(self, name):
         self.global_state['current_profile'] = name or ''
+        self._update_tray_tooltip()          # [PACK122]
 
     def _profile_autosave(self):
         return bool(self.global_state.get('profile_autosave', True))
@@ -23078,12 +23218,21 @@ class WidgetManager(QObject):
         pre.toggled.connect(lambda on: (self.global_state.__setitem__('profile_preload', bool(on)), on and self._schedule_preload(200)))
         pm.addAction(pre)
         pm.addSeparator()
+        pm.setToolTipsVisible(True)
+        rot = self._rotation_explicit()
+        rot_tip = ("Rotaci\u00f3n: " + " \u2192 ".join(rot)) if rot else "Rotaci\u00f3n: todos los sets, por orden alfab\u00e9tico"
         a_next = QAction("Set siguiente", self)
+        a_next.setToolTip(rot_tip)
         a_next.triggered.connect(lambda: self.cycle_profile(1))
         pm.addAction(a_next)
         a_prev = QAction("Set anterior", self)
+        a_prev.setToolTip(rot_tip)
         a_prev.triggered.connect(lambda: self.cycle_profile(-1))
         pm.addAction(a_prev)
+        a_rot = QAction("Elegir los sets de la rotaci\u00f3n...", self)       # [PACK122]
+        a_rot.setToolTip("Los sets que recorren Set siguiente / anterior, Ctrl / Alt + doble clic en el icono y Ctrl+May\u00fas+\u2191/\u2193")
+        a_rot.triggered.connect(lambda: self.edit_set_rotation())
+        pm.addAction(a_rot)
         pm.addSeparator()
         slots = self._slots()
         inv = {v: k for k, v in slots.items()}
@@ -23091,7 +23240,10 @@ class WidgetManager(QObject):
         cur = self.current_profile_name
         for name in names:
             tag = f"   [ranura {int(inv[name]) % 10}]" if name in inv else ""
+            tag += "  \u21bb" if name in rot else ""           # [PACK122] \u21bb = entra en la rotacion (solo si hay una lista elegida)
             act = QAction(name + tag + ("  \u25cf" if name in self._resident else ""), self)
+            if name in rot:
+                act.setToolTip("Entra en la rotaci\u00f3n de Ctrl / Alt + doble clic (posici\u00f3n %d de %d)" % (rot.index(name) + 1, len(rot)))
             act.setCheckable(True)
             act.setChecked(name == cur)
             act.triggered.connect(lambda checked, n=name: self._load_profile_dialog(n))

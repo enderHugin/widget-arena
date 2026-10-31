@@ -112,6 +112,23 @@ El formato está descrito en [docs/FORMATO-WAPACK.md](docs/FORMATO-WAPACK.md).
 | **Ctrl + Alt + B** | Navegador de todos tus widgets |
 | **F1** | Guía de gestos y atajos completa |
 
+## Icono de la bandeja
+
+Al pasar el ratón por el icono aparecen la **versión y el número de pack** del programa y el **número (ranura) y nombre del set de widgets activo**.
+Doble clic en el icono:
+
+| Gesto | Qué hace |
+|---|---|
+| Doble clic | Mostrar u ocultar todos los widgets |
+| **Mayús** + doble clic | Widget nuevo (el predeterminado) |
+| **Ctrl** + doble clic | Set de widgets anterior de la rotación |
+| **Alt** + doble clic | Set de widgets siguiente de la rotación |
+| **Ctrl + Alt** + doble clic, o clic central | Navegador de widgets |
+
+La **rotación** es la lista de sets por la que se mueven Ctrl / Alt + doble clic, *Set siguiente / anterior* y **Ctrl + Mayús + ↑ / ↓**. Se elige en
+*icono de bandeja → Sets de widgets → Elegir los sets de la rotación...* (o en *Atajos de teclado → Gestos*): marca los sets y ordénalos. Los que entran
+llevan una marca ↻ en el menú *Sets de widgets*. Sin lista elegida rotan todos, por orden alfabético. Cada gesto se puede cambiar en *Atajos de teclado → Gestos*.
+
 Mantén **Ctrl**, **Alt**, **Mayús** o **Win** sobre una nota y aparece un recuadro con lo que hace cada gesto.
 Los atajos se pueden cambiar en *icono de bandeja → Ajustes → Atajos de teclado*.
 

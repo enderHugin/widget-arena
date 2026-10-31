@@ -95,6 +95,7 @@
           <span id="cta-text">Descargar para Windows</span>
         </a>
         <p class="fine" id="fine"></p>
+        <p class="fine" id="ver"></p>
         <p class="others" id="others"></p>
       </div>
       <div class="art" aria-hidden="true">
@@ -148,13 +149,14 @@
 
   <footer>
     <span data-i="foot">Software libre con licencia MIT.</span>
-    · <a href="__REPO_URL__" id="repo">GitHub</a> · v__VERSION__
+    · <a href="__REPO_URL__" id="repo">GitHub</a> · pack __PACK__ · v__VERSION__
   </footer>
 </div>
 
 <script>
 (function () {
   var BASE = "__BASE_URL__";
+  var PACK = "__PACK__", VERSION = "__VERSION__";
   var T = {
     es: {
       h1: "Notas y widgets en tu escritorio, enlazados con cables.",
@@ -187,6 +189,7 @@
             "Windows: «Más información» → «Ejecutar de todas formas». macOS: clic derecho sobre el archivo → «Abrir»."],
       kofi_t: "¿Te resulta útil? Es gratis y sin anuncios; si quieres apoyar su desarrollo, puedes invitarme a un café.",
       kofi_b: "Invítame a un café",
+      ver: "Versión actual",
       foot: "Software libre con licencia MIT."
     },
     en: {
@@ -220,6 +223,7 @@
             "Windows: “More info” → “Run anyway”. macOS: right-click the file → “Open”."],
       kofi_t: "Find it useful? It is free and ad-free; if you want to support its development, you can buy me a coffee.",
       kofi_b: "Buy me a coffee",
+      ver: "Current version",
       foot: "Free software under the MIT license."
     }
   };
@@ -257,6 +261,7 @@
     if (os === "any") { cta.setAttribute("href", "#how"); cta.removeAttribute("download"); $("#cta-text").textContent = t.cta_any; }
     else { cta.setAttribute("href", FILES[os]); cta.setAttribute("download", ""); $("#cta-text").textContent = t["cta_" + os]; }
     $("#fine").textContent = t["fine_" + os];
+    $("#ver").textContent = t.ver + ": pack " + PACK + " (" + VERSION + ")";
     var o = $("#others"); o.textContent = t.others + " ";
     ["win", "mac", "linux"].forEach(function (k, i) {
       if (k === os) return;

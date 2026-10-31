@@ -7,8 +7,12 @@ OUT="${2:-_site}"
 REPO="${3:-https://github.com/${GITHUB_REPOSITORY:-OWNER/REPO}}"
 cd "$(dirname "$0")/.."
 VER="$(tr -d '[:space:]' < VERSION)"
+PACK="$(sed -n 's/^APP_PACK[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' widget_arena.py | head -1)"
+[ -n "$PACK" ] || { echo "widget_arena.py no define APP_PACK" >&2; exit 1; }
+APPVER="$(sed -n 's/^APP_VERSION[[:space:]]*=[[:space:]]*"\([0-9.]*\)".*/\1/p' widget_arena.py | head -1)"
+[ -z "$APPVER" ] || [ "$APPVER" = "$VER" ] || { echo "APP_VERSION ($APPVER) no coincide con VERSION ($VER)" >&2; exit 1; }
 rm -rf "$OUT"; mkdir -p "$OUT/dl"
-sub() { sed -e "s|__BASE_URL__|$BASE|g" -e "s|__VERSION__|$VER|g" -e "s|__REPO_URL__|$REPO|g" "$1"; }
+sub() { sed -e "s|__BASE_URL__|$BASE|g" -e "s|__VERSION__|$VER|g" -e "s|__PACK__|$PACK|g" -e "s|__REPO_URL__|$REPO|g" "$1"; }
 sub site/index.html > "$OUT/index.html"
 cp site/favicon.png "$OUT/favicon.png"
 touch "$OUT/.nojekyll"
@@ -37,4 +41,4 @@ sub installers/install-unix.sh > "$OUT/dl/install-linux.sh"
 sub installers/install-unix.sh > "$OUT/dl/Widget Arena.command"
 chmod +x "$OUT/dl/install-linux.sh" "$OUT/dl/Widget Arena.command"
 ( cd "$OUT/dl" && zip -qX install-macos.zip "Widget Arena.command" && rm "Widget Arena.command" )
-echo "Sitio montado en $OUT (base $BASE, version $VER)"
+echo "Sitio montado en $OUT (base $BASE, pack $PACK, version $VER)"

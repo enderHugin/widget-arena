@@ -1993,7 +1993,7 @@
       "upright_angle": 0.0,
       "layer1": {
         "type": "text",
-        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Mover una rama</b><br><span style=\"font-size:10pt;\">Ctrl + Alt + Win + arrastrar mueve una nota con todas sus hijas y nietas.</span></p>",
+        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Mover una rama</b><br><span style=\"font-size:10pt;\">Ctrl + Alt + Win + arrastrar mueve una nota con todas sus hijas y nietas, incluidas las de posición independiente.</span></p>",
         "background": "transparent",
         "font_family": "Segoe Print",
         "font_size": 11,
@@ -3153,7 +3153,7 @@
       "upright_angle": 0.0,
       "layer1": {
         "type": "text",
-        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Sets de widgets</b><br><span style=\"font-size:10pt;\">Un set de widgets es un conjunto de notas guardado con nombre. Ctrl + 1…0 carga el set nº N de la lista. Prueba Ctrl + 2 y vuelve con Ctrl + 1.</span></p>",
+        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Sets de widgets</b><br><span style=\"font-size:10pt;\">Un set de widgets es un conjunto de widgets guardado con nombre. Ctrl + 1…0 carga el set nº N de la lista. Prueba Ctrl + 2 y vuelve con Ctrl + 1.</span></p>",
         "background": "transparent",
         "font_family": "Segoe Print",
         "font_size": 11,
@@ -3443,7 +3443,7 @@
       "upright_angle": 0.0,
       "layer1": {
         "type": "text",
-        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Icono de la bandeja</b><br><span style=\"font-size:10pt;\">Junto al reloj. Doble clic: nota nueva. Clic derecho: sets de widgets, guardar y cargar y ajustes. Ctrl + Alt + B: navegador.</span></p>",
+        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Icono de la bandeja</b><br><span style=\"font-size:10pt;\">Doble clic: ocultar o mostrar todo. Con Mayús: widget nuevo. Con Ctrl / Alt: set anterior / siguiente. Clic derecho: menú.</span></p>",
         "background": "transparent",
         "font_family": "Segoe Print",
         "font_size": 11,
