@@ -2310,7 +2310,7 @@ class StickerWindow(QMainWindow):
                 for fallback_path in fallback_paths_to_check:
                     norm_fallback_path = os.path.normpath(fallback_path)
                     if os.path.exists(norm_fallback_path):
-                        print(f"INFO [{layer_name}]: 脗隆Fallback encontrado! Usando: '{norm_fallback_path}'")
+                        print(f"INFO [{layer_name}]: \u00a1Fallback encontrado! Usando: '{norm_fallback_path}'")
                         final_path = norm_fallback_path
                         path_exists = True
                         break
@@ -2323,7 +2323,7 @@ class StickerWindow(QMainWindow):
         _dprint(f"DEBUG [{layer_name}]: (Final) os.path.isfile() = {is_file}")
 
         if not path_exists or not is_file:
-            error_msg = f"ERROR [{layer_name}]: 脗隆Archivo no encontrado!\n{final_path}"
+            error_msg = f"ERROR [{layer_name}]: \u00a1Archivo no encontrado!\n{final_path}"
             print(error_msg)
             pixmap = QPixmap(200, 100)
             pixmap.fill(Qt.transparent)
@@ -2347,22 +2347,22 @@ class StickerWindow(QMainWindow):
                     _PIXMAP_MEMO.pop(next(iter(_PIXMAP_MEMO)))
                 _PIXMAP_MEMO[_memo_key] = pixmap
         is_pixmap_null = pixmap.isNull()
-        _dprint(f"DEBUG [{layer_name}]: pixmap.isNull() (True=Fallo, False=脙鈥皒ito) = {is_pixmap_null}")
+        _dprint(f"DEBUG [{layer_name}]: pixmap.isNull() (True=Fallo, False=\u00c9xito) = {is_pixmap_null}")
              
         if not is_pixmap_null:
             
             if rotation != 0:
-                _dprint(f"DEBUG [{layer_name}]: Aplicando rotaci脙鲁n de {rotation} grados.")
+                _dprint(f"DEBUG [{layer_name}]: Aplicando rotaci\u00f3n de {rotation} grados.")
                 try:
                     transform = QTransform().rotate(rotation)
                     pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
                 except Exception as e:
-                    print(f"ERROR [{layer_name}]: Fallo al aplicar rotaci脙鲁n: {e}")
+                    print(f"ERROR [{layer_name}]: Fallo al aplicar rotaci\u00f3n: {e}")
 
-            _dprint(f"DEBUG [{layer_name}]: 脗隆脙鈥癤ITO! Imagen cargada exitosamente.")
+            _dprint(f"DEBUG [{layer_name}]: \u00a1\u00c9XITO! Imagen cargada exitosamente.")
             return pixmap
         else:
-            print(f"ERROR [{layer_name}]: 脗隆FALLO DE LECTURA DE IMAGEN! El archivo existe, pero QPixmap no pudo leerlo.")
+            print(f"ERROR [{layer_name}]: \u00a1FALLO DE LECTURA DE IMAGEN! El archivo existe, pero QPixmap no pudo leerlo.")
             try:                  # [PACK120] QPixmap no tiene supportedImageFormats(): una imagen ilegible impedia crear la nota (y cortaba la restauracion)
                 from PySide6.QtGui import QImageReader
                 supported_formats = [bytes(f).decode('utf-8', 'replace').lower() for f in QImageReader.supportedImageFormats()]
@@ -2371,7 +2371,7 @@ class StickerWindow(QMainWindow):
             _dprint(f"DEBUG [{layer_name}]: Formatos de imagen soportados por Qt: {supported_formats}")
             
             error_msg = f"ERROR [{layer_name}]: Fallo al cargar la imagen.\n" \
-                        f"El archivo existe, pero Qt no puede leer el formato o est脙隆 corrupto.\n" \
+                        f"El archivo existe, pero Qt no puede leer el formato o est\u00e1 corrupto.\n" \
                         f"Ruta: {final_path}"
             
             pixmap = QPixmap(200, 100)
@@ -2651,7 +2651,7 @@ class StickerWindow(QMainWindow):
             log_warn(self.widget_id, f"_canon_buttons: {e_cb}")
 
     def load_template_data(self, data):
-        log_debug(self.widget_id, "Cargando template data...")
+        log_debug(self.widget_id, "Cargando datos del widget...")
         _ensure_generated_layer(data)          # [PACK112] la imagen de una nota base no viaja en los estilos: si falta, se dibuja de nuevo
         self.current_template_data = data
         self.set_content(data) 
@@ -3191,7 +3191,7 @@ class StickerWindow(QMainWindow):
                (modifiers & Qt.ShiftModifier) and \
                (modifiers & Qt.MetaModifier):
                 
-                log_info(self.widget_id, "Reset de rotaci贸n a 0潞")
+                log_info(self.widget_id, "Reset de rotaci\u00f3n a 0\u00ba")
                 target_l2_angle = 0
 
             elif (modifiers & Qt.ControlModifier) and \
@@ -3199,7 +3199,7 @@ class StickerWindow(QMainWindow):
                  (modifiers & Qt.ShiftModifier):
                 
                 target_l2_angle = random.randint(-20, 20)
-                log_info(self.widget_id, f"Rotaci贸n random aplicada: {target_l2_angle}潞")
+                log_info(self.widget_id, f"Rotaci\u00f3n random aplicada: {target_l2_angle}\u00ba")
             
             if target_l2_angle is not None:
                 l1_data = self.current_template_data.setdefault('layer1', {})
@@ -3897,16 +3897,16 @@ class StickerWindow(QMainWindow):
                 paso = "fino (0.01)" if shift else "normal (0.1)"
                 lines.append(f"Flechas Arriba/Abajo: inclinar (shear) capa, paso {paso}")
         elif ctrl and shift:
-            lines.append("Flechas Arriba/Abajo: cambiar de perfil")
-            lines.append("P: menu rapido de perfiles")
+            lines.append("Flechas Arriba/Abajo: cambiar de set")
+            lines.append("P: menu rapido de sets")
             if sel:
-                lines.append("Flechas Izq/Der: rotar capa, paso fino (1掳)")
+                lines.append("Flechas Izq/Der: rotar capa, paso fino (1\u00b0)")
                 lines.append("Rueda del mouse: tono FINO (1 grado) si es imagen, o ancho + alto")
         elif ctrl:
-            lines.append("Numeros 1-0: cargar perfil por posicion")
+            lines.append("Numeros 1-0: cargar set por posicion")
             lines.append("F12: mostrar/ocultar consola")
             if sel:
-                lines.append("Flechas Izq/Der: rotar capa, paso normal (5掳)")
+                lines.append("Flechas Izq/Der: rotar capa, paso normal (5\u00b0)")
                 lines.append("Rueda del mouse: tono GRUESO (predefinidos) si es imagen, o ancho")
             else:
                 lines.append("Rueda del mouse sobre una imagen: tono grueso (+Shift: fino)")
@@ -3920,7 +3920,7 @@ class StickerWindow(QMainWindow):
             lines.append("(combinalo con Ctrl, Ctrl+Alt o Ctrl+Alt+Shift)")
         elif meta:
             lines.append("Win se usa junto a Ctrl+Alt+Shift+Click central")
-            lines.append("para resetear la rotacion a 0掳")
+            lines.append("para resetear la rotacion a 0\u00b0")
 
         if not lines:
             return None
@@ -4022,7 +4022,7 @@ class StickerWindow(QMainWindow):
                         act.triggered.connect(lambda checked, n=name: self.manager._load_profile_dialog(n))
                         menu.addAction(act)
                     menu.addSeparator()
-                    save_act = QAction("Guardar perfil activo...", self)
+                    save_act = QAction("Guardar el set activo...", self)
                     save_act.triggered.connect(self.manager._save_profile_dialog)
                     menu.addAction(save_act)
                     menu.exec(QCursor.pos())
@@ -4039,7 +4039,7 @@ class StickerWindow(QMainWindow):
             if event.key() == Qt.Key_Left:
                 new_rotation = (current_rotation - step) % 360
                 layer_data['rotation'] = new_rotation
-                log_debug(self.widget_id, f"Teclado rotaci贸n L{self._selected_layer_num}: {new_rotation}潞 (step={step})")
+                log_debug(self.widget_id, f"Teclado rotaci\u00f3n L{self._selected_layer_num}: {new_rotation}\u00ba (step={step})")
                 self.load_template_data(self.current_template_data) 
                 self.save_timer.start()
                 event.accept()
@@ -4047,7 +4047,7 @@ class StickerWindow(QMainWindow):
             elif event.key() == Qt.Key_Right:
                 new_rotation = (current_rotation + step) % 360
                 layer_data['rotation'] = new_rotation
-                log_debug(self.widget_id, f"Teclado rotaci贸n L{self._selected_layer_num}: {new_rotation}潞 (step={step})")
+                log_debug(self.widget_id, f"Teclado rotaci\u00f3n L{self._selected_layer_num}: {new_rotation}\u00ba (step={step})")
                 self.load_template_data(self.current_template_data)
                 self.save_timer.start()
                 event.accept()
@@ -4291,7 +4291,7 @@ class StickerWindow(QMainWindow):
 
         l1_data['content'] = updated
         self._resync_button_colors()
-        log_debug(self.widget_id, f"Rueda bot\u8d38n: {ff_val} {fs_val} -> {new_fs} (label='{label}')")
+        log_debug(self.widget_id, f"Rueda bot\u00f3n: {ff_val} {fs_val} -> {new_fs} (label='{label}')")
 
     def _adjust_button_font_on_wheel(self, event, delta_y):
         if event is None:
@@ -4367,7 +4367,7 @@ class StickerWindow(QMainWindow):
 
         l1_data['content'] = updated
         self._resync_button_colors()
-        log_debug(self.widget_id, f"Rueda bot\u8d38n fuente: {ff_val} -> {new_ff} (label='{label}')")
+        log_debug(self.widget_id, f"Rueda bot\u00f3n fuente: {ff_val} -> {new_ff} (label='{label}')")
 
     def _with_layer(self, n, fn):
         """Ejecuta fn con la capa n como 'seleccionada' (los gestos de teclado / rueda actuan sobre ella)."""
@@ -4467,7 +4467,7 @@ class StickerWindow(QMainWindow):
 
         link_url = self._get_link_at(event.pos())
         if link_url:
-            edit_link_action = QAction("Editar este bot贸n/enlace...", self)
+            edit_link_action = QAction("Editar este bot\u00f3n/enlace...", self)
             edit_link_action.triggered.connect(lambda: self._edit_link_from_view_mode(link_url))
             actions = menu.actions()
             if actions:
@@ -5778,11 +5778,11 @@ class LinkEditDialog(QDialog):
         self.url_edit = QLineEdit(current_url)
         layout.addRow("URL:", self.url_edit)
         
-        self.async_check = QCheckBox("Hacer llamada as铆ncrona (petici贸n HTTP en segundo plano sin abrir ventana)")
+        self.async_check = QCheckBox("Hacer llamada as\u00edncrona (petici\u00f3n HTTP en segundo plano sin abrir ventana)")
         self.async_check.setChecked(current_mode == "async")
         layout.addRow("", self.async_check)
         
-        self.button_check = QCheckBox("Mostrar como bot贸n estilizado")
+        self.button_check = QCheckBox("Mostrar como bot\u00f3n estilizado")
         self.button_check.setChecked(current_is_button)
         layout.addRow("", self.button_check)
         
@@ -5794,7 +5794,7 @@ class LinkEditDialog(QDialog):
         self.size_spin = QSpinBox()
         self.size_spin.setRange(6, 200)
         self.size_spin.setValue(current_fs if current_fs else 16)
-        layout.addRow("Tama帽o:", self.size_spin)
+        layout.addRow("Tama\u00f1o:", self.size_spin)
         
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -6473,7 +6473,7 @@ class InlineTextEditor(QTextEdit):
 
         menu.addSeparator()
 
-        select_all_action = QAction("Seleccionar Todo (Ctrl+A)", self)
+        select_all_action = QAction("Seleccionar todo (Ctrl+A)", self)
         select_all_action.setEnabled(has_any_text)
         select_all_action.triggered.connect(self.selectAll)
         menu.addAction(select_all_action)
@@ -6540,7 +6540,7 @@ class InlineTextEditor(QTextEdit):
         
         link_at_click = self.anchorAt(pos)
         cursor_on_link = has_selection and bool(cursor.charFormat().anchorHref())
-        link_action = QAction("Insertar/Editar Enlace (Ctrl+K)...", self)
+        link_action = QAction("Insertar/Editar enlace (Ctrl+K)...", self)
         link_action.setEnabled(has_selection or cursor_on_link or bool(link_at_click))
 
         def _trigger_insert_link():
@@ -6553,17 +6553,17 @@ class InlineTextEditor(QTextEdit):
         
         menu.addSeparator()
         
-        font_action = QAction("Cambiar Fuente...", self)
+        font_action = QAction("Cambiar fuente...", self)
         font_action.setEnabled(has_selection)
         font_action.triggered.connect(self._change_selection_font)
         menu.addAction(font_action)
         
-        size_action = QAction("Cambiar Tama帽o...", self)
+        size_action = QAction("Cambiar tama\u00f1o...", self)
         size_action.setEnabled(has_selection)
         size_action.triggered.connect(self._change_selection_size)
         menu.addAction(size_action)
         
-        color_action = QAction("Cambiar Color...", self)
+        color_action = QAction("Cambiar color...", self)
         color_action.setEnabled(has_selection)
         color_action.triggered.connect(self._change_selection_color)
         menu.addAction(color_action)
@@ -6747,7 +6747,7 @@ class InlineTextEditor(QTextEdit):
         current_fmt = cursor.charFormat()
         current_size = int(current_fmt.font().pointSize())
         
-        size, ok = QInputDialog.getInt(self, "Cambiar Tama帽o", "Tama帽o de fuente:", current_size, 6, 200)
+        size, ok = QInputDialog.getInt(self, "Cambiar tama\u00f1o", "Tama\u00f1o de fuente:", current_size, 6, 200)
         if ok:
             fmt = QTextCharFormat()
             fmt.setFontPointSize(size)
@@ -7467,8 +7467,8 @@ HOTKEY_PROFILES_DIR = os.path.join(DATA_DIR, "hotkey_profiles")
 HOTKEY_COMMANDS = [
     ("open_browser", "Abrir el navegador de widgets", "Ctrl+Alt+B", True, False),
     ("toggle_all", "Mostrar / ocultar todos los widgets", "", False, False),
-    ("add_widget", "Agregar nuevo widget (elegir template)", "", False, False),
-    ("new_default", "Nuevo widget con el template predeterminado", "", False, False),
+    ("add_widget", "Agregar nuevo widget (elegir widget guardado)", "", False, False),
+    ("new_default", "Nuevo widget con el predeterminado", "", False, False),
     ("toggle_collapse_all", "Plegar / desplegar todos los hijos", "", False, False),
     ("reload_all", "Recargar todos los widgets", "", False, False),
     ("undo_global", "Deshacer \u00faltimo cambio (todos los widgets)", "Ctrl+Alt+Z", False, False),
@@ -7483,40 +7483,40 @@ HOTKEY_COMMANDS = [
     ("collapse_all", "Plegar todos los hijos (ver solo los padres)", "", False, False),
     ("expand_all", "Desplegar todos los hijos", "", False, False),
     ("cycle_sort", "Cambiar el criterio de orden de las listas", "", False, False),
-    ("set_load_1", "Cargar el perfil de la ranura 1", "Alt+1", True, False),
-    ("set_save_1", "Guardar el perfil activo en la ranura 1", "Ctrl+Alt+1", True, False),
-    ("set_load_2", "Cargar el perfil de la ranura 2", "Alt+2", True, False),
-    ("set_save_2", "Guardar el perfil activo en la ranura 2", "Ctrl+Alt+2", True, False),
-    ("set_load_3", "Cargar el perfil de la ranura 3", "Alt+3", True, False),
-    ("set_save_3", "Guardar el perfil activo en la ranura 3", "Ctrl+Alt+3", True, False),
-    ("set_load_4", "Cargar el perfil de la ranura 4", "Alt+4", True, False),
-    ("set_save_4", "Guardar el perfil activo en la ranura 4", "Ctrl+Alt+4", True, False),
-    ("set_load_5", "Cargar el perfil de la ranura 5", "Alt+5", True, False),
-    ("set_save_5", "Guardar el perfil activo en la ranura 5", "Ctrl+Alt+5", True, False),
-    ("set_load_6", "Cargar el perfil de la ranura 6", "Alt+6", True, False),
-    ("set_save_6", "Guardar el perfil activo en la ranura 6", "Ctrl+Alt+6", True, False),
-    ("set_load_7", "Cargar el perfil de la ranura 7", "Alt+7", True, False),
-    ("set_save_7", "Guardar el perfil activo en la ranura 7", "Ctrl+Alt+7", True, False),
-    ("set_load_8", "Cargar el perfil de la ranura 8", "Alt+8", True, False),
-    ("set_save_8", "Guardar el perfil activo en la ranura 8", "Ctrl+Alt+8", True, False),
-    ("set_load_9", "Cargar el perfil de la ranura 9", "Alt+9", True, False),
-    ("set_save_9", "Guardar el perfil activo en la ranura 9", "Ctrl+Alt+9", True, False),
-    ("set_load_10", "Cargar el perfil de la ranura 10", "Alt+0", True, False),
-    ("set_save_10", "Guardar el perfil activo en la ranura 10", "Ctrl+Alt+0", True, False),
-    ("set_loadc_1", "Cargar el perfil de la ranura 1 (o el perfil n.1 de la lista) - Ctrl+cifra", "Ctrl+1", True, False),
-    ("set_loadc_2", "Cargar el perfil de la ranura 2 (o el perfil n.2 de la lista) - Ctrl+cifra", "Ctrl+2", True, False),
-    ("set_loadc_3", "Cargar el perfil de la ranura 3 (o el perfil n.3 de la lista) - Ctrl+cifra", "Ctrl+3", True, False),
-    ("set_loadc_4", "Cargar el perfil de la ranura 4 (o el perfil n.4 de la lista) - Ctrl+cifra", "Ctrl+4", True, False),
-    ("set_loadc_5", "Cargar el perfil de la ranura 5 (o el perfil n.5 de la lista) - Ctrl+cifra", "Ctrl+5", True, False),
-    ("set_loadc_6", "Cargar el perfil de la ranura 6 (o el perfil n.6 de la lista) - Ctrl+cifra", "Ctrl+6", True, False),
-    ("set_loadc_7", "Cargar el perfil de la ranura 7 (o el perfil n.7 de la lista) - Ctrl+cifra", "Ctrl+7", True, False),
-    ("set_loadc_8", "Cargar el perfil de la ranura 8 (o el perfil n.8 de la lista) - Ctrl+cifra", "Ctrl+8", True, False),
-    ("set_loadc_9", "Cargar el perfil de la ranura 9 (o el perfil n.9 de la lista) - Ctrl+cifra", "Ctrl+9", True, False),
-    ("set_loadc_10", "Cargar el perfil de la ranura 10 (o el perfil n.10 de la lista) - Ctrl+cifra", "Ctrl+0", True, False),
+    ("set_load_1", "Cargar el set de la ranura 1", "Alt+1", True, False),
+    ("set_save_1", "Guardar el set activo en la ranura 1", "Ctrl+Alt+1", True, False),
+    ("set_load_2", "Cargar el set de la ranura 2", "Alt+2", True, False),
+    ("set_save_2", "Guardar el set activo en la ranura 2", "Ctrl+Alt+2", True, False),
+    ("set_load_3", "Cargar el set de la ranura 3", "Alt+3", True, False),
+    ("set_save_3", "Guardar el set activo en la ranura 3", "Ctrl+Alt+3", True, False),
+    ("set_load_4", "Cargar el set de la ranura 4", "Alt+4", True, False),
+    ("set_save_4", "Guardar el set activo en la ranura 4", "Ctrl+Alt+4", True, False),
+    ("set_load_5", "Cargar el set de la ranura 5", "Alt+5", True, False),
+    ("set_save_5", "Guardar el set activo en la ranura 5", "Ctrl+Alt+5", True, False),
+    ("set_load_6", "Cargar el set de la ranura 6", "Alt+6", True, False),
+    ("set_save_6", "Guardar el set activo en la ranura 6", "Ctrl+Alt+6", True, False),
+    ("set_load_7", "Cargar el set de la ranura 7", "Alt+7", True, False),
+    ("set_save_7", "Guardar el set activo en la ranura 7", "Ctrl+Alt+7", True, False),
+    ("set_load_8", "Cargar el set de la ranura 8", "Alt+8", True, False),
+    ("set_save_8", "Guardar el set activo en la ranura 8", "Ctrl+Alt+8", True, False),
+    ("set_load_9", "Cargar el set de la ranura 9", "Alt+9", True, False),
+    ("set_save_9", "Guardar el set activo en la ranura 9", "Ctrl+Alt+9", True, False),
+    ("set_load_10", "Cargar el set de la ranura 10", "Alt+0", True, False),
+    ("set_save_10", "Guardar el set activo en la ranura 10", "Ctrl+Alt+0", True, False),
+    ("set_loadc_1", "Cargar el set de la ranura 1 (o el set n.1 de la lista) - Ctrl+cifra", "Ctrl+1", True, False),
+    ("set_loadc_2", "Cargar el set de la ranura 2 (o el set n.2 de la lista) - Ctrl+cifra", "Ctrl+2", True, False),
+    ("set_loadc_3", "Cargar el set de la ranura 3 (o el set n.3 de la lista) - Ctrl+cifra", "Ctrl+3", True, False),
+    ("set_loadc_4", "Cargar el set de la ranura 4 (o el set n.4 de la lista) - Ctrl+cifra", "Ctrl+4", True, False),
+    ("set_loadc_5", "Cargar el set de la ranura 5 (o el set n.5 de la lista) - Ctrl+cifra", "Ctrl+5", True, False),
+    ("set_loadc_6", "Cargar el set de la ranura 6 (o el set n.6 de la lista) - Ctrl+cifra", "Ctrl+6", True, False),
+    ("set_loadc_7", "Cargar el set de la ranura 7 (o el set n.7 de la lista) - Ctrl+cifra", "Ctrl+7", True, False),
+    ("set_loadc_8", "Cargar el set de la ranura 8 (o el set n.8 de la lista) - Ctrl+cifra", "Ctrl+8", True, False),
+    ("set_loadc_9", "Cargar el set de la ranura 9 (o el set n.9 de la lista) - Ctrl+cifra", "Ctrl+9", True, False),
+    ("set_loadc_10", "Cargar el set de la ranura 10 (o el set n.10 de la lista) - Ctrl+cifra", "Ctrl+0", True, False),
     ("open_gestures", "Abrir la guia de gestos y atajos", "F1", False, False),
-    ("profile_next", "Perfil siguiente (orden alfabetico)", "Ctrl+Shift+Down", False, False),
-    ("profile_prev", "Perfil anterior (orden alfabetico)", "Ctrl+Shift+Up", False, False),
-    ("clone_set", "Duplicar el perfil activo como perfil nuevo (pide nombre y ranura)", "", False, False),
+    ("profile_next", "Set siguiente (orden alfabetico)", "Ctrl+Shift+Down", False, False),
+    ("profile_prev", "Set anterior (orden alfabetico)", "Ctrl+Shift+Up", False, False),
+    ("clone_set", "Duplicar el set activo como set nuevo (pide nombre y ranura)", "", False, False),
 ]
 # [PACK104] Rutas del menu del widget que cambiaron (nombres de [PACK78] -> estructura nueva); el orden importa: lo especifico antes.
 _WIDGET_PATH_MOVES_A = ([
@@ -7559,8 +7559,8 @@ MENU_PATH_TO_CMD = {
     "tray/Nuevo widget predeterminado": "new_default", "tray/Desplegar todos los hijos": "toggle_collapse_all",
     "tray/Plegar todos los hijos": "toggle_collapse_all", "tray/Ajustes/Atajos de teclado...": "open_hotkeys",
     "tray/Navegador de widgets...": "open_browser", "tray/Gu\u00eda de gestos y atajos...": "open_gestures",
-    "tray/Mostrar u ocultar la consola": "toggle_console", "tray/Perfiles/Perfil siguiente": "profile_next",
-    "tray/Perfiles/Perfil anterior": "profile_prev", "tray/Perfiles/Duplicar el perfil activo como perfil nuevo...": "clone_set",
+    "tray/Mostrar u ocultar la consola": "toggle_console", "tray/Sets de widgets/Set siguiente": "profile_next",
+    "tray/Sets de widgets/Set anterior": "profile_prev", "tray/Sets de widgets/Duplicar el set activo como set nuevo...": "clone_set",
     "tray/Edici\u00f3n/Deshacer \u00faltimo cambio": "undo_global", "tray/Edici\u00f3n/Rehacer": "redo_global",
 }
 _WIDGET_PATH_MOVES = tuple(_WIDGET_PATH_MOVES_A + [mv for n in (1, 2) for mv in (
@@ -7582,6 +7582,41 @@ _WIDGET_PATH_MOVES = tuple(_WIDGET_PATH_MOVES_A + [mv for n in (1, 2) for mv in 
     ("widget/Transformar capas/Capa %d" % n, "widget/Capas/Capa %d/Transformar" % n),
     ("widget/Contenido y capas/Capa %d" % n, "widget/Capas/Capa %d" % n))]
   + [("widget/Contenido y capas", "widget/Capas"), ("widget/Transformar capas", "widget/Capas")])
+# [PACK121] Rutas del menu que cambiaron de nombre o de sitio al unificar el vocabulario (se aplican DESPUES de las anteriores;
+# lo especifico antes). Los atajos y teclas de menu que el usuario ya tenia asignados se traducen solos.
+_MOVES_121 = tuple([
+    ("widget/Aspecto/Template/Usar como predeterminado", "widget/Usar como predeterminado"),
+    ("widget/Aspecto/Template/Cambiar el template...", "widget/Aspecto/Widget guardado/Cambiar por otro widget guardado..."),
+    ("widget/Aspecto/Template/Guardar como template...", "widget/Aspecto/Widget guardado/Guardar este widget..."),
+    ("widget/Aspecto/Template/Exportar el template...", "widget/Aspecto/Widget guardado/Exportar el widget guardado..."),
+    ("widget/Aspecto/Template/Copiar template (json)", "widget/Aspecto/Widget guardado/Copiar widget guardado (json)"),
+    ("widget/Aspecto/Template/Pegar template (json)", "widget/Aspecto/Widget guardado/Pegar widget guardado (json)"),
+    ("widget/Aspecto/Template", "widget/Aspecto/Widget guardado"),
+    ("widget/Aspecto/Estilo/Generar estilo...", "widget/Aspecto/Forma de papel/Generar forma de papel..."),
+    ("widget/Aspecto/Estilo/Editar este estilo...", "widget/Aspecto/Forma de papel/Editar esta forma de papel..."),
+    ("widget/Aspecto/Estilo/Copiar estilo (json)", "widget/Aspecto/Forma de papel/Copiar forma de papel (json)"),
+    ("widget/Aspecto/Estilo/Pegar estilo (json)", "widget/Aspecto/Forma de papel/Pegar forma de papel (json)"),
+    ("widget/Aspecto/Estilo", "widget/Aspecto/Forma de papel"),
+    ("widget/Clonar/Copiar \u00e1rbol (json)", "widget/Copiar \u00e1rbol (json)"),
+    ("widget/Clonar/Pegar \u00e1rbol (json)", "widget/Pegar \u00e1rbol (json)"),
+    ("widget/Clonar/Exportar \u00e1rbol a un archivo...", "widget/Exportar \u00e1rbol a un archivo..."),
+    ("tray/Perfiles/Guardar perfil activo...", "tray/Sets de widgets/Guardar el set activo..."),
+    ("tray/Perfiles/Duplicar el perfil activo como perfil nuevo...", "tray/Sets de widgets/Duplicar el set activo como set nuevo..."),
+    ("tray/Perfiles/Guardar el perfil activo al cambiar de perfil", "tray/Sets de widgets/Guardar el set activo al cambiar de set"),
+    ("tray/Perfiles/Precargar los perfiles con tecla (cambio instant\u00e1neo)", "tray/Sets de widgets/Precargar los sets con tecla (cambio instant\u00e1neo)"),
+    ("tray/Perfiles/Perfil siguiente", "tray/Sets de widgets/Set siguiente"),
+    ("tray/Perfiles/Perfil anterior", "tray/Sets de widgets/Set anterior"),
+    ("tray/Perfiles/Importar y exportar/Copia de seguridad completa ahora (todos los perfiles)",
+     "tray/Sets de widgets/Importar y exportar/Copia de seguridad completa ahora (todos los sets)"),
+    ("tray/Ajustes/Importar y exportar/Copia de seguridad completa ahora (todos los perfiles)",
+     "tray/Ajustes/Importar y exportar/Copia de seguridad completa ahora (todos los sets)"),
+    ("tray/Perfiles", "tray/Sets de widgets"),
+    ("tray/Nueva nota base...", "tray/Nueva nota & forma de papel..."),
+    ("tray/Edici\u00f3n/Deshacer \u7164ltimo cambio", "tray/Edici\u00f3n/Deshacer \u00faltimo cambio"),
+] + [mv for n in (1, 2) for mv in (
+    ("widget/Capas/Capa %d/Contenido/Efectos de Imagen (Tono, Color base, Brillo...)" % n,
+     "widget/Capas/Capa %d/Contenido/Efectos de imagen (tono, color base, brillo...)" % n),)])
+
 _MOD_KEYS = None
 
 
@@ -7601,14 +7636,17 @@ def _hk_norm_label(text):
 # del menu ya construido (no cambia nombres internos ni atajos); un interruptor en Apariencia lo
 # apaga para PCs lentos. Sin animaciones ni transparencias: solo pinta unos rectangulos.
 # ---------------------------------------------------------------------------------------------
-# [PACK78] Vocabulario unico de los textos visibles:
-#   widget   = todo lo que flota en el escritorio. Hay dos TIPOS: nota (se escribe sobre un papel: post-it o nota base)
-#              e imagen/web (su fondo es una imagen o una pagina web).
-#   perfil   = conjunto con nombre de widgets ("perfil activo" = el que esta en pantalla; antes tambien "set" / "conjunto").
-#   template = aspecto guardado de un widget (antes tambien "plantilla"); "aspecto" = grupo de widgets con el mismo look.
-#   padre / hijo / descendientes; plegar / desplegar; ocultar / mostrar; eliminar; clonar (widgets) / duplicar (perfiles).
-#   nota base = el papel que genera el editor de nota base (forma, color, borde, sombra); estilo = los parametros de una nota
-#   base (sin su texto): se genera, se edita, se guarda ("Mis estilos"), se copia y se pega. Todo eso vive bajo "Estilo".
+# [PACK78] Vocabulario unico de los textos visibles (puesto al dia en [PACK121]):
+#   widget          = todo lo que flota en el escritorio. Hay dos TIPOS: nota (se escribe sobre un papel: post-it o forma de papel)
+#                     e imagen/web (su fondo es una imagen o una pagina web).
+#   set de widgets  = conjunto con nombre de widgets ya colocados ("set activo" = el que esta en pantalla; antes "perfil" / "conjunto").
+#                     "Esquema de atajos" es otra cosa: los atajos de teclado guardados con un nombre.
+#   widget guardado = aspecto guardado de un widget para crear mas iguales (antes "template" / "plantilla");
+#                     "aspecto" = grupo de widgets con el mismo look.
+#   forma de papel  = el papel que genera el editor (forma, color, borde, sombra); antes "nota base" / "estilo": se genera, se edita,
+#                     se guarda ("Mis formas de papel"), se copia y se pega. Todo eso vive bajo "Forma de papel".
+#   padre / hijo / descendientes / arbol (un widget con todos sus descendientes); plegar / desplegar; ocultar / mostrar;
+#   eliminar (del todo) / quitar (sacar de una lista o deshacer una asignacion); clonar (widgets) / duplicar (sets); agregar.
 # El ORDEN de los menus lo dan las reglas de abajo: cada regla es (prefijo de la etiqueta, grupo) y las opciones salen
 # por grupo y, dentro de el, en el orden de la lista. Una opcion nueva solo necesita su prefijo en la lista.
 _KIND_LABEL = {"nota": "Nota", "imagen": "Imagen/web"}
@@ -7632,36 +7670,36 @@ _MENU_GROUPS_W = (
     ("aspecto", "CAPAS Y ASPECTO", "~#94a3b8"),
     ("familia", "RELACIONES", "~#94a3b8"),
     ("copia", "CLONAR", "~#94a3b8"),
-    ("general", "TODOS LOS WIDGETS", "~#94a3b8"),
+    ("gestion", "GESTI\u00d3N DE WIDGETS", "~#94a3b8"),
     ("peligro", "PELIGRO", "#f87171"),
 )
 # [PACK104] menu del widget: Capas / Aspecto / Relaciones / Clonar / Eliminar son submenus
 _MENU_RULES_W = (
     ("Renombrar", "este"), ("Cancelar temporizador", "este"), ("Establecer temporizador", "este"),
-    ("Nuevo widget", "general"), ("Ocultar todos", "general"), ("Mostrar todos", "general"),
+    ("Copiar \u00e1rbol", "gestion"), ("Pegar \u00e1rbol", "gestion"), ("Exportar \u00e1rbol", "gestion"), ("Usar como predeterminado", "gestion"),
     ("Ocultar", "este"), ("Mostrar", "este"), ("Siempre encima", "este"), ("Ver en el navegador", "este"),
     ("Capas", "aspecto"), ("Aspecto", "aspecto"), ("Relaciones", "familia"), ("Clonar", "copia"), ("Eliminar", "peligro"),
 )
 _MENU_GROUPS_T = (
     ("pantalla", "MOSTRAR Y OCULTAR", "~#94a3b8"),
     ("crear", "CREAR", "~#94a3b8"),
-    ("explorar", "WIDGETS Y PERFILES", "~#94a3b8"),
+    ("explorar", "WIDGETS Y SETS", "~#94a3b8"),
     ("app", "APLICACI\u00d3N", "~#94a3b8"),
 )
 _MENU_RULES_T = (
     ("Ocultar todos", "pantalla"), ("Mostrar todos", "pantalla"), ("Plegar todos", "pantalla"), ("Desplegar todos", "pantalla"),
     ("Recargar", "pantalla"),
-    ("Nuevo widget", "crear"), ("Nuevo con un aspecto", "crear"), ("Nueva nota base", "crear"),
-    ("Navegador", "explorar"), ("Widgets", "explorar"), ("Perfiles", "explorar"), ("Guardar y cargar", "explorar"), ("Packs de estilos", "explorar"), ("Edici", "explorar"),
+    ("Nuevo widget", "crear"), ("Nuevo con un aspecto", "crear"), ("Nueva nota", "crear"),
+    ("Navegador", "explorar"), ("Widgets", "explorar"), ("Sets de widgets", "explorar"), ("Guardar y cargar", "explorar"), ("Edici", "explorar"),
     ("Ajustes", "app"), ("Gu\u00eda", "app"), ("Mostrar u ocultar", "app"), ("Acerca", "app"), ("Salir", "app"),
 )
 # Solo estas opciones (las mas usadas) llevan icono y negrita; sin colores ni franjas.
 _MENU_KEYS_W = ("Capas", "Relaciones", "Clonar", "Eliminar")
-_MENU_KEYS_T = ("Nuevo widget...", "Navegador", "Perfiles", "Guardar y cargar", "Ajustes", "Salir")
+_MENU_KEYS_T = ("Nuevo widget...", "Navegador", "Sets de widgets", "Guardar y cargar", "Ajustes", "Salir")
 _MENU_ICONS = (
     ("Capas", "\U0001f6e0"), ("Relaciones", "\U0001f331"), ("Clonar", "\U0001f4cb"),
     ("Eliminar", "\U0001f5d1"), ("Nuevo widget...", "\u2795"), ("Navegador", "\U0001f50d"),
-    ("Perfiles", "\U0001f464"), ("Guardar y cargar", "\U0001f4be"), ("Ajustes", "\u2699"), ("Salir", "\U0001f6aa"),
+    ("Sets de widgets", "\U0001f464"), ("Guardar y cargar", "\U0001f4be"), ("Ajustes", "\u2699"), ("Salir", "\U0001f6aa"),
 )
 
 _MENU_ICON_CACHE = {}
@@ -8099,6 +8137,10 @@ class HotkeyManager(QObject):
             p_ = "/".join(al.get(s, s) for s in (re.sub(r"^(Capa \d)\s*(?::\s*\[.*\]|\u00b7\s*\w+)$", r"\1", s0) for s0 in path.split("/")))
             for old_, new_ in self._PATH_MOVES:
                 if p_ == old_ or p_.startswith(old_ + "/"):
+                    p_ = new_ + p_[len(old_):]
+                    break
+            for old_, new_ in _MOVES_121:            # [PACK121]
+                if p_ == old_ or p_.startswith(old_ + "/"):
                     return new_ + p_[len(old_):]
             return p_
         hk = {}
@@ -8520,11 +8562,11 @@ class WidgetBrowserWindow(QMainWindow):
         self.templates = TemplateBrowser(manager)
         self.templates.on_done = lambda: self.tabs.setCurrentIndex(0)
         manager.template_browser = self.templates
-        self.tabs.addTab(self.templates, "Templates")
+        self.tabs.addTab(self.templates, "Widgets guardados")
         self.glob = self._scroll_tab("Ajustes globales")
         self.keys_tab = QWidget()
         self.tabs.addTab(self.keys_tab, "Atajos y teclas de men\u00fa")
-        for _i, _t in enumerate(("Widget elegido", "Crear con template", "Ajustes y acciones", "Atajos de teclado")):     # [PACK66]
+        for _i, _t in enumerate(("Widget elegido", "Crear desde un widget guardado", "Ajustes y acciones", "Atajos de teclado")):     # [PACK66]
             self.tabs.setTabText(_i, _t)
         for _i in (2, 3):
             self.tabs.tabBar().setTabTextColor(_i, QColor("#9aa0aa"))       # las pestanas de configuracion, mas discretas
@@ -8768,16 +8810,16 @@ class WidgetBrowserWindow(QMainWindow):
         v.addLayout(head)
 
         # ---- template
-        lay = self._gbox(v, "Template")
+        lay = self._gbox(v, "Widget guardado")
         row = QHBoxLayout()
         cur = QLabel("Actual: " + str(st.get('template_name') or "-"))
         f = cur.font()
         f.setBold(True)
         cur.setFont(f)
         row.addWidget(cur, 1)
-        button(row, "Cambiar template...", lambda: m.show_template_chooser(apply_to=wid))
-        button(row, "Guardar como template...", lambda: m.save_widget_as_template(wid))
-        button(row, "Editar templates...", lambda: m.show_template_chooser(select=st.get('template_name')))
+        button(row, "Cambiar por otro widget guardado...", lambda: m.show_template_chooser(apply_to=wid))
+        button(row, "Guardar este widget...", lambda: m.save_widget_as_template(wid))
+        button(row, "Editar widgets guardados...", lambda: m.show_template_chooser(select=st.get('template_name')))
         lay.addLayout(row)
 
         # ---- visibilidad
@@ -8970,7 +9012,7 @@ def _tpl_layer_pixmap(ld, num, size):
     kind = ld.get("type", "text" if num == 1 else "png")
     scaled = ld.get("scaled_contents", num == 2)
     if kind == "png":
-        pm = StickerWindow._load_image(None, str(ld.get("content", "")), 0, f"plantilla L{num}", num)
+        pm = StickerWindow._load_image(None, str(ld.get("content", "")), 0, f"widget guardado L{num}", num)
         if pm is None or pm.isNull():
             return None
         eff = ld.get("image_effects")
@@ -9060,7 +9102,7 @@ def _tpl_preview(data, size):
         finally:
             p.end()
     except Exception as e:
-        log_warn("Templates", f"No se pudo dibujar la vista previa: {e}")
+        log_warn("Widgets guardados", f"No se pudo dibujar la vista previa: {e}")
     if len(_TPL_PREVIEW_CACHE) > 200:
         _TPL_PREVIEW_CACHE.clear()
     _TPL_PREVIEW_CACHE[key] = pm
@@ -9082,7 +9124,7 @@ class TemplateBrowser(QWidget):
         self.m = manager
         self._loading, self._data, self._name, self._f = False, {}, None, {}
         self._target, self.on_done = None, None
-        self.setWindowTitle("Templates de widgets")
+        self.setWindowTitle("Widgets guardados")
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self.resize(940, 620)
         left = QWidget()
@@ -9092,32 +9134,32 @@ class TemplateBrowser(QWidget):
         self.banner.setStyleSheet("background:#3b4f7a;color:white;padding:6px;border-radius:4px;")
         self.banner.hide()
         ll.addWidget(self.banner)
-        self.hint = QLabel("Elige un template (doble clic = crear el widget):")
+        self.hint = QLabel("Elige un widget guardado (doble clic = crear el widget):")
         ll.addWidget(self.hint)
         self.chk_keep = QCheckBox("Al aplicarlo a un widget existente, conservar su contenido")       # [PACK71]
         self.chk_keep.setChecked(self.m.keep_content_on_apply())
-        self.chk_keep.setToolTip("Cambiar el template solo cambia el aspecto: el texto (con su formato) del widget se mantiene.")
+        self.chk_keep.setToolTip("Cambiar el widget guardado solo cambia el aspecto: el texto (con su formato) del widget se mantiene.")
         self.chk_keep.toggled.connect(lambda on: self.m.set_keep_content_on_apply(on))
         ll.addWidget(self.chk_keep)
         self.list = QListWidget()
         self.list.setIconSize(self.THUMB)
         self.list.setSpacing(2)
         ll.addWidget(self.list, 1)
-        self.btn_create = QPushButton("Crear widget con este template")
+        self.btn_create = QPushButton("Crear widget a partir de este")
         self.btn_create.setStyleSheet("QPushButton{font-weight:bold;padding:6px;background:#2f5f46;border:1px solid #3f7f5f;border-radius:4px;}QPushButton:hover{background:#38724f;}QPushButton:disabled{background:#333;color:#777;border-color:#444;}")
         ll.addWidget(self.btn_create)
         row = QHBoxLayout()
-        for text, fn in (("Nuevo", self._new), ("Duplicar", self._duplicate), ("Editar estilo...", self._edit_base)):
+        for text, fn in (("Nuevo", self._new), ("Duplicar", self._duplicate), ("Editar forma de papel...", self._edit_base)):
             b = QPushButton(text)
             b.clicked.connect(lambda _c=False, f=fn: f())
             row.addWidget(b)
             if text.startswith("Editar"):
                 self.btn_edit_base = b
-                b.setToolTip("Abre el editor de nota base con el estilo de este template y lo guarda con el mismo nombre")
+                b.setToolTip("Abre el editor de forma de papel con la de este widget guardado y lo guarda con el mismo nombre")
         for text, items in (("Gestionar \u25be", (("Renombrar", self._rename), ("Eliminar", self._delete), None,
                                                               ("Importar...", self._import), ("Exportar...", self._export), None,
                                                               ("Criterio de aspectos en uso...", self.m.edit_type_criteria))),
-                            ("Con un widget \u25be", (("Guardar un widget como template...", self._from_widget),
+                            ("Con un widget \u25be", (("Guardar un widget de la pantalla...", self._from_widget),
                                                       ("Aplicar a un widget...", self._to_widget)))):
             mb = QPushButton(text)
             mn = QMenu(mb)
@@ -9137,7 +9179,7 @@ class TemplateBrowser(QWidget):
         self.preview.setMinimumHeight(170)
         self.preview.setStyleSheet("background:#2b2b2f;border-radius:6px;")
         rl.addWidget(self.preview)
-        self.chk_default = QCheckBox("Este template ser\u00e1 el predeterminado (doble clic en el icono de bandeja)")
+        self.chk_default = QCheckBox("Este widget guardado ser\u00e1 el predeterminado (doble clic en el icono de bandeja)")
         rl.addWidget(self.chk_default)
         self.tabs = QTabWidget()
         self.form_host = QWidget()
@@ -9147,16 +9189,16 @@ class TemplateBrowser(QWidget):
         self.tabs.addTab(self.json_edit, "JSON")
         rl.addWidget(self.tabs, 1)
         brow = QHBoxLayout()
-        self.btn_save = QPushButton("Guardar cambios del template")
+        self.btn_save = QPushButton("Guardar cambios del widget guardado")
         self.btn_revert = QPushButton("Descartar cambios")
         brow.addWidget(self.btn_save)
         brow.addWidget(self.btn_revert)
         rl.addLayout(brow)
         xrow = QHBoxLayout()                 # [PACK96] exportar / copiar el JSON del template seleccionado
         self.btn_export_json = QPushButton("Exportar a JSON...")
-        self.btn_export_json.setToolTip("Guarda el template seleccionado (tal como est\u00e1 guardado) en un archivo .json")
+        self.btn_export_json.setToolTip("Guarda el widget guardado seleccionado (tal como est\u00e1 guardado) en un archivo .json")
         self.btn_copy_json = QPushButton("Copiar JSON")
-        self.btn_copy_json.setToolTip("Copia al portapapeles el JSON del template seleccionado (tal como est\u00e1 guardado)")
+        self.btn_copy_json.setToolTip("Copia al portapapeles el JSON del widget guardado seleccionado (tal como est\u00e1 guardado)")
         xrow.addWidget(self.btn_export_json)
         xrow.addWidget(self.btn_copy_json)
         rl.addLayout(xrow)
@@ -9371,7 +9413,7 @@ class TemplateBrowser(QWidget):
         self.btn_create.setEnabled(True)
         for w in (self.btn_export_json, self.btn_copy_json):
             w.setEnabled(bool(self._data))
-        self.status.setText("Aspecto en uso: %d widget(s). Para guardarlo como template, pulsa Duplicar." % ty['count'])
+        self.status.setText("Aspecto en uso: %d widget(s). Para guardarlo, pulsa Duplicar." % ty['count'])
         self.btn_edit_base.setEnabled(False)
         self._loading = False
 
@@ -9406,10 +9448,10 @@ class TemplateBrowser(QWidget):
         show_hdr = bool(types or bn)
         bn_names = [n for n in order if n in bn]
         if bn_names:
-            self.list.addItem(self._hdr_item("NOTAS BASE (creadas con el editor de nota base)  (%d)" % len(bn_names), "#34d399", BN_BG))
+            self.list.addItem(self._hdr_item("FORMAS DE PAPEL (creadas con el editor)  (%d)" % len(bn_names), "#34d399", BN_BG))
             add_names(bn_names, BN_BG)
         if types:
-            self.list.addItem(self._hdr_item("ASPECTOS EN USO EN ESTE PERFIL  (%d)" % len(types), "#8fb8ff"))
+            self.list.addItem(self._hdr_item("ASPECTOS EN USO EN ESTE SET  (%d)" % len(types), "#8fb8ff"))
             for t in types[:40]:
                 it = QListWidgetItem("%s\n%d widget%s" % (t['name'], t['count'], "" if t['count'] == 1 else "s"))
                 it.setData(Qt.UserRole + 1, t['key'])
@@ -9421,7 +9463,7 @@ class TemplateBrowser(QWidget):
         rest_names = [n for n in order if n not in bn]
         if rest_names:
             if show_hdr:
-                self.list.addItem(self._hdr_item("TEMPLATES GUARDADOS  (%d)" % len(rest_names), "#8a8a90"))
+                self.list.addItem(self._hdr_item("WIDGETS GUARDADOS  (%d)" % len(rest_names), "#8a8a90"))
             add_names(rest_names)
         self.list.blockSignals(False)
         self._loading = False
@@ -9470,7 +9512,7 @@ class TemplateBrowser(QWidget):
         elif self._name != "default.json":
             self.m.set_default_template("default.json")
         else:
-            self.status.setText("default.json es el predeterminado de reserva: marca otro template para cambiarlo.")
+            self.status.setText("default.json es el predeterminado de reserva: marca otro widget guardado para cambiarlo.")
         self.reload(self._name)
 
     # ---- acciones -------------------------------------------------------
@@ -9517,15 +9559,15 @@ class TemplateBrowser(QWidget):
         self._target = wid if (wid and wid in self.m.global_state) else None
         if self._target:
             nm = self.m._get_widget_display_name(self._target)
-            self.banner.setText(f"Cambiando el template de <b>{nm}</b>: elige uno y pulsa Aplicar "
+            self.banner.setText(f"Cambiando el widget guardado de <b>{nm}</b>: elige uno y pulsa Aplicar "
                                 "(se conservan su posici\u00f3n y su jerarqu\u00eda).")
             self.banner.show()
-            self.hint.setText("Elige el template (doble clic = aplicar):")
+            self.hint.setText("Elige el widget guardado (doble clic = aplicar):")
             self.btn_create.setText(f"Aplicar a \u00ab{nm}\u00bb")
         else:
             self.banner.hide()
-            self.hint.setText("Elige un template (doble clic = crear el widget):")
-            self.btn_create.setText("Crear widget con este template")
+            self.hint.setText("Elige un widget guardado (doble clic = crear el widget):")
+            self.btn_create.setText("Crear widget a partir de este")
 
     def hide(self):
         """Como pestana, 'cerrar' es volver a la pesta\u00f1a de widgets."""
@@ -9535,7 +9577,7 @@ class TemplateBrowser(QWidget):
             self.on_done()
 
     def _ask_name(self, title, text=""):
-        name, ok = QInputDialog.getText(self, title, "Nombre del template:", text=text)
+        name, ok = QInputDialog.getText(self, title, "Nombre del widget guardado:", text=text)
         n = self.m._tpl_safe_name(name) if ok else None
         if ok and not n:
             self.status.setText("Nombre no v\u00e1lido.")
@@ -9550,7 +9592,7 @@ class TemplateBrowser(QWidget):
         return cand
 
     def _new(self):
-        n = self._ask_name("Nuevo template")
+        n = self._ask_name("Nuevo widget guardado")
         if n:
             n = self._unique(n)
             self.m.save_template(n, self.m.get_default_template_data())
@@ -9559,7 +9601,7 @@ class TemplateBrowser(QWidget):
     def _duplicate(self):
         ty = self._cur_type()
         if ty:        # [PACK67] un tipo en uso: se guarda como template
-            n = self._ask_name("Guardar este aspecto como template", ty['name'])
+            n = self._ask_name("Guardar este aspecto como widget guardado", ty['name'])
             if n:
                 n = self._unique(n)
                 self.m.save_template(n, self.m.state_for_type(ty)['template_data'])
@@ -9577,11 +9619,11 @@ class TemplateBrowser(QWidget):
         if old == "default.json":
             self.status.setText("default.json no se puede renombrar.")
             return
-        n = self._ask_name("Renombrar template", old[:-5])
+        n = self._ask_name("Renombrar widget guardado", old[:-5])
         if not n or n == old:
             return
         if os.path.exists(os.path.join(TEMPLATES_DIR, n)):
-            self.status.setText("Ya existe un template con ese nombre.")
+            self.status.setText("Ya existe un widget guardado con ese nombre.")
             return
         try:
             os.rename(os.path.join(TEMPLATES_DIR, old), os.path.join(TEMPLATES_DIR, n))
@@ -9602,9 +9644,9 @@ class TemplateBrowser(QWidget):
         if not name:
             return
         if name == "default.json" or name == self.m.default_template_name():
-            self.status.setText("No se puede eliminar el template predeterminado (marca otro como predeterminado antes).")
+            self.status.setText("No se puede eliminar el widget guardado predeterminado (marca otro como predeterminado antes).")
             return
-        if QMessageBox.question(self, "Eliminar template", f"Eliminar '{name}'? Los widgets ya creados no se ven afectados.",
+        if QMessageBox.question(self, "Eliminar widget guardado", f"Eliminar '{name}'? Los widgets ya creados no se ven afectados.",
                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         try:
@@ -9616,14 +9658,14 @@ class TemplateBrowser(QWidget):
         self.reload()
 
     def _import(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Importar template", DATA_DIR, "JSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "Importar widget guardado", DATA_DIR, "JSON (*.json)")
         if not path:
             return
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 d = json.load(f)
             if not isinstance(d, dict):
-                raise ValueError("no es un template (la ra\u00edz debe ser un objeto)")
+                raise ValueError("no es un widget guardado (la ra\u00edz debe ser un objeto)")
         except Exception as e:
             self.status.setText(f"No se pudo importar: {e}")
             return
@@ -9636,7 +9678,7 @@ class TemplateBrowser(QWidget):
         if not self._data:
             return
         base = self._name or "aspecto_en_uso.json"
-        path, _ = QFileDialog.getSaveFileName(self, "Exportar template", os.path.join(DATA_DIR, base), "JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "Exportar widget guardado", os.path.join(DATA_DIR, base), "JSON (*.json)")
         if path:
             if not os.path.splitext(path)[1]:
                 path += ".json"
@@ -9660,7 +9702,7 @@ class TemplateBrowser(QWidget):
         QApplication.clipboard().setText(txt)
         self.status.setText(f"JSON copiado al portapapeles ({len(txt)} caracteres).")
         try:
-            self.m._osd("JSON del template copiado")
+            self.m._osd("JSON del widget guardado copiado")
         except Exception:
             pass
 
@@ -9674,10 +9716,10 @@ class TemplateBrowser(QWidget):
         return ids[labels.index(lab)] if ok else None
 
     def _from_widget(self):
-        wid = self._pick_widget("Guardar un widget como template")
+        wid = self._pick_widget("Guardar un widget de la pantalla")
         if not wid:
             return
-        n = self._ask_name("Guardar como template", self.m._get_widget_display_name(wid))
+        n = self._ask_name("Guardar widget", self.m._get_widget_display_name(wid))
         if n:
             n = n if not os.path.exists(os.path.join(TEMPLATES_DIR, n)) else self._unique(n)
             self.m.save_template(n, copy.deepcopy(self.m.global_state[wid].get('template_data', {})))
@@ -9686,7 +9728,7 @@ class TemplateBrowser(QWidget):
     def _to_widget(self):
         if not self._name:
             return
-        wid = self._pick_widget("Aplicar el template a un widget")
+        wid = self._pick_widget("Aplicar el widget guardado a un widget")
         if wid:
             self.m.apply_template_to_widget(wid, self._name)
             self.status.setText(f"'{self._name}' aplicado a {self.m._get_widget_display_name(wid)}.")
@@ -9980,7 +10022,7 @@ class SetCompare:
 
     def describe(self, e):
         if e['kind'] == 'add':
-            return "+ %s \u00b7 a\u00f1adido" % e['name']
+            return "+ %s \u00b7 agregado" % e['name']
         if e['kind'] == 'del':
             return "\u2212 %s \u00b7 quitado" % e['name']
         bits = []
@@ -9995,7 +10037,7 @@ class SetCompare:
         if not self.has_ref:
             return "%d widgets \u00b7 %d enlaces" % (len(self.B), len(self.edgesB))
         c = lambda f: sum(1 for e in self.ents if f(e))
-        return ("%d movidos \u00b7 %d cambiados \u00b7 %d a\u00f1adidos \u00b7 %d quitados \u00b7 %d enlaces distintos \u00b7 %d iguales" % (
+        return ("%d movidos \u00b7 %d cambiados \u00b7 %d agregados \u00b7 %d quitados \u00b7 %d enlaces distintos \u00b7 %d iguales" % (
             c(lambda e: e['kind'] == 'mod' and e['moved']), c(lambda e: e['kind'] == 'mod' and e['changes']),
             c(lambda e: e['kind'] == 'add'), c(lambda e: e['kind'] == 'del'), len(self.link_add) + len(self.link_del), self.n_same))
 
@@ -10230,7 +10272,7 @@ class BackupRestoreDialog(QDialog):
         rp.addWidget(self.info)
         self.chk_active = QCheckBox("")
         rp.addWidget(self.chk_active)
-        rp.addWidget(QLabel("Perfiles guardados en la copia (se restauran sin pisar los que ya existen):"))
+        rp.addWidget(QLabel("Sets guardados en la copia (se restauran sin pisar los que ya existen):"))
         self.lst_prof = QListWidget()
         rp.addWidget(self.lst_prof, 1)
         self.chk_tpl = QCheckBox("")
@@ -10275,7 +10317,7 @@ class BackupRestoreDialog(QDialog):
         self.lbl_sum.setStyleSheet("font-weight:bold;")
         mid.addWidget(self.lbl_sum)
         lg = QLabel('<span style="color:#ff9f1c">\u25a0 movido</span> &nbsp; <span style="color:#ffe14d">\u25a0 contenido cambiado</span> &nbsp; '
-                    '<span style="color:#45d483">\u25a0 a\u00f1adido / enlace nuevo</span> &nbsp; <span style="color:#ff5a5a">\u25a0 quitado / enlace quitado</span> &nbsp; '
+                    '<span style="color:#45d483">\u25a0 agregado / enlace nuevo</span> &nbsp; <span style="color:#ff5a5a">\u25a0 quitado / enlace quitado</span> &nbsp; '
                     '<span style="color:#6cb8ff">\u25a0 enlaces</span>')
         mid.addWidget(lg)
         self.lst_diff = QListWidget()
@@ -10397,9 +10439,9 @@ class BackupRestoreDialog(QDialog):
         for cb in (self.cb_src, self.cb_ref):
             cb.blockSignals(True)
             cb.clear()
-        self.cb_src.addItem("Perfil activo de la copia (%d widgets)" % len(d['notes'] or {}), None)
+        self.cb_src.addItem("Set activo de la copia (%d widgets)" % len(d['notes'] or {}), None)
         for name, prof in sorted(d['profiles'].items(), key=lambda kv: kv[0].lower()):
-            self.cb_src.addItem("Perfil: %s (%d)" % (name, len(self.m._only_notes(prof))), name)
+            self.cb_src.addItem("Set: %s (%d)" % (name, len(self.m._only_notes(prof))), name)
         self.cb_ref.addItem("Sin comparar", None)
         self.cb_ref.addItem("Mis widgets actuales", 'cur')
         cur = self.lst.currentRow()
@@ -10412,7 +10454,7 @@ class BackupRestoreDialog(QDialog):
             profs = []
 
         for name in profs[:40]:
-            self.cb_ref.addItem("Mi perfil guardado: " + name, 'prof:' + name)
+            self.cb_ref.addItem("Mi set guardado: " + name, 'prof:' + name)
         i = self.cb_ref.findData(keep_ref)
         self.cb_ref.setCurrentIndex(i if i >= 0 else 1)
         for cb in (self.cb_src, self.cb_ref):
@@ -10552,7 +10594,7 @@ class BackupRestoreDialog(QDialog):
             return
         n_cur = sum(1 for k, v in self.m.global_state.items() if isinstance(v, dict) and isinstance(v.get('template_data'), dict))
         notes = d['notes']
-        self.chk_active.setText("Perfil activo: sustituir mis %d widgets actuales por los %d de la copia" % (n_cur, len(notes or {})))
+        self.chk_active.setText("Set activo: sustituir mis %d widgets actuales por los %d de la copia" % (n_cur, len(notes or {})))
         self.chk_active.setEnabled(bool(notes))
         self.chk_active.setChecked(False)
         have = {os.path.splitext(f)[0] for f in os.listdir(PROFILES_DIR)} if os.path.isdir(PROFILES_DIR) else set()
@@ -10565,10 +10607,10 @@ class BackupRestoreDialog(QDialog):
             self.lst_prof.addItem(it)
 
         miss = [t for t in d['templates'] if not os.path.exists(os.path.join(TEMPLATES_DIR, t))]
-        self.chk_tpl.setText("Templates que faltan (%d)" % len(miss))
+        self.chk_tpl.setText("Widgets guardados que faltan (%d)" % len(miss))
         self.chk_tpl.setEnabled(bool(miss))
         self.chk_tpl.setChecked(bool(miss))
-        self.info.setText(self.items[self.lst.currentRow()]['label'] + "\nAntes de restaurar el perfil activo se hace una copia completa de lo actual, y el cambio se puede deshacer con Ctrl+Alt+Z.")
+        self.info.setText(self.items[self.lst.currentRow()]['label'] + "\nAntes de restaurar el set activo se hace una copia completa de lo actual, y el cambio se puede deshacer con Ctrl+Alt+Z.")
         self.status.setText("")
         self._fill_combos(d)
         self._refresh_cmp(True)
@@ -10584,7 +10626,7 @@ class BackupRestoreDialog(QDialog):
         if not (act or names or tpl):
             self.status.setText("No hay nada marcado.")
             return
-        if act and QMessageBox.question(self, "Restaurar perfil activo", "Se sustituir\u00e1n los widgets actuales por los de la copia. \u00bfContinuar?",
+        if act and QMessageBox.question(self, "Restaurar set activo", "Se sustituir\u00e1n los widgets actuales por los de la copia. \u00bfContinuar?",
                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         msg = self.m.restore_backup(d, act, names, tpl)      # [PACK119] el aviso va despues de volver a seleccionar (que limpia la pantalla)
@@ -10659,7 +10701,7 @@ class WaPack:
             raise PackError("No se pudo leer el archivo: %s" % e)
 
         if 'pack.json' not in self.members:
-            raise PackError("No es un pack de estilos: falta pack.json.")
+            raise PackError("No es un pack de widgets: falta pack.json.")
         try:
             man = json.loads(self._read('pack.json', 1 << 20).decode('utf-8-sig'))
         except (ValueError, UnicodeDecodeError):
@@ -10805,7 +10847,7 @@ def pack_install(path):
     """Copia el pack a la carpeta packs/ (con su id como nombre). Si ya habia otra version, la sustituye."""
     pk = pack_open_any(path)
     if pk is None:
-        raise PackError("El archivo no es un pack de estilos.")
+        raise PackError("El archivo no es un pack de widgets.")
     os.makedirs(PACKS_DIR, exist_ok=True)
     dest = os.path.join(PACKS_DIR, pk.id + PACK_EXT)
     if os.path.abspath(dest) != pk.path:
@@ -10821,7 +10863,7 @@ def pack_remove(pk):
     try:
         os.remove(pk.path)
     except OSError as e:
-        raise PackError("No se pudo borrar el pack: %s" % e)
+        raise PackError("No se pudo eliminar el pack: %s" % e)
     _PACK_CACHE.pop(pk.path, None)
 
 
@@ -11205,7 +11247,7 @@ def font_boot(m):
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
-APP_PACK = 120                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 121                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -11520,7 +11562,7 @@ def _ensure_generated_layer(td):
             l2['base_hue_src'] = new
         return True
     except Exception as e:
-        log_warn("Packs", "No se pudo dibujar de nuevo la nota base: %s" % e)
+        log_warn("Packs", "No se pudo dibujar de nuevo la forma de papel: %s" % e)
 
         return False
 
@@ -11748,17 +11790,17 @@ class PacksDialog(QDialog):
         from PySide6.QtWidgets import QListWidget, QListView
         self.m = manager
         self.packs = []
-        self.setWindowTitle("Packs de estilos")
+        self.setWindowTitle("Packs de widgets")
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self.setAcceptDrops(True)
         self.resize(1020, 660)
         root = QVBoxLayout(self)
         head = QHBoxLayout()
         tl = QVBoxLayout()
-        t1 = QLabel("Packs de estilos")
+        t1 = QLabel("Packs de widgets")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        t2 = QLabel("Un pack es un archivo .wapack con estilos de notas y conjuntos de widgets listos para usar. "
-                    "Arrastra aqu\u00ed un .wapack para instalarlo. Al usar un estilo se copia a tus templates (o a tus perfiles) y el pack no se toca.")
+        t2 = QLabel("Un pack es un archivo .wapack con widgets guardados y sets de widgets listos para usar. "
+                    "Arrastra aqu\u00ed un .wapack para instalarlo. Al agregar un widget guardado o un set se copia a los tuyos y el pack no se toca.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
 
@@ -11766,7 +11808,7 @@ class PacksDialog(QDialog):
         tl.addWidget(t2)
         head.addLayout(tl, 1)
         for text, fn, tip in (("Instalar un pack...", self.install_dialog, "Elige un archivo .wapack"),
-                              ("Exportar mis estilos y widgets...", lambda: self.m.pack_export_dialog(), "Crea un pack con lo que ya tienes")):
+                              ("Exportar mis widgets y sets...", lambda: self.m.pack_export_dialog(), "Crea un pack con lo que ya tienes")):
             b = QPushButton(text)
             b.setToolTip(tip)
             b.setStyleSheet("QPushButton{font-weight:bold;padding:8px 14px;}")
@@ -11787,7 +11829,7 @@ class PacksDialog(QDialog):
         self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.info.setStyleSheet("background:#2b2b2f;border-radius:6px;padding:8px;")
         panel.addWidget(self.info)
-        panel.addWidget(QLabel("Estilos (elige uno o varios)"))
+        panel.addWidget(QLabel("Widgets guardados (elige uno o varios)"))
         self.styles = QListWidget()
         self.styles.setViewMode(QListView.IconMode)
         self.styles.setResizeMode(QListView.Adjust)
@@ -11797,19 +11839,19 @@ class PacksDialog(QDialog):
         self.styles.setWordWrap(True)
         self.styles.setSelectionMode(QListWidget.ExtendedSelection)
         panel.addWidget(self.styles, 3)
-        panel.addWidget(QLabel("Perfiles: conjuntos de widgets ya colocados"))
+        panel.addWidget(QLabel("Sets: widgets ya colocados"))
         self.sets = QListWidget()
 
         self.sets.setMaximumHeight(120)
         panel.addWidget(self.sets, 1)
         row = QHBoxLayout()
         self.b_style, self.b_note, self.b_set, self.b_open, self.b_del = (QPushButton(t) for t in (
-            "A\u00f1adir a mis estilos", "Crear una nota con este estilo", "A\u00f1adir a mis perfiles", "Abrir el perfil ahora", "Quitar este pack"))
-        self.b_style.setToolTip("Guarda los estilos elegidos en tus templates (los ves en Templates y en 'Nuevo con un aspecto')")
-        self.b_note.setToolTip("Crea una nota nueva con el primer estilo elegido")
-        self.b_set.setToolTip("Guarda el perfil elegido en tu lista de perfiles, sin cambiar los widgets que tienes ahora")
-        self.b_open.setToolTip("Lo a\u00f1ade a tus perfiles y lo abre; tu perfil actual se guarda antes")
-        self.b_del.setToolTip("Borra el archivo del pack. Lo que ya a\u00f1adiste a tus templates y perfiles se queda")
+            "Agregar a mis widgets guardados", "Crear una nota con este widget guardado", "Agregar a mis sets", "Abrir el set ahora", "Quitar este pack"))
+        self.b_style.setToolTip("Guarda los widgets guardados elegidos entre los tuyos (los ves en Widgets guardados y en 'Nuevo con un aspecto')")
+        self.b_note.setToolTip("Crea una nota nueva con el primer widget guardado elegido")
+        self.b_set.setToolTip("Guarda el set elegido en tu lista de sets, sin cambiar los widgets que tienes ahora")
+        self.b_open.setToolTip("Lo agrega a tus sets y lo abre; tu set actual se guarda antes")
+        self.b_del.setToolTip("Elimina el archivo del pack. Lo que ya agregaste a tus widgets guardados y sets se queda")
         self.b_style.clicked.connect(lambda: self.add_styles(False))
         self.b_note.clicked.connect(lambda: self.add_styles(True))
         self.b_set.clicked.connect(lambda: self.add_set(False))
@@ -11837,7 +11879,7 @@ class PacksDialog(QDialog):
         from PySide6.QtWidgets import QListWidgetItem
         row = 0
         for i, pk in enumerate(self.packs):
-            sub = " \u00b7 ".join(x for x in (pk.author, "v" + pk.version, "%d estilos" % len(pk.styles) + (", %d perfiles" % len(pk.sets) if pk.sets else "")) if x)
+            sub = " \u00b7 ".join(x for x in (pk.author, "v" + pk.version, "%d widgets guardados" % len(pk.styles) + (", %d sets" % len(pk.sets) if pk.sets else "")) if x)
             it = QListWidgetItem(pk.name + "\n" + sub)
             it.setSizeHint(QSize(250, 48))
             self.nav.addItem(it)
@@ -11861,7 +11903,7 @@ class PacksDialog(QDialog):
             b.setEnabled(pk is not None)
         if pk is None:
             self.info.setText("No hay ning\u00fan pack instalado todav\u00eda.\n\nArrastra aqu\u00ed un archivo .wapack, o pulsa \u00abInstalar un pack...\u00bb. "
-                              "Tambi\u00e9n puedes crear el tuyo con \u00abExportar mis estilos y widgets...\u00bb.")
+                              "Tambi\u00e9n puedes crear el tuyo con \u00abExportar mis widgets y sets...\u00bb.")
             return
         lines = ["%s  \u00b7  v%s%s" % (pk.name, pk.version, ("  \u00b7  de " + pk.author) if pk.author else "")]
         if pk.description:
@@ -11909,7 +11951,7 @@ class PacksDialog(QDialog):
     # ---- instalar
     def install_dialog(self):
         paths, _ = QFileDialog.getOpenFileNames(self, "Instalar un pack", os.path.expanduser("~"),
-                                                "Packs de estilos (*.wapack *.zip);;Todos (*)")
+                                                "Packs de widgets (*.wapack *.zip);;Todos (*)")
         if paths:
             self.install_files(paths)
 
@@ -11919,7 +11961,7 @@ class PacksDialog(QDialog):
             try:
                 pk = pack_open_any(p)
                 if pk is None:
-                    self.status.setText("\u00ab%s\u00bb no es un pack de estilos." % os.path.basename(p))
+                    self.status.setText("\u00ab%s\u00bb no es un pack de widgets." % os.path.basename(p))
                     continue
                 old = pack_find(pk.id)
                 if old is not None and os.path.abspath(old.path) != pk.path:
@@ -11930,7 +11972,7 @@ class PacksDialog(QDialog):
                         continue
                 new = pack_install(p)
                 last = new.id
-                self.status.setText("Instalado: \u00ab%s\u00bb v%s (%d estilos, %d perfiles)." % (new.name, new.version, len(new.styles), len(new.sets)))
+                self.status.setText("Instalado: \u00ab%s\u00bb v%s (%d widgets guardados, %d sets)." % (new.name, new.version, len(new.styles), len(new.sets)))
             except PackError as e:
                 QMessageBox.warning(self, "Instalar pack", "%s\n\n%s" % (os.path.basename(p), e))
             except Exception as e:
@@ -11944,7 +11986,7 @@ class PacksDialog(QDialog):
         pk = self._cur()
         sel = [i.data(Qt.UserRole) for i in self.styles.selectedItems()]
         if pk is None or not sel:
-            self.status.setText("Elige uno o varios estilos.")
+            self.status.setText("Elige uno o varios widgets guardados.")
             return
         names = []
         try:
@@ -11953,31 +11995,31 @@ class PacksDialog(QDialog):
             if create_note:
                 self.m.add_new_widget(template_name=names[0])
         except PackError as e:
-            QMessageBox.warning(self, "Packs de estilos", str(e))
+            QMessageBox.warning(self, "Packs de widgets", str(e))
             return
         except Exception as e:
-            log_error("Packs", "No se pudo a\u00f1adir el estilo: %s" % e)
-            QMessageBox.warning(self, "Packs de estilos", "No se pudo a\u00f1adir el estilo:\n%s" % e)
+            log_error("Packs", "No se pudo agregar el widget guardado: %s" % e)
+            QMessageBox.warning(self, "Packs de widgets", "No se pudo agregar el widget guardado:\n%s" % e)
             return
 
-        self.status.setText(("Nota creada. " if create_note else "") + "A\u00f1adido a tus estilos: " + ", ".join(n[:-5] for n in names))
+        self.status.setText(("Nota creada. " if create_note else "") + "Agregado a tus widgets guardados: " + ", ".join(n[:-5] for n in names))
 
     def add_set(self, open_now):
         pk = self._cur()
         it = self.sets.currentItem()
         if pk is None or it is None:
-            self.status.setText("Elige un perfil.")
+            self.status.setText("Elige un set.")
             return
         try:
             name = self.m.pack_add_set(pk, it.data(Qt.UserRole))
         except PackError as e:
-            QMessageBox.warning(self, "Packs de estilos", str(e))
+            QMessageBox.warning(self, "Packs de widgets", str(e))
             return
         except Exception as e:
-            log_error("Packs", "No se pudo a\u00f1adir el perfil: %s" % e)
-            QMessageBox.warning(self, "Packs de estilos", "No se pudo a\u00f1adir el perfil:\n%s" % e)
+            log_error("Packs", "No se pudo agregar el set: %s" % e)
+            QMessageBox.warning(self, "Packs de widgets", "No se pudo agregar el set:\n%s" % e)
             return
-        self.status.setText("A\u00f1adido a tus perfiles: \u00ab%s\u00bb." % name)
+        self.status.setText("Agregado a tus sets: \u00ab%s\u00bb." % name)
         if open_now:
             self.m._load_profile(name)
 
@@ -11985,7 +12027,7 @@ class PacksDialog(QDialog):
         pk = self._cur()
         if pk is None:
             return
-        if QMessageBox.question(self, "Quitar pack", "\u00bfQuitar el pack \u00ab%s\u00bb?\n\nLos estilos y perfiles que ya a\u00f1adiste a tus templates y perfiles "
+        if QMessageBox.question(self, "Quitar pack", "\u00bfQuitar el pack \u00ab%s\u00bb?\n\nLos widgets guardados y sets que ya agregaste a los tuyos "
                                 "se quedan y siguen funcionando." % pk.name) != QMessageBox.Yes:
             return
         try:
@@ -12324,8 +12366,8 @@ def import_recover_images(root, names):
 
 class ImportDataDialog(QDialog):
     """[PACK118] Importar datos de otra instalaci\u00f3n: se elige la carpeta (o el .zip), se ve lo que hay y se marca lo que se quiere traer."""
-    NOTE_MODES = (("replace", "Sustituir los widgets que tengo ahora"), ("add", "A\u00f1adirlos a los que tengo ahora"),
-                  ("profile", "Guardarlos como un perfil nuevo (sin tocar lo actual)"))
+    NOTE_MODES = (("replace", "Sustituir los widgets que tengo ahora"), ("add", "Agregarlos a los que tengo ahora"),
+                  ("profile", "Guardarlos como un set nuevo (sin tocar lo actual)"))
 
     def __init__(self, manager):
         super().__init__(None)
@@ -12339,7 +12381,7 @@ class ImportDataDialog(QDialog):
         lay = QVBoxLayout(self)
         t1 = QLabel("Importar datos de otra instalaci\u00f3n")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        t2 = QLabel("Trae tus widgets, perfiles, templates, im\u00e1genes y ajustes de una versi\u00f3n anterior o de otro equipo. Elige la carpeta "
+        t2 = QLabel("Trae tus widgets, sets, widgets guardados, im\u00e1genes y ajustes de una versi\u00f3n anterior o de otro equipo. Elige la carpeta "
                     "\u00abwidget_arena_data\u00bb que usaba esa versi\u00f3n (suele estar junto al programa), la carpeta que la contiene, o una copia completa .zip.\n"
                     "Antes de tocar nada se guarda una copia completa de lo que tienes, y nunca se pisa un archivo que ya exista con otro contenido: "
                     "entra con otro nombre.")
@@ -12440,7 +12482,7 @@ class ImportDataDialog(QDialog):
                 raise ValueError("No existe esa carpeta.")
             root = import_find_root(src)
             if not root:
-                raise ValueError("No encuentro datos de Widget Arena ah\u00ed (busco data/widget_set.json, profiles, templates, sticky...).")
+                raise ValueError("No encuentro datos de Widget Arena ah\u00ed (busco data/widget_set.json, profiles, widgets guardados, sticky...).")
             if os.path.abspath(root) == os.path.abspath(ROOT_DATA_DIR):
                 raise ValueError("Esa es la carpeta de datos de esta misma instalaci\u00f3n.")
             self.root, self.info = root, import_scan(root)
@@ -12462,9 +12504,9 @@ class ImportDataDialog(QDialog):
             self.status.setText("Elige la carpeta o el .zip para ver qu\u00e9 se puede importar.")
         nm = sum(i["media"].values()) if i else 0
         rows = {"notes": ("Mis widgets (%d)" % i["notes"] if i else "Mis widgets", bool(i and i["notes"])),
-                "profiles": ("Perfiles (%d)" % (len(i["profiles"]) + len(i["resident"])) if i else "Perfiles", bool(i and (i["profiles"] or i["resident"]))),
-                "templates": ("Templates (%d)" % len(i["templates"]) if i else "Templates", bool(i and i["templates"])),
-                "media": ("Im\u00e1genes, marcos y notas base (%d archivos)" % nm if i else "Im\u00e1genes, marcos y notas base", nm > 0),
+                "profiles": ("Sets (%d)" % (len(i["profiles"]) + len(i["resident"])) if i else "Sets", bool(i and (i["profiles"] or i["resident"]))),
+                "templates": ("Widgets guardados (%d)" % len(i["templates"]) if i else "Widgets guardados", bool(i and i["templates"])),
+                "media": ("Im\u00e1genes, marcos y formas de papel (%d archivos)" % nm if i else "Im\u00e1genes, marcos y formas de papel", nm > 0),
                 "settings": ("Ajustes generales (%d)" % i["settings"] if i else "Ajustes generales", bool(i and i["settings"])),
                 "hotkeys": ("Atajos de teclado", bool(i and i["hotkeys"])),
                 "telegram": ("Conexi\u00f3n con Telegram (bot y chat)", bool(i and i["telegram"]))}
@@ -12680,7 +12722,7 @@ class FontExportDialog(QDialog):
         root = QVBoxLayout(self)
         t1 = QLabel("\u00bfExportar fuentes?")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        t2 = QLabel("Estas son las fuentes que usan los estilos y perfiles elegidos. Las que se incluyen van dentro del pack y funcionan en "
+        t2 = QLabel("Estas son las fuentes que usan los widgets guardados y sets elegidos. Las que se incluyen van dentro del pack y funcionan en "
                     "Windows, macOS y Linux. Las dem\u00e1s no se pueden o no hace falta incluirlas: si faltan, se ver\u00e1 una fuente parecida.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
@@ -12921,17 +12963,17 @@ class PackExportDialog(QDialog):
         from PySide6.QtWidgets import QListWidget, QListWidgetItem, QComboBox, QTextEdit, QLineEdit
         self.m = manager
         self.fonts = []
-        self.setWindowTitle("Exportar como pack de estilos")
+        self.setWindowTitle("Exportar como pack de widgets")
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self.resize(760, 700)
         root = QVBoxLayout(self)
-        intro = QLabel("Crea un archivo .wapack con lo que elijas. Las im\u00e1genes que usan tus estilos y widgets se incluyen solas; "
-                       "la imagen de las notas base no hace falta (se vuelve a dibujar y se pueden seguir editando).")
+        intro = QLabel("Crea un archivo .wapack con lo que elijas. Las im\u00e1genes que usan tus widgets guardados y sets se incluyen solas; "
+                       "la imagen de las formas de papel no hace falta (se vuelve a dibujar y se pueden seguir editando).")
         intro.setWordWrap(True)
         intro.setStyleSheet("color:#9aa0aa;")
         root.addWidget(intro)
         form = QFormLayout()
-        self.f_name = QLineEdit("Mis estilos")
+        self.f_name = QLineEdit("Mis widgets guardados")
         self.f_author = QLineEdit(os.environ.get('USERNAME') or os.environ.get('USER') or "")
         self.f_ver = QLineEdit("1.0.0")
 
@@ -12945,7 +12987,7 @@ class PackExportDialog(QDialog):
                        ("Descripci\u00f3n", self.f_desc)):
             form.addRow(lab, w)
         root.addLayout(form)
-        root.addWidget(QLabel("Estilos (templates)"))
+        root.addWidget(QLabel("Widgets guardados"))
         self.l_styles = QListWidget()
         root.addWidget(self.l_styles, 2)
         dflt = os.path.basename(DEFAULT_TEMPLATE_FILE)
@@ -12956,17 +12998,17 @@ class PackExportDialog(QDialog):
                 d = self.m.load_template_by_name(n)
             except Exception:
                 continue
-            it = QListWidgetItem(n[:-5] + ("   (nota base editable)" if isinstance(d.get('base_note'), dict) else ""))
+            it = QListWidgetItem(n[:-5] + ("   (forma de papel editable)" if isinstance(d.get('base_note'), dict) else ""))
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(Qt.Checked)
             it.setData(Qt.UserRole, n)
             self.l_styles.addItem(it)
 
-        root.addWidget(QLabel("Widgets y perfiles (conjuntos colocados, con sus enlaces)"))
+        root.addWidget(QLabel("Sets de widgets (con sus enlaces)"))
         self.l_sets = QListWidget()
         root.addWidget(self.l_sets, 2)
         cur = self.m.current_profile_name
-        it = QListWidgetItem("Los widgets que tengo ahora en pantalla" + (" (perfil \u00ab%s\u00bb)" % cur if cur else ""))
+        it = QListWidgetItem("Los widgets que tengo ahora en pantalla" + (" (set \u00ab%s\u00bb)" % cur if cur else ""))
         it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
         it.setCheckState(Qt.Checked)
         it.setData(Qt.UserRole, ('now', cur or "Mis widgets"))
@@ -12975,17 +13017,17 @@ class PackExportDialog(QDialog):
             nm = os.path.splitext(os.path.basename(p))[0]
             if nm == cur:
                 continue
-            it = QListWidgetItem("Perfil \u00ab%s\u00bb" % nm)
+            it = QListWidgetItem("Set \u00ab%s\u00bb" % nm)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(Qt.Unchecked)
             it.setData(Qt.UserRole, ('profile', nm))
             self.l_sets.addItem(it)
 
         frow = QHBoxLayout()
-        bf = QPushButton("A\u00f1adir otras fuentes (.ttf / .otf)...")
-        bf.setToolTip("Las fuentes que usan tus estilos se te preguntan al exportar; esto es para a\u00f1adir alguna m\u00e1s. Solo si su licencia permite redistribuirlas.")
+        bf = QPushButton("Agregar otras fuentes (.ttf / .otf)...")
+        bf.setToolTip("Las fuentes que usan tus widgets guardados se te preguntan al exportar; esto es para agregar alguna m\u00e1s. Solo si su licencia permite redistribuirlas.")
         bf.clicked.connect(self._add_fonts)
-        self.l_fonts = QLabel("Al exportar se te preguntar\u00e1 por las fuentes que usan tus estilos.")
+        self.l_fonts = QLabel("Al exportar se te preguntar\u00e1 por las fuentes que usan tus widgets guardados.")
         self.l_fonts.setStyleSheet("color:#9aa0aa;")
         frow.addWidget(bf)
         frow.addWidget(self.l_fonts, 1)
@@ -13043,7 +13085,7 @@ class PackExportDialog(QDialog):
                 sets.append((nm, notes))
 
         if not styles and not sets:
-            QMessageBox.information(self, "Exportar pack", "Marca al menos un estilo o un perfil.")
+            QMessageBox.information(self, "Exportar pack", "Marca al menos un widget guardado o un set.")
             return
         used = set()
         for _n, _td in styles:
@@ -13061,7 +13103,7 @@ class PackExportDialog(QDialog):
             _mt = _font_meta(_fp) or {}
             _lic = font_license_label(_mt)
             frows.append({'family': _mt.get('family') or os.path.basename(_fp), 'path': _fp, 'enabled': True, 'checked': bool(_lic),
-                          'status': "A\u00f1adida a mano" + ((" \u00b7 licencia libre (%s)" % _lic) if _lic else " \u00b7 licencia sin identificar"),
+                          'status': "Agregada a mano" + ((" \u00b7 licencia libre (%s)" % _lic) if _lic else " \u00b7 licencia sin identificar"),
                           'where': "Windows, macOS y Linux (va dentro del pack)", 'license': _lic})
         font_files, fscope = [], 'personal'
         if frows:
@@ -13069,9 +13111,9 @@ class PackExportDialog(QDialog):
             if fdlg.exec() != QDialog.Accepted:
                 return
             font_files, fscope = fdlg.paths(), fdlg.scope()
-        name = self.f_name.text().strip() or "Mis estilos"
+        name = self.f_name.text().strip() or "Mis widgets guardados"
         path, _ = QFileDialog.getSaveFileName(self, "Guardar el pack", os.path.join(os.path.expanduser("~"), _pack_slug(name) + PACK_EXT),
-                                              "Pack de estilos (*%s)" % PACK_EXT)
+                                              "Pack de widgets (*%s)" % PACK_EXT)
         if not path:
             return
         if not path.lower().endswith(PACK_EXT):
@@ -13085,7 +13127,7 @@ class PackExportDialog(QDialog):
             QMessageBox.warning(self, "Exportar pack", "No se pudo crear el pack:\n%s" % e)
             return
 
-        txt = "Pack guardado:\n%s\n\n%d estilos, %d perfiles, %d im\u00e1genes (%.1f MB)." % (path, r['styles'], r['sets'], r['assets'], r['bytes'] / 1048576.0)
+        txt = "Pack guardado:\n%s\n\n%d widgets guardados, %d sets, %d im\u00e1genes (%.1f MB)." % (path, r['styles'], r['sets'], r['assets'], r['bytes'] / 1048576.0)
         if r['missing']:
             txt += "\n\nNo se encontraron estas im\u00e1genes y quedaron sin ellas: " + ", ".join(r['missing'][:8]) + ("..." if len(r['missing']) > 8 else "")
         free = [f for f in r['fonts_used'] if f not in r['font_families']]
@@ -13113,15 +13155,15 @@ class DataHubWindow(QDialog):
         t1 = QLabel("Guardar y cargar")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
         t2 = QLabel("Todo lo que la aplicaci\u00f3n guarda, y d\u00f3nde vive cada cosa. Elige a la izquierda lo que buscas.\n"
-                    "Tambi\u00e9n puedes arrastrar aqu\u00ed cualquier archivo (perfil, template, configuraci\u00f3n, pack .wapack o copia .zip) y se detecta solo.")
+                    "Tambi\u00e9n puedes arrastrar aqu\u00ed cualquier archivo (set, widget guardado, configuraci\u00f3n, pack .wapack o copia .zip) y se detecta solo.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
         tl.addWidget(t1)
 
         tl.addWidget(t2)
         head.addLayout(tl, 1)
-        for text, fn, tip in (("Guardar todo ahora", self._save_all, "Guarda el perfil activo, la configuraci\u00f3n, el historial y hace una copia completa"),
-                              ("Cargar un archivo...", lambda: self.m.load_anything_dialog(), "Elige un archivo: se detecta si es un perfil, un template, una configuraci\u00f3n o una copia")):
+        for text, fn, tip in (("Guardar todo ahora", self._save_all, "Guarda el set activo, la configuraci\u00f3n, el historial y hace una copia completa"),
+                              ("Cargar un archivo...", lambda: self.m.load_anything_dialog(), "Elige un archivo: se detecta si es un set, un widget guardado, una configuraci\u00f3n o una copia")):
             b = QPushButton(text)
             b.setToolTip(tip)
             b.setStyleSheet("QPushButton{font-weight:bold;padding:8px 14px;}")
@@ -13142,11 +13184,11 @@ class DataHubWindow(QDialog):
         self.status.setStyleSheet("color:#9aa0aa;")
         root.addWidget(self.status)
         self._sections = [
-            ("sets", "Mis perfiles", "Perfiles de widgets que alternas (Alt+1\u2026)", self._sec_sets),
-            ("templates", "Templates y estilos de nota base", "Aspectos guardados y notas base editables", self._sec_templates),
+            ("sets", "Mis sets", "Sets de widgets que alternas (Alt+1\u2026)", self._sec_sets),
+            ("templates", "Widgets guardados y formas de papel", "Aspectos guardados y formas de papel editables", self._sec_templates),
             ("config", "Configuraci\u00f3n y atajos", "Ajustes, cables, tonos y teclas", self._sec_config),
             ("files", "Archivos (exportar / importar)", "Para llevar o compartir widgets", self._sec_files),
-            ("packs", "Packs de estilos", "Estilos y widgets para compartir o estrenar", self._sec_packs),
+            ("packs", "Packs de widgets", "Widgets guardados y sets para compartir o estrenar", self._sec_packs),
             ("backups", "Copias de seguridad", "Se hacen solas; aqu\u00ed se recuperan", self._sec_backups),
             ("undo", "Deshacer (historial)", "Ctrl+Alt+Z / Ctrl+Alt+Y, tambi\u00e9n entre sesiones", self._sec_undo),
         ]
@@ -13234,28 +13276,28 @@ class DataHubWindow(QDialog):
         m = self.m
         names = [os.path.splitext(os.path.basename(p))[0] for p in m._list_profiles()]
         cur = m.current_profile_name
-        info = ["Perfil activo: " + (("\u00ab%s\u00bb" % cur) if cur else "(sin guardar como perfil todav\u00eda)"),
-                "%d perfiles guardados%s" % (len(names), (": " + ", ".join(names[:8]) + ("\u2026" if len(names) > 8 else "")) if names else "")]
-        return ("Un perfil es una foto completa de tus widgets (posiciones, enlaces, contenido). Puedes tener varios y cambiar de uno a otro al instante. "
-                "El perfil activo se guarda solo al cambiar o al salir.",
+        info = ["Set activo: " + (("\u00ab%s\u00bb" % cur) if cur else "(sin guardar como set todav\u00eda)"),
+                "%d sets guardados%s" % (len(names), (": " + ", ".join(names[:8]) + ("\u2026" if len(names) > 8 else "")) if names else "")]
+        return ("Un set de widgets es una foto completa de lo que tienes en pantalla (posiciones, enlaces, contenido). Puedes tener varios y cambiar de uno a otro al instante. "
+                "El set activo se guarda solo al cambiar o al salir.",
                 PROFILES_DIR, info,
-                [("Guardar el perfil activo...", m._save_profile_dialog, "Si el nombre existe, lo actualiza"),
-                 ("Duplicar el perfil activo como perfil nuevo...", lambda: m.clone_current_set(), "Nunca sobrescribe otro perfil"),
-                 ("Cargar un perfil  \u25be", [(n, (lambda n=n: m._load_profile_dialog(n))) for n in names], "El perfil activo se aparta y se guarda"),
-                 ("Recuperar perfiles de una copia de seguridad...", lambda: m.show_backup_restore(), "Los perfiles borrados vuelven sin pisar los existentes"),
+                [("Guardar el set activo...", m._save_profile_dialog, "Si el nombre existe, lo actualiza"),
+                 ("Duplicar el set activo como set nuevo...", lambda: m.clone_current_set(), "Nunca sobrescribe otro set"),
+                 ("Cargar un set  \u25be", [(n, (lambda n=n: m._load_profile_dialog(n))) for n in names], "El set activo se aparta y se guarda"),
+                 ("Recuperar sets de una copia de seguridad...", lambda: m.show_backup_restore(), "Los sets eliminados vuelven sin pisar los existentes"),
                  self._folder(PROFILES_DIR)])
 
     def _sec_templates(self):
         m = self.m
         n_all = self._count(TEMPLATES_DIR)
         n_base = len(m.base_note_templates())
-        return ("Un template es el aspecto de un widget (capas, fondo, tama\u00f1o). Las notas base creadas con el editor de nota base se guardan como templates "
+        return ("Un widget guardado es el aspecto de un widget (capas, fondo, tama\u00f1o). Las formas de papel creadas con el editor se guardan tambi\u00e9n como widgets guardados "
                 "editables, en su propia lista.",
-                TEMPLATES_DIR, ["%d templates guardados, %d de ellos son notas base editables" % (n_all, n_base)],
-                [("Ver, elegir, crear y editar templates...", lambda: m.show_template_chooser(), "Primero salen los aspectos en uso y las notas base"),
-                 ("Nueva nota base...", lambda: m.show_base_note_dialog(), "Puedes guardar el resultado como estilo"),
-                 ("Guardar un widget existente como template...", lambda: (m.show_template_chooser(), m.browser.templates._from_widget()), None),
-                 ("Importar un template desde un archivo...", lambda: (m.show_template_chooser(), m.browser.templates._import()), None),
+                TEMPLATES_DIR, ["%d widgets guardados, %d de ellos son formas de papel editables" % (n_all, n_base)],
+                [("Ver, elegir, crear y editar widgets guardados...", lambda: m.show_template_chooser(), "Primero salen los aspectos en uso y las formas de papel"),
+                 ("Nueva nota && forma de papel...", lambda: m.show_base_note_dialog(), "Puedes guardar el resultado como forma de papel"),
+                 ("Guardar un widget existente como widget guardado...", lambda: (m.show_template_chooser(), m.browser.templates._from_widget()), None),
+                 ("Importar un widget guardado desde un archivo...", lambda: (m.show_template_chooser(), m.browser.templates._import()), None),
                  self._folder(TEMPLATES_DIR)])
 
     def _sec_config(self):
@@ -13274,23 +13316,23 @@ class DataHubWindow(QDialog):
         m = self.m
         return ("Para llevar tus widgets a otro PC o compartirlas: se exportan a un archivo .json y se importan agreg\u00e1ndolas o reemplazando todo.",
                 DATA_DIR, ["Archivo de trabajo actual: " + GLOBAL_STATE_FILE],
-                [("Exportar el perfil activo a un archivo...", m.export_state, "Puede incluir la configuraci\u00f3n"),
+                [("Exportar todos los widgets a un archivo...", m.export_state, "Puede incluir la configuraci\u00f3n"),
                  ("Agregar widgets desde un archivo...", lambda: m.import_state(replace=False), None),
                  ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None),
-                 ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Perfil, template, configuraci\u00f3n o copia .zip"),
-                 ("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", m.show_import_data, "Widgets, perfiles, templates, im\u00e1genes y ajustes de una versi\u00f3n anterior"),
+                 ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Set, widget guardado, configuraci\u00f3n o copia .zip"),
+                 ("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", m.show_import_data, "Widgets, sets, widgets guardados, im\u00e1genes y ajustes de una versi\u00f3n anterior"),
                  ("Buscar las im\u00e1genes que faltan (en otra carpeta)...", m.recover_images_dialog, "Si al cargar una copia vieja alguna nota se queda sin su base o su imagen"),
                  self._folder(DATA_DIR)])
 
     def _sec_packs(self):
         m = self.m
         n = len(pack_list())
-        return ("Un pack es un archivo .wapack con estilos de notas y conjuntos de widgets (con las im\u00e1genes que usan), para compartir o para estrenar. "
-                "Aqu\u00ed instalas uno, ves sus estilos con vista previa y los a\u00f1ades a tus templates y perfiles. Tambi\u00e9n puedes crear el tuyo con lo que ya tienes.",
+        return ("Un pack es un archivo .wapack con widgets guardados y sets de widgets (con las im\u00e1genes que usan), para compartir o para estrenar. "
+                "Aqu\u00ed instalas uno, ves sus widgets guardados con vista previa y los agregas a los tuyos. Tambi\u00e9n puedes crear el tuyo con lo que ya tienes.",
                 PACKS_DIR, [("%d pack instalado" if n == 1 else "%d packs instalados") % n, "Tambi\u00e9n puedes arrastrar un .wapack a esta ventana para instalarlo."],
-                [("Abrir los packs de estilos...", lambda: m.show_packs(), "Cat\u00e1logo con vista previa"),
+                [("Abrir los packs de widgets...", lambda: m.show_packs(), "Cat\u00e1logo con vista previa"),
                  ("Instalar un pack desde un archivo...", m.pack_install_dialog, None),
-                 ("Exportar mis estilos y widgets como pack...", m.pack_export_dialog, "Incluye las im\u00e1genes; la de las notas base no hace falta"),
+                 ("Exportar mis widgets y sets como pack...", m.pack_export_dialog, "Incluye las im\u00e1genes; la de las formas de papel no hace falta"),
                  self._folder(PACKS_DIR)])
 
     def _sec_backups(self):
@@ -13298,10 +13340,10 @@ class DataHubWindow(QDialog):
         bl = m.list_backups()
         full = [b for b in bl if b['kind'] == 'Completa']
         auto = [b for b in bl if b['kind'] != 'Completa']
-        info = ["%d copias completas (todos los perfiles y templates)%s" % (len(full), ("; la \u00faltima: " + full[0]['label'].split('\u00b7')[1].strip()) if full else ""),
-                "%d copias autom\u00e1ticas del perfil activo%s" % (len(auto), ("; la \u00faltima: " + auto[0]['label'].split('\u00b7')[1].strip()) if auto else "")]
-        return ("Las copias se hacen solas mientras trabajas. Desde aqu\u00ed recuperas el perfil activo, perfiles borrados o templates. "
-                "Antes de restaurar el perfil activo se guarda una copia de lo actual y se puede deshacer.",
+        info = ["%d copias completas (todos los sets y widgets guardados)%s" % (len(full), ("; la \u00faltima: " + full[0]['label'].split('\u00b7')[1].strip()) if full else ""),
+                "%d copias autom\u00e1ticas del set activo%s" % (len(auto), ("; la \u00faltima: " + auto[0]['label'].split('\u00b7')[1].strip()) if auto else "")]
+        return ("Las copias se hacen solas mientras trabajas. Desde aqu\u00ed recuperas el set activo, sets eliminados o widgets guardados. "
+                "Antes de restaurar el set activo se guarda una copia de lo actual y se puede deshacer.",
                 FULL_BACKUP_DIR + "   (y " + BACKUP_DIR + ")", info,
                 [("Restaurar una copia de seguridad...", lambda: m.show_backup_restore(), None),
                  ("Hacer una copia completa ahora", m._full_backup_now, None),
@@ -13310,11 +13352,11 @@ class DataHubWindow(QDialog):
     def _sec_undo(self):
         m = self.m
         h = getattr(m, '_global_history', [])
-        return ("Ctrl+Alt+Z deshace y Ctrl+Alt+Y rehace los cambios en los widgets (crear, borrar, editar, mover\u2026). Ctrl+Z deshace primero los del widget enfocado. "
-                "El historial de cada perfil se guarda en disco y sigue ah\u00ed al reiniciar.",
-                m._undo_file(), ["Este perfil: %d pasos (est\u00e1s en el %d)" % (len(h), getattr(m, '_global_history_idx', 0) + 1)],
+        return ("Ctrl+Alt+Z deshace y Ctrl+Alt+Y rehace los cambios en los widgets (crear, eliminar, editar, mover\u2026). Ctrl+Z deshace primero los del widget enfocado. "
+                "El historial de cada set se guarda en disco y sigue ah\u00ed al reiniciar.",
+                m._undo_file(), ["Este set: %d pasos (est\u00e1s en el %d)" % (len(h), getattr(m, '_global_history_idx', 0) + 1)],
                 [("Deshacer", m.undo_global, None), ("Rehacer", m.redo_global, None),
-                 ("Olvidar el historial guardado de este perfil", m.clear_saved_history, "Libera espacio; los widgets no cambian")])
+                 ("Olvidar el historial guardado de este set", m.clear_saved_history, "Libera espacio; los widgets no cambian")])
 
     # ---- arrastrar y soltar
     def dragEnterEvent(self, e):
@@ -13334,8 +13376,8 @@ HOTKEY_GROUPS = {
     "cycle_sort": "Crear y ordenar", "reload_all": "Edici\u00f3n y recarga", "undo_global": "Edici\u00f3n y recarga",
     "redo_global": "Edici\u00f3n y recarga", "undo_widget": "Con un widget enfocado",
     "redo_widget": "Con un widget enfocado", "reload_widget": "Con un widget enfocado", "open_gestures": "Aplicaci\u00f3n",
-    **{f"set_{_k}_{_n}": "Perfiles y ranuras" for _k in ("load", "save", "loadc") for _n in range(1, 11)},
-    "profile_next": "Perfiles y ranuras", "profile_prev": "Perfiles y ranuras", "clone_set": "Perfiles y ranuras",
+    **{f"set_{_k}_{_n}": "Sets y ranuras" for _k in ("load", "save", "loadc") for _n in range(1, 11)},
+    "profile_next": "Sets y ranuras", "profile_prev": "Sets y ranuras", "clone_set": "Sets y ranuras",
 }
 
 
@@ -13359,7 +13401,7 @@ class HotkeyEditor(QWidget):
         self.info.setWordWrap(True)
         v.addWidget(self.info)
         prow = QHBoxLayout()
-        prow.addWidget(QLabel("Perfil:"))
+        prow.addWidget(QLabel("Esquema:"))
         self.profiles = QComboBox()
         self.profiles.setMinimumWidth(150)
         prow.addWidget(self.profiles)
@@ -13594,14 +13636,14 @@ class HotkeyEditor(QWidget):
         try:
             self.m.hotkeys.load_profile(name)
         except Exception as e:
-            self.say(f"No se pudo cargar el perfil: {e}")
+            self.say(f"No se pudo cargar el esquema: {e}")
             return
         self.m.build_tray_menu()
         self.rebuild()
-        self.say(f"Perfil '{name}' cargado.")
+        self.say(f"Esquema '{name}' cargado.")
 
     def _p_save(self):
-        name, ok = QInputDialog.getText(self, "Guardar esquema de atajos", "Nombre del perfil:", text=self.profiles.currentText())
+        name, ok = QInputDialog.getText(self, "Guardar esquema de atajos", "Nombre del esquema:", text=self.profiles.currentText())
         if not ok:
             return
         n = self.m.hotkeys.safe_profile_name(name)
@@ -13609,16 +13651,16 @@ class HotkeyEditor(QWidget):
             self.say("Nombre no v\u00e1lido.")
             return
         if n in self.m.hotkeys.profile_names() and QMessageBox.question(
-                self, "Sobrescribir", f"El perfil '{n}' ya existe. \u00bfSobrescribirlo?",
+                self, "Sobrescribir", f"El esquema '{n}' ya existe. \u00bfSobrescribirlo?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         self.m.hotkeys.save_profile(n)
         self._refresh_profiles(n)
-        self.say(f"Perfil '{n}' guardado.")
+        self.say(f"Esquema '{n}' guardado.")
 
     def _p_delete(self):
         name = self.profiles.currentText()
-        if name and QMessageBox.question(self, "Eliminar perfil", f"\u00bfEliminar el perfil '{name}'?",
+        if name and QMessageBox.question(self, "Eliminar esquema", f"\u00bfEliminar el esquema '{name}'?",
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes:
             try:
                 self.m.hotkeys.delete_profile(name)
@@ -13643,7 +13685,7 @@ class HotkeyEditor(QWidget):
             self.say(f"No se pudo importar: {e}")
             return
         self._refresh_profiles(n)
-        self.say(f"Perfil '{n}' importado (usa Cargar para aplicarlo).")
+        self.say(f"Esquema '{n}' importado (usa Cargar para aplicarlo).")
 
     def _p_export(self):
         path, _ = QFileDialog.getSaveFileName(self, "Exportar atajos actuales", os.path.join(DATA_DIR, "mis_atajos.json"), "JSON (*.json)")
@@ -14661,7 +14703,7 @@ GESTURE_TABLE = {
         ("Rueda", "Sobre un bot\u00f3n de texto: tama\u00f1o de letra del bot\u00f3n", None),
         ("Rueda", "Capa seleccionada (texto o imagen): ancho de la capa (\u00b110)", 'layer'),
         ("Doble click", "Ocultar TODOS los widgets (pide confirmaci\u00f3n)", None),
-        ("Teclas", "1\u20260: cargar el perfil N \u00b7 F12: consola", None),
+        ("Teclas", "1\u20260: cargar el set N \u00b7 F12: consola", None),
         ("Teclas", "\u2190/\u2192: girar la capa seleccionada 5\u00b0", 'layer'),
     ],
 
@@ -14678,7 +14720,7 @@ GESTURE_TABLE = {
     "CS": [
         ("Rueda", "Sobre una imagen (sin capa seleccionada): tono FINO (1\u00b0)", 'nolayer'),
         ("Rueda", "Capa seleccionada (texto o imagen): ancho y alto a la vez", 'layer'),
-        ("Teclas", "\u2191/\u2193: perfil anterior / siguiente \u00b7 P: men\u00fa r\u00e1pido de perfiles", None),
+        ("Teclas", "\u2191/\u2193: set anterior / siguiente \u00b7 P: men\u00fa r\u00e1pido de sets", None),
         ("Teclas", "\u2190/\u2192: girar la capa seleccionada 1\u00b0", 'layer'),
     ],
 
@@ -14814,8 +14856,8 @@ def _gesture_guide_html(manager):
         if key:
             h.append("<tr><td><b>%s</b>&nbsp;&nbsp;</td><td>%s</td><td>&nbsp;%s</td></tr>" % (
                 key, label, "(global)" if glob else "(con un widget enfocado)"))
-    names = {"set_load": "Cargar el perfil de la ranura N (cifra 1\u20260)", "set_loadc": "Cargar el perfil N (o el perfil n.\u00ba N de la lista)",
-             "set_save": "Guardar el perfil activo en la ranura N"}
+    names = {"set_load": "Cargar el set de la ranura N (cifra 1\u20260)", "set_loadc": "Cargar el set N (o el set n.\u00ba N de la lista)",
+             "set_save": "Guardar el set activo en la ranura N"}
     for kind, (key, glob) in seen_sets.items():
         h.append("<tr><td><b>%s</b>&nbsp;&nbsp;</td><td>%s</td><td>&nbsp;%s</td></tr>" % (
             key.replace("1", "1\u20260") if key[-1:] == "1" else key, names.get(kind, kind), "(global)" if glob else "(con un widget enfocado)"))
@@ -14872,7 +14914,7 @@ class AboutDialog(QDialog):
                           "color:#d9d5ff;font:500 14px 'Segoe UI';"))
         chip = ("background:rgba(255,255,255,28);border:1px solid rgba(255,255,255,50);border-radius:11px;"
                 "padding:4px 10px;color:#f1eeff;font:600 11px 'Segoe UI';")
-        for row in (("Widgets enlazados", "Corona", "Templates"), ("Perfiles al instante", "Atajos globales", "Telegram")):
+        for row in (("Widgets enlazados", "Corona", "Widgets guardados"), ("Sets al instante", "Atajos globales", "Telegram")):
             hl = QHBoxLayout()
             hl.setSpacing(8)
             hl.addStretch(1)
@@ -15761,7 +15803,7 @@ class BaseNoteDialog(QDialog):
         super().__init__(parent)
         from PySide6.QtWidgets import QSpinBox as _SB, QLineEdit as _LE, QTabWidget, QScrollArea
         self._live = live                   # [PACK80] funcion(parametros | None) que pinta los cambios en la nota real
-        self.setWindowTitle("Editar nota base" if editing else "Nueva nota base")
+        self.setWindowTitle("Editar forma de papel" if editing else "Nueva nota & forma de papel")
         self.p = dict(BASE_NOTE_DEFAULTS)
         self.p['corners'] = list(BASE_NOTE_DEFAULTS['corners'])
         for k, v in (start or {}).items():
@@ -15785,13 +15827,13 @@ class BaseNoteDialog(QDialog):
         left.addLayout(prow)
         self._mgr = manager
         srow_ = QHBoxLayout()                # [PACK71] biblioteca de estilos de nota base (templates editables)
-        srow_.addWidget(QLabel("Mis estilos:"))
+        srow_.addWidget(QLabel("Mis formas de papel:"))
         self.cb_styles = QComboBox()
         self.cb_styles.setMinimumWidth(160)
         srow_.addWidget(self.cb_styles, 1)
         self.cb_styles.activated.connect(lambda _i: self._style_load())      # elegir un estilo lo aplica al instante
-        for txt, fn, tip in (("Guardar estilo...", self._style_save, "Guarda esta forma como template editable (si existe el nombre, lo reemplaza)"),
-                             ("Borrar", self._style_delete, "Elimina el estilo elegido de la lista")):
+        for txt, fn, tip in (("Guardar forma de papel...", self._style_save, "Guarda esta forma de papel con un nombre (si existe, la reemplaza)"),
+                             ("Eliminar", self._style_delete, "Elimina la forma de papel elegida de la lista")):
             b_ = QPushButton(txt)
             b_.setToolTip(tip)
             b_.clicked.connect(lambda _c=False, f=fn: f())
@@ -15799,11 +15841,11 @@ class BaseNoteDialog(QDialog):
         left.addLayout(srow_)
         xrow_ = QHBoxLayout()                # [PACK97] copiar / pegar el template o el estilo (JSON) y exportar el template
         xrow_.addWidget(QLabel("JSON:"))
-        for txt, fn, tip in (("Copiar template", self._tpl_copy, "Copia al portapapeles el template completo de esta nota base (JSON): forma, colores, texto e imagen"),
-                             ("Pegar template", self._tpl_paste, "Aplica aqu\u00ed un template de nota base copiado (tambi\u00e9n vale el JSON copiado en el navegador de templates), con su texto"),
-                             ("Copiar estilo", self._style_copy, "Copia al portapapeles solo el estilo (JSON): forma, colores y esquinas, sin el texto"),
-                             ("Pegar estilo", self._style_paste, "Aplica un estilo copiado a esta nota, manteniendo su texto"),
-                             ("Exportar...", self._tpl_export, "Guarda el template completo de esta nota base en un archivo .json")):
+        for txt, fn, tip in (("Copiar widget guardado", self._tpl_copy, "Copia al portapapeles el widget guardado completo de esta nota (JSON): forma, colores, texto e imagen"),
+                             ("Pegar widget guardado", self._tpl_paste, "Aplica aqu\u00ed un widget guardado copiado (tambi\u00e9n vale el JSON copiado en la ventana de widgets guardados), con su texto"),
+                             ("Copiar forma de papel", self._style_copy, "Copia al portapapeles solo la forma de papel (JSON): forma, colores y esquinas, sin el texto"),
+                             ("Pegar forma de papel", self._style_paste, "Aplica una forma de papel copiada a esta nota, manteniendo su texto"),
+                             ("Exportar...", self._tpl_export, "Guarda el widget guardado completo de esta nota en un archivo .json")):
             b_ = QPushButton(txt)
             b_.setToolTip(tip)
             b_.clicked.connect(lambda _c=False, f=fn: f())
@@ -16144,7 +16186,7 @@ class BaseNoteDialog(QDialog):
         trow.addWidget(spin('font_size', 6, 120, " pt"))
         tf.addRow("Color y tama\u00f1o del texto", trow)
 
-        self.chk_tpl = QCheckBox("Guardar tambi\u00e9n como template:")
+        self.chk_tpl = QCheckBox("Guardar tambi\u00e9n como widget guardado:")
         self.ed_tpl = _LE("nota_base")
         self.ed_tpl.setEnabled(False)
         self.chk_tpl.toggled.connect(self.ed_tpl.setEnabled)
@@ -16218,7 +16260,7 @@ class BaseNoteDialog(QDialog):
         cur = select or self.cb_styles.currentData()
         self.cb_styles.clear()
         bn = self._mgr.base_note_templates()
-        self.cb_styles.addItem("(elige un estilo guardado...)" if bn else "(a\u00fan no hay estilos: usa \u00abGuardar estilo...\u00bb)", None)
+        self.cb_styles.addItem("(elige una forma de papel guardada...)" if bn else "(a\u00fan no hay formas de papel: usa \u00abGuardar forma de papel...\u00bb)", None)
         for n, bp in bn:
             self.cb_styles.addItem(n[:-5], n)
         i = self.cb_styles.findData(cur) if cur else 0
@@ -16238,12 +16280,12 @@ class BaseNoteDialog(QDialog):
 
     def _style_save(self):
         from PySide6.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(self, "Guardar estilo", "Nombre del estilo:", text=self.cb_styles.currentText() if self.cb_styles.currentData() else "mi_nota")
+        name, ok = QInputDialog.getText(self, "Guardar forma de papel", "Nombre de la forma de papel:", text=self.cb_styles.currentText() if self.cb_styles.currentData() else "mi_nota")
         safe = self._mgr._tpl_safe_name(name) if ok else None
         if not safe:
             return
         if safe in dict(self._mgr.base_note_templates()):
-            if QMessageBox.question(self, "Guardar estilo", "Ya existe '%s'. Reemplazarlo?" % safe[:-5],
+            if QMessageBox.question(self, "Guardar forma de papel", "Ya existe '%s'. Reemplazarlo?" % safe[:-5],
                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                 return
         self._mgr.save_base_note_template(safe, self.get_params())
@@ -16269,7 +16311,7 @@ class BaseNoteDialog(QDialog):
     def _paste(self, with_text):
         d = self._clip_params(with_text)
         if not d:
-            self._tell("El portapapeles no contiene un " + ("template" if with_text else "estilo") + " de nota base (JSON)", 2800)
+            self._tell("El portapapeles no contiene un widget guardado (JSON)" if with_text else "El portapapeles no contiene una forma de papel (JSON)", 2800)
             return
         new = dict(BASE_NOTE_DEFAULTS)
         new['corners'] = list(new['corners'])
@@ -16278,7 +16320,7 @@ class BaseNoteDialog(QDialog):
         new['text'] = self.p.get('text', new['text'])
         new.update(d)
         self._apply(new)
-        self._tell(("Template" if with_text else "Estilo") + " de nota base pegado")
+        self._tell("Widget guardado pegado" if with_text else "Forma de papel pegada")
 
     def _tpl_paste(self):
         self._paste(True)
@@ -16292,19 +16334,19 @@ class BaseNoteDialog(QDialog):
     def _tpl_copy(self):
         """[PACK97] Copia el template completo (el mismo JSON que guarda 'Guardar estilo...')."""
         QApplication.clipboard().setText(self._tpl_json())
-        self._tell("Template de nota base copiado (JSON)")
+        self._tell("Widget guardado copiado (JSON)")
 
     def _style_copy(self):
         """[PACK97] Copia solo el estilo: los parametros de la nota base sin el texto."""
         p = self.get_params()
         p.pop('text', None)
         QApplication.clipboard().setText(json.dumps({"base_note": p}, indent=2, ensure_ascii=False))
-        self._tell("Estilo de nota base copiado (JSON)")
+        self._tell("Forma de papel copiada (JSON)")
 
     def _tpl_export(self):
         """[PACK97] Guarda el template completo en un archivo .json."""
         base = (self.cb_styles.currentText() if self.cb_styles.currentData() else "nota_base") + ".json"
-        path, _ = QFileDialog.getSaveFileName(self, "Exportar template de nota base", os.path.join(DATA_DIR, base), "JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "Exportar widget guardado", os.path.join(DATA_DIR, base), "JSON (*.json)")
         if not path:
             return
         if not os.path.splitext(path)[1]:
@@ -16316,13 +16358,13 @@ class BaseNoteDialog(QDialog):
         except (OSError, TypeError, ValueError) as e:
             QMessageBox.warning(self, "Exportar", "No se pudo exportar:\n%s" % e)
             return
-        self._tell("Template exportado: " + os.path.basename(path))
+        self._tell("Widget guardado exportado: " + os.path.basename(path))
 
     def _style_delete(self):
         n = self.cb_styles.currentData()
         if not n:
             return
-        if QMessageBox.question(self, "Borrar estilo", "Borrar el estilo '%s'? Los widgets ya creados no cambian." % n[:-5],
+        if QMessageBox.question(self, "Eliminar forma de papel", "\u00bfEliminar la forma de papel '%s'? Los widgets ya creados no cambian." % n[:-5],
                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         try:
@@ -17290,7 +17332,7 @@ class WidgetManager(QObject):
                 _a.triggered.connect(lambda _c=False, t=_t: self.add_widget_of_type(t))
                 types_menu.addAction(_a)
             menu.addMenu(types_menu)
-        base_note_action = QAction("Nueva nota base...", self)
+        base_note_action = QAction("Nueva nota && forma de papel...", self)
         base_note_action.triggered.connect(self.show_base_note_dialog)
         menu.addAction(base_note_action)
         browser_action = QAction("Navegador de widgets...", self)
@@ -17344,14 +17386,11 @@ class WidgetManager(QObject):
         self._build_profiles_menu(menu)
         hub_top = QAction("Guardar y cargar...", self)       # [PACK72] el mapa de todo lo que se guarda
         hub_top.triggered.connect(lambda: self.show_data_hub())
-        menu.addAction(hub_top)
-        packs_top = QAction("Packs de estilos...", self)       # [PACK112]
-        packs_top.triggered.connect(lambda: self.show_packs())
-        menu.addAction(packs_top)
+        menu.addAction(hub_top)                      # [PACK121] los packs viven dentro de "Guardar y cargar"
         
         menu.addSeparator()
 
-        undo_action = QAction("Deshacer \u7164ltimo cambio (Ctrl+Alt+Z)", self)
+        undo_action = QAction("Deshacer \u00faltimo cambio (Ctrl+Alt+Z)", self)
         undo_action.setText("Deshacer \u00faltimo cambio (Ctrl+Alt+Z)")
         undo_action.triggered.connect(self.undo_global)
 
@@ -17538,7 +17577,7 @@ class WidgetManager(QObject):
 
     SORT_MODES = (("created", "Orden de creaci\u00f3n"), ("created_desc", "M\u00e1s nuevos primero"),
                   ("name", "Nombre (A-Z)"), ("enabled", "Visibles primero"),
-                  ("template", "Template"), ("pos", "Posici\u00f3n en pantalla"))
+                  ("template", "Widget guardado"), ("pos", "Posici\u00f3n en pantalla"))
 
     def get_sort_mode(self):
         mode = self.global_state.get('widget_sort', 'created')
@@ -17594,7 +17633,7 @@ class WidgetManager(QObject):
             with open(self._tpl_settings_path(), 'w', encoding='utf-8') as f:
                 json.dump({"default": os.path.basename(name)}, f, indent=2)
         except OSError as e:
-            log_warn("Manager", f"No se pudo guardar el template predeterminado: {e}")
+            log_warn("Manager", f"No se pudo guardar el widget guardado predeterminado: {e}")
 
     TYPE_CRITERIA_DEFAULT = {'hue': False, 'font': False, 'size': False}
 
@@ -17677,7 +17716,7 @@ class WidgetManager(QObject):
             if os.path.basename(str(l2.get('content', ''))).startswith('nota_base_') or td.get('base_note'):
                 bp = td.get('base_note') if isinstance(td.get('base_note'), dict) else {}
                 gm = l2.get('geometry') or {}
-                nm = "Nota base %s\u00d7%s" % (bp.get('w', gm.get('w', '?')), bp.get('h', gm.get('h', '?')))
+                nm = "Forma de papel %s\u00d7%s" % (bp.get('w', gm.get('w', '?')), bp.get('h', gm.get('h', '?')))
             else:
                 nm = (tn[:-5] if tn.lower().endswith('.json') else tn) or "Widget"
             names[nm] = names.get(nm, 0) + 1
@@ -17740,7 +17779,7 @@ class WidgetManager(QObject):
         dlg = QDialog(self.dialog_parent)
         dlg.setWindowTitle("Criterio de \u00abaspectos en uso\u00bb")
         lay = QVBoxLayout(dlg)
-        lay.addWidget(QLabel("Dos widgets tienen el MISMO aspecto si comparten su imagen de fondo o la forma de su nota base.\n"
+        lay.addWidget(QLabel("Dos widgets tienen el MISMO aspecto si comparten su imagen de fondo o su forma de papel.\n"
                              "Nunca cuentan: la posici\u00f3n, la rotaci\u00f3n ni el texto escrito."))
         cur = self.type_criteria()
         boxes = {}
@@ -17885,7 +17924,7 @@ class WidgetManager(QObject):
             if isinstance(d, dict):
                 return d
         except Exception as e:
-            log_warn("Manager", f"No se pudo leer el template {name}: {e}")
+            log_warn("Manager", f"No se pudo leer el widget guardado {name}: {e}")
         return self.get_default_template_data()
 
     @staticmethod
@@ -18287,7 +18326,7 @@ class WidgetManager(QObject):
         """Perfil siguiente / anterior (orden alfabetico)."""
         names = [os.path.splitext(os.path.basename(p))[0] for p in self._list_profiles()]
         if not names:
-            self._osd("No hay perfiles guardados")
+            self._osd("No hay sets guardados")
             return
         cur = self.current_profile_name
         i = names.index(cur) if cur in names else (-1 if step > 0 else 0)
@@ -18574,7 +18613,7 @@ class WidgetManager(QObject):
                 add(cm_, "Cargar desde .txt...", lambda k=n_: self._load_text_from_file(widget_id, k), enabled=(lt == 'text'))
                 add(cm_, "Cambiar fuente...", lambda k=n_: self._edit_widget_font(widget_id, k), enabled=(lt == 'text'))
             if lt == 'png' or full:
-                add(cm_, "Efectos de Imagen (Tono, Color base, Brillo...)", lambda k=n_: self._edit_widget_image_effects(widget_id, k),
+                add(cm_, "Efectos de imagen (tono, color base, brillo...)", lambda k=n_: self._edit_widget_image_effects(widget_id, k),
                     enabled=(lt == 'png'))
                 add(cm_, "Estirar imagen para llenar el recuadro",
                     lambda c, wid=widget_id, k=n_: self._toggle_layer_scaled_contents(wid, k, c),
@@ -18588,34 +18627,29 @@ class WidgetManager(QObject):
 
         # ---- Aspecto: template, estilo (nota base), corona y giro del widget
         aspect_menu = QMenu("Aspecto", menu)
-        tpl_menu = QMenu("Template", aspect_menu)
-        add(tpl_menu, "Cambiar el template...", lambda: self._change_widget_template(widget_id))
-        add(tpl_menu, "Guardar como template...", lambda: self.save_widget_as_template(widget_id))
-        add(tpl_menu, "Exportar el template...", lambda: self._export_widget_template(widget_id))
+        tpl_menu = QMenu("Widget guardado", aspect_menu)
+        add(tpl_menu, "Cambiar por otro widget guardado...", lambda: self._change_widget_template(widget_id))
+        add(tpl_menu, "Guardar este widget...", lambda: self.save_widget_as_template(widget_id))
+        add(tpl_menu, "Exportar el widget guardado...", lambda: self._export_widget_template(widget_id))
         tpl_menu.addSeparator()
-        add(tpl_menu, "Copiar template (json)", lambda: self._copy_widget_template(widget_id))       # [PACK96]
-        add(tpl_menu, "Pegar template (json)", lambda: self._paste_widget_data(widget_id, True),         # [PACK98]
-            tip="Sustituye el aspecto y el contenido de este widget por un template copiado (JSON)",
+        add(tpl_menu, "Copiar widget guardado (json)", lambda: self._copy_widget_template(widget_id))       # [PACK96]
+        add(tpl_menu, "Pegar widget guardado (json)", lambda: self._paste_widget_data(widget_id, True),         # [PACK98]
+            tip="Sustituye el aspecto y el contenido de este widget por un widget guardado copiado (JSON)",
             enabled=self._clip_widget_data() is not None)
-        tpl_menu.addSeparator()
-        pre_menu = QMenu("Usar como predeterminado", tpl_menu)
-        add(pre_menu, "Para los widgets nuevos (Nuevo widget predeterminado)", lambda: self.set_widget_as_default(widget_id, 1))
-        add(pre_menu, "Para el hijo que se crea con Ctrl+Alt+May\u00fas+Win+pulsar", lambda: self.set_widget_as_default(widget_id, 2))
-        tpl_menu.addMenu(pre_menu)
         aspect_menu.addMenu(tpl_menu)
-        sty_menu = QMenu("Estilo", aspect_menu)                  # [PACK107] antes "Estilo" y "Nota base" eran dos submenus: es lo mismo
+        sty_menu = QMenu("Forma de papel", aspect_menu)                  # [PACK107] antes "Estilo" y "Nota base" eran dos submenus: es lo mismo
         sty_menu.setToolTipsVisible(True)
-        add(sty_menu, "Generar estilo...", lambda: self.apply_base_note_to_widget(widget_id),
-            tip="Genera la capa 2 de este widget con el editor de nota base (forma, color, borde, sombra)")
+        add(sty_menu, "Generar forma de papel...", lambda: self.apply_base_note_to_widget(widget_id),
+            tip="Genera la capa 2 de este widget con el editor de forma de papel (forma, color, borde, sombra)")
         if self._is_base_note(state) or full:       # [PACK68]
-            add(sty_menu, "Editar este estilo...", lambda: self.edit_base_note(widget_id), enabled=self._is_base_note(state),
-                tip="Reabre el editor de nota base con los par\u00e1metros de este widget y regenera su imagen")
+            add(sty_menu, "Editar esta forma de papel...", lambda: self.edit_base_note(widget_id), enabled=self._is_base_note(state),
+                tip="Reabre el editor de forma de papel con los par\u00e1metros de este widget y regenera su imagen")
         sty_menu.addSeparator()
 
-        add(sty_menu, "Copiar estilo (json)", lambda: self._copy_widget_style(widget_id),
+        add(sty_menu, "Copiar forma de papel (json)", lambda: self._copy_widget_style(widget_id),
             tip="Copia solo el aspecto (sin el texto ni la posici\u00f3n) como JSON")
-        add(sty_menu, "Pegar estilo (json)", lambda: self._paste_widget_data(widget_id, False),
-            tip="Aplica un estilo (o template) copiado a este widget y conserva su texto",
+        add(sty_menu, "Pegar forma de papel (json)", lambda: self._paste_widget_data(widget_id, False),
+            tip="Aplica una forma de papel copiada a este widget y conserva su texto",
             enabled=self._clip_widget_data() is not None)
         aspect_menu.addMenu(sty_menu)
         crown_menu = QMenu("Corona", aspect_menu)
@@ -18657,23 +18691,21 @@ class WidgetManager(QObject):
             add(clone_menu, f"Con sus descendientes ({n_desc + 1} widgets)", lambda: self.clone_tree(widget_id), enabled=bool(n_desc))
         if state.get('parent_id') or full:
             add(clone_menu, "Como hijo independiente", lambda: self.clone_widget(widget_id, independent=True), enabled=bool(state.get('parent_id')))
-        clone_menu.addSeparator()
-        add(clone_menu, f"Copiar \u00e1rbol (json) ({n_desc + 1} widgets)", lambda: self.copy_tree(widget_id),
-            tip="Copia al portapapeles este widget y sus descendientes como JSON (sin im\u00e1genes)")      # [PACK120]
-        add(clone_menu, "Pegar \u00e1rbol (json)", lambda: self.paste_tree(), enabled=self._clip_tree_data() is not None,
-            tip="A\u00f1ade a este perfil el \u00e1rbol que hayas copiado (puede ser de otro perfil)")
-        add(clone_menu, "Exportar \u00e1rbol a un archivo...", lambda: self.export_tree(widget_id),
-            tip="Guarda este widget y sus descendientes en un .json, con las im\u00e1genes que usen dentro del archivo")
         menu.addMenu(clone_menu)
 
-        # ---- todos los widgets
-        if not from_tray:
-            add(menu, "Nuevo widget...", self.show_template_chooser)
-            if full:
-                add(menu, "Ocultar todos los widgets", lambda: self.set_all_visible(False))
-                add(menu, "Mostrar todos los widgets", lambda: self.set_all_visible(True))
-            else:
-                add(menu, "Ocultar todos los widgets" if self.all_visible else "Mostrar todos los widgets", self.toggle_all_visibility)
+        # ---- Gestion de widgets [PACK121]: mover o compartir una rama entera y elegir los widgets predeterminados.
+        # (Las acciones sobre TODOS los widgets viven en el icono de la bandeja y en su menu, no aqui.)
+        menu.setToolTipsVisible(True)
+        add(menu, f"Copiar \u00e1rbol (json) ({n_desc + 1} widgets)", lambda: self.copy_tree(widget_id),
+            tip="Copia al portapapeles este widget y sus descendientes como JSON (sin im\u00e1genes)")      # [PACK120]
+        add(menu, "Pegar \u00e1rbol (json)", lambda: self.paste_tree(), enabled=self._clip_tree_data() is not None,
+            tip="Agrega a este set el \u00e1rbol que hayas copiado (puede ser de otro set)")
+        add(menu, "Exportar \u00e1rbol a un archivo...", lambda: self.export_tree(widget_id),
+            tip="Guarda este widget y sus descendientes en un .json, con las im\u00e1genes que usen dentro del archivo")
+        pre_menu = QMenu("Usar como predeterminado", menu)
+        add(pre_menu, "Para los widgets nuevos (Nuevo widget predeterminado)", lambda: self.set_widget_as_default(widget_id, 1))
+        add(pre_menu, "Para el hijo que se crea con Ctrl+Alt+May\u00fas+Win+pulsar", lambda: self.set_widget_as_default(widget_id, 2))
+        menu.addMenu(pre_menu)
 
         # ---- Eliminar (dentro de un submenu: un clic suelto no lo dispara)
         rm_menu = QMenu("Eliminar", menu)
@@ -18784,7 +18816,7 @@ class WidgetManager(QObject):
                 dest = os.path.join(dest_dir, f"{stem}_{n}{ext}")
                 n += 1
             shutil.copy2(path, dest)
-            log_info("Manager", f"Imagen copiada a {dest_dir} para que el conjunto sea portable: {os.path.basename(dest)}")
+            log_info("Manager", f"Imagen copiada a {dest_dir} para que el set sea portable: {os.path.basename(dest)}")
             return dest
         except Exception as e_im:
             log_warn("Manager", f"No se pudo copiar la imagen a la carpeta de la capa: {e_im}")
@@ -19002,7 +19034,7 @@ class WidgetManager(QObject):
 
     def _change_widget_template_from_file(self, widget_id):
         parent_widget = self.widgets.get(widget_id) 
-        path, _ = QFileDialog.getOpenFileName(parent_widget, "Seleccionar template (JSON)", DATA_DIR, "JSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(parent_widget, "Seleccionar widget guardado (JSON)", DATA_DIR, "JSON (*.json)")
         if not path:
             return
             
@@ -19027,24 +19059,24 @@ class WidgetManager(QObject):
             self.build_tray_menu()
             
         except Exception as e:
-            print(f"ERROR: No se pudo cargar el template desde {path}: {e}")
-            QMessageBox.critical(parent_widget, "Error de template", f"No se pudo cargar o leer el archivo JSON:\n{e}")
+            print(f"ERROR: No se pudo cargar el widget guardado desde {path}: {e}")
+            QMessageBox.critical(parent_widget, "Error de widget guardado", f"No se pudo cargar o leer el archivo JSON:\n{e}")
 
     def _export_widget_template(self, widget_id):
         parent_widget = self.widgets.get(widget_id) 
         template_data = self.global_state[widget_id]['template_data']
         default_name = f"{self.global_state[widget_id].get('template_name', 'exportado')}.json"
         
-        path, _ = QFileDialog.getSaveFileName(parent_widget, "Exportar template de widget", os.path.join(DATA_DIR, default_name), "JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(parent_widget, "Exportar widget guardado", os.path.join(DATA_DIR, default_name), "JSON (*.json)")
         if not path:
             return
             
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(template_data, f, indent=4)
-            print(f"INFO [{widget_id}]: Plantilla exportada a {path}")
+            print(f"INFO [{widget_id}]: Widget guardado exportado a {path}")
         except Exception as e:
-            print(f"ERROR: No se pudo exportar el template a {path}: {e}")
+            print(f"ERROR: No se pudo exportar el widget guardado a {path}: {e}")
             QMessageBox.critical(parent_widget, "Error de exportaci\u00f3n", f"No se pudo guardar el archivo JSON:\n{e}")
 
     def _copy_widget_template(self, widget_id):
@@ -19055,10 +19087,10 @@ class WidgetManager(QObject):
         try:
             txt = json.dumps(st['template_data'], indent=2, ensure_ascii=False)
         except (TypeError, ValueError) as e:
-            log_warn("Template", f"No se pudo copiar el template de {widget_id}: {e}")
+            log_warn("Widget guardado", f"No se pudo copiar el widget guardado de {widget_id}: {e}")
             return
         QApplication.clipboard().setText(txt)
-        self._osd("JSON del template copiado")
+        self._osd("JSON del widget guardado copiado")
 
     @staticmethod
     def _clip_widget_data():
@@ -19091,11 +19123,11 @@ class WidgetManager(QObject):
         try:
             txt = json.dumps(td, indent=2, ensure_ascii=False)
         except (TypeError, ValueError) as e:
-            log_warn("Template", f"No se pudo copiar el estilo de {widget_id}: {e}")
+            log_warn("Widget guardado", f"No se pudo copiar la forma de papel de {widget_id}: {e}")
             return
 
         QApplication.clipboard().setText(txt)
-        self._osd("Estilo del widget copiado (JSON)")
+        self._osd("Forma de papel del widget copiada (JSON)")
 
     def _paste_widget_data(self, widget_id, with_content):
         """[PACK98] Pega el JSON del portapapeles en este widget. with_content=True: template completo (con su texto);
@@ -19105,7 +19137,7 @@ class WidgetManager(QObject):
             return False
         data = self._clip_widget_data()
         if data is None:
-            self._osd("El portapapeles no contiene un " + ("template" if with_content else "estilo") + " (JSON)", 2800)
+            self._osd("El portapapeles no contiene un widget guardado (JSON)" if with_content else "El portapapeles no contiene una forma de papel (JSON)", 2800)
             return False
         old = copy.deepcopy(st['template_data'])
         new = copy.deepcopy(data)
@@ -19124,13 +19156,17 @@ class WidgetManager(QObject):
             if not with_content:
                 params['text'] = own_text
             new['base_note'] = params
+            keep_sc = None
+            if not isinstance(new.get('layer2'), dict) and isinstance(old.get('layer2'), dict):      # [PACK121] sin capa 2 propia: se conserva el tamano
+                new['layer2'] = {k: copy.deepcopy(old['layer2'][k]) for k in ('content', 'geometry') if k in old['layer2']}
+                keep_sc = self._base_note_scale(old)
 
         if not with_content:
             self._carry_content(old, new)
         try:
             st['template_data'] = new
             if params is not None:
-                self.apply_base_note(widget_id, params)           # regenera la imagen, ajusta las capas, carga y guarda
+                self.apply_base_note(widget_id, params, keep_sc)           # regenera la imagen, ajusta las capas, carga y guarda
             else:
                 if widget_id in self.widgets:
                     self.widgets[widget_id].load_template_data(new)
@@ -19143,11 +19179,11 @@ class WidgetManager(QObject):
                     self.widgets[widget_id].load_template_data(old)
             except Exception:
                 pass
-            log_warn("Template", f"No se pudo pegar en {widget_id}: {e}")
+            log_warn("Widget guardado", f"No se pudo pegar en {widget_id}: {e}")
             self._osd("No se pudo pegar: %s" % e, 3000)
             return False
 
-        self._osd("Template pegado" if with_content else "Estilo pegado")
+        self._osd("Widget guardado pegado" if with_content else "Forma de papel pegada")
         return True
 
     def _confirm_remove_widget(self, widget_id):
@@ -19437,8 +19473,8 @@ class WidgetManager(QObject):
         QTimer.singleShot(700, lambda: window._set_hierarchy_highlighted(False))
 
     CHILD_KINDS = (("clone", "Clon exacto del padre (contenido y aspecto)"),
-                   ("default", "Template predeterminado"),
-                   ("template", "Un template concreto"))
+                   ("default", "Widget guardado predeterminado"),
+                   ("template", "Un widget guardado concreto"))
 
     def child_gesture_cfg(self, with_win):
         """[PACK62] Tipo de hija que crea el gesto Ctrl+Alt+Mayus (+Win): (clase, plantilla)."""
@@ -19933,7 +19969,7 @@ class WidgetManager(QObject):
         except Exception:
             start = {}
         dlg = BaseNoteDialog(self, self.dialog_parent, start if isinstance(start, dict) else {})
-        dlg.setWindowTitle("Generar estilo de este widget (capa 2)")
+        dlg.setWindowTitle("Generar forma de papel de este widget (capa 2)")
         try:      # el texto y el template no tienen sentido aqui: se conserva la capa 1 de la nota
             fl = dlg.findChild(QFormLayout)
             for i in range(fl.rowCount()):
@@ -20158,7 +20194,7 @@ class WidgetManager(QObject):
     def _live_cleanup(self):
         shutil.rmtree(os.path.join(STICKY_DIR, '_vivo'), ignore_errors=True)
 
-    def apply_base_note(self, widget_id, p):
+    def apply_base_note(self, widget_id, p, scale=None):
         st = self.global_state.get(widget_id)
         if not isinstance(st, dict):
             return
@@ -20174,15 +20210,44 @@ class WidgetManager(QObject):
         pad = (W - int(p['w'])) // 2
         td = st['template_data']
         l2 = td.setdefault('layer2', {})
-        l2.update({"type": "png", "content": rel, "scaled_contents": True, "geometry": {"x": 0, "y": 0, "w": W, "h": H}})
+        sc = scale if scale else self._base_note_scale(td)               # [PACK121] se conserva el tamano que el widget ya tenia (no vuelve al nominal)
+        l2.update({"type": "png", "content": rel, "scaled_contents": True,
+                   "geometry": {"x": 0, "y": 0, "w": int(round(W * sc)), "h": int(round(H * sc))}})
         l1 = td.setdefault('layer1', {})
 
-        l1['geometry'] = {"x": pad + 10, "y": pad + 10, "w": int(p['w']) - 20, "h": int(p['h']) - 20}
+        l1['geometry'] = {"x": int(round((pad + 10) * sc)), "y": int(round((pad + 10) * sc)),
+                          "w": int(round((int(p['w']) - 20) * sc)), "h": int(round((int(p['h']) - 20) * sc))}
         td['base_note'] = dict(p)
         if widget_id in self.widgets:
             self.widgets[widget_id].load_template_data(td)
         self.save_global_state()
         self.build_tray_menu()
+
+    @staticmethod
+    def _base_note_scale(td):
+        """[PACK121] Escala a la que se muestra hoy la imagen de una nota base (ancho de su capa 2 / ancho real de la imagen); 1.0 si
+        no es una nota base, si el archivo no se puede leer o si la diferencia es minima."""
+        try:
+            l2 = td.get('layer2') if isinstance(td.get('layer2'), dict) else {}
+            c = str(l2.get('content', ''))
+            if not (isinstance(td.get('base_note'), dict) or os.path.basename(c.replace('\\', '/')).startswith('nota_base_')):
+                return 1.0
+            real = _find_stored_file(c) if c else None
+            gw = float((l2.get('geometry') or {}).get('w') or 0)
+            if gw <= 0:
+                return 1.0
+            from PySide6.QtGui import QImageReader
+            rw = QImageReader(real).size().width() if real else 0
+            if rw <= 0 and isinstance(td.get('base_note'), dict):          # archivo ausente: se usa el tamano nominal de la forma de papel
+                q = dict(BASE_NOTE_DEFAULTS)
+                q.update(_bn_clean(td['base_note']))
+                rw = render_base_note(q).width()
+            if rw <= 0:
+                return 1.0
+            s = gw / rw
+            return 1.0 if (abs(s - 1.0) < 0.02 or not (0.2 <= s <= 5.0)) else s
+        except Exception:
+            return 1.0
 
     @staticmethod
     def _norm_td(td):
@@ -20203,13 +20268,13 @@ class WidgetManager(QObject):
         if not isinstance(st, dict):
             return None
         if name is None:
-            name, ok = QInputDialog.getText(self.dialog_parent, "Guardar como template", "Nombre del template:",
+            name, ok = QInputDialog.getText(self.dialog_parent, "Guardar widget", "Nombre del widget guardado:",
                                             text=self._get_widget_display_name(widget_id, st))
             if not ok:
                 return None
         n = self._tpl_safe_name(name)
         if not n:
-            self._osd("Nombre de template no v\u00e1lido")
+            self._osd("Nombre de widget guardado no v\u00e1lido")
             return None
         cand, i = n, 1
         while os.path.exists(os.path.join(TEMPLATES_DIR, cand)):
@@ -20226,7 +20291,7 @@ class WidgetManager(QObject):
         tb = getattr(self, 'template_browser', None)
         if tb is not None:
             tb.reload()
-        self._osd("Template guardado: " + cand[:-5])
+        self._osd("Widget guardado: " + cand[:-5])
         return cand
 
     def _template_for_widget(self, widget_id):
@@ -20249,12 +20314,12 @@ class WidgetManager(QObject):
             return
         if slot == 1:
             self.set_default_template(n)
-            msg = "Widget nuevo: template por defecto = " + n[:-5]
+            msg = "Predeterminado para widgets nuevos = " + n[:-5]
         else:
             self.global_state['child_kind_w'] = 'template'
             self.global_state['child_tpl_w'] = n
             self.save_global_state(record_history=False)
-            msg = "Hijo con +Win: template = " + n[:-5]
+            msg = "Predeterminado para el hijo (+Win) = " + n[:-5]
         self.build_tray_menu()
         tb = getattr(self, 'template_browser', None)
         if tb is not None:
@@ -20335,7 +20400,7 @@ class WidgetManager(QObject):
         if tb is not None:
             tb.reload(select=safe)
         self.build_tray_menu()
-        self._osd("Estilo guardado: " + safe[:-5])
+        self._osd("Forma de papel guardada: " + safe[:-5])
         return safe
 
     def edit_base_note_template(self, name):
@@ -20810,7 +20875,7 @@ class WidgetManager(QObject):
         self.build_tray_menu()
         
     def reload_all_widgets(self):
-        log_info("Manager", f"Recargando plantillas para {len(self.widgets)} widgets...")
+        log_info("Manager", f"Recargando widgets guardados para {len(self.widgets)} widgets...")
         for widget in self.widgets.values():
             try:
                 widget._force_web_reload = True
@@ -20914,7 +20979,7 @@ class WidgetManager(QObject):
         """[PACK71] Copias disponibles: zip completas (backups/full) y copias automaticas del set activo (backups)."""
         out = []
         for d, pref, suf, kind in ((FULL_BACKUP_DIR, 'widget_arena_completo.', '.zip', 'Completa'),
-                                   (BACKUP_DIR, 'widget_set.', '.bak.json', 'Autom\u00e1tica (perfil activo)')):
+                                   (BACKUP_DIR, 'widget_set.', '.bak.json', 'Autom\u00e1tica (set activo)')):
             try:
                 files = sorted((f for f in os.listdir(d) if f.startswith(pref) and f.endswith(suf)), reverse=True)
             except OSError:
@@ -20981,7 +21046,7 @@ class WidgetManager(QObject):
             self.save_global_state()
             self._apply_collapse_visibility()
             self._refresh_connector_overlay()
-            msg.append("perfil activo: %d widgets" % len(notes))
+            msg.append("set activo: %d widgets" % len(notes))
 
         done = []
         for name in profiles:
@@ -20997,7 +21062,7 @@ class WidgetManager(QObject):
                 json.dump(prof, f, indent=2, ensure_ascii=False)
             done.append(target)
         if done:
-            msg.append("perfiles: " + ", ".join(done))
+            msg.append("sets: " + ", ".join(done))
         if templates:
             n = 0
             os.makedirs(TEMPLATES_DIR, exist_ok=True)
@@ -21007,7 +21072,7 @@ class WidgetManager(QObject):
                     with open(p, 'w', encoding='utf-8') as f:
                         f.write(raw)
                     n += 1
-            msg.append("templates: %d" % n)
+            msg.append("widgets guardados: %d" % n)
 
         self.build_tray_menu()
         tb = getattr(self, 'template_browser', None)
@@ -21019,7 +21084,7 @@ class WidgetManager(QObject):
             self._osd(self._missing_hint(miss).capitalize(), 8000)
         return "Restaurado -> " + ("; ".join(msg) if msg else "nada")
 
-    def _build_data_menu(self, parent, with_delete=True):
+    def _build_data_menu(self, parent, with_delete=False):
         """[PACK72] Submenu 'Importar y exportar': en Ajustes y, el mismo, dentro de Perfiles."""
         data_menu = QMenu("Importar y exportar", parent)
         hub_action = QAction("Centro de guardar y cargar (todo en un sitio)...", self)
@@ -21056,7 +21121,7 @@ class WidgetManager(QObject):
         restore_bk_action = QAction("Restaurar copia de seguridad...", self)       # [PACK71]
         restore_bk_action.triggered.connect(self.show_backup_restore)
         data_menu.addAction(restore_bk_action)
-        full_bk_action = QAction("Copia de seguridad completa ahora (todos los perfiles)", self)       # [PACK60]
+        full_bk_action = QAction("Copia de seguridad completa ahora (todos los sets)", self)       # [PACK60]
         full_bk_action.triggered.connect(self._full_backup_now)
         data_menu.addAction(full_bk_action)
         open_bk_action = QAction("Abrir la carpeta de copias de seguridad", self)
@@ -21108,7 +21173,7 @@ class WidgetManager(QObject):
         renames = {}
         if opts.get('media'):
             new, same, renames = import_copy_media(root)
-            rep.append("Im\u00e1genes, marcos y notas base: %d nuevos, %d ya estaban%s" % (new, same, (", %d con otro nombre" % len(renames)) if renames else ""))
+            rep.append("Im\u00e1genes, marcos y formas de papel: %d nuevos, %d ya estaban%s" % (new, same, (", %d con otro nombre" % len(renames)) if renames else ""))
         if opts.get('settings') or opts.get('hotkeys'):
             cfg = {}
             if opts.get('settings'):
@@ -21160,13 +21225,13 @@ class WidgetManager(QObject):
                 self.save_global_state()
                 self._apply_collapse_visibility()
                 self._refresh_connector_overlay()
-                rep.append("Widgets: %d a\u00f1adidos a los que ya ten\u00edas" % len(notes))
+                rep.append("Widgets: %d agregados a los que ya ten\u00edas" % len(notes))
             else:
                 dest = self._unique_profile_name("Importado " + datetime.datetime.now().strftime('%Y-%m-%d'))
                 os.makedirs(PROFILES_DIR, exist_ok=True)
                 with open(self._profile_path(dest), 'w', encoding='utf-8') as f:
                     json.dump(notes, f, indent=2, ensure_ascii=False)
-                rep.append("Widgets: %d guardados como el perfil \u00ab%s\u00bb" % (len(notes), dest))
+                rep.append("Widgets: %d guardados como el set \u00ab%s\u00bb" % (len(notes), dest))
             if nfix:
                 rep.append("Rutas de im\u00e1genes ajustadas: %d" % nfix)
 
@@ -21180,7 +21245,7 @@ class WidgetManager(QObject):
                 if raw is None:
                     continue
                 import_fix_paths(raw, renames)
-                base = HotkeyManager.safe_profile_name(name) or "Perfil"
+                base = HotkeyManager.safe_profile_name(name) or "Set"
                 if os.path.exists(self._profile_path(base)):
                     if _imp_json(self._profile_path(base)) == raw:
                         skip += 1
@@ -21189,7 +21254,7 @@ class WidgetManager(QObject):
                 with open(self._profile_path(base), 'w', encoding='utf-8') as f:
                     json.dump(raw, f, indent=2, ensure_ascii=False)
                 done.append(base)
-            rep.append("Perfiles: %d nuevos%s" % (len(done), (", %d ya estaban" % skip) if skip else ""))
+            rep.append("Sets: %d nuevos%s" % (len(done), (", %d ya estaban" % skip) if skip else ""))
 
         if opts.get('templates'):
             done, skip = [], 0
@@ -21208,7 +21273,7 @@ class WidgetManager(QObject):
                         k += 1
                 self.save_template(dest, raw)
                 done.append(dest)
-            rep.append("Templates: %d nuevos%s" % (len(done), (", %d ya estaban" % skip) if skip else ""))
+            rep.append("Widgets guardados: %d nuevos%s" % (len(done), (", %d ya estaban" % skip) if skip else ""))
 
         self.build_tray_menu()
         tb = getattr(self, 'template_browser', None)
@@ -21520,7 +21585,7 @@ class WidgetManager(QObject):
             elif isinstance(v, dict) and str(k).startswith('hierarchy_settings'):
                 out[k] = copy.deepcopy(v)
         if not any('template_data' in v for v in out.values()):
-            raise PackError("Ese perfil no tiene widgets.")
+            raise PackError("Ese set no tiene widgets.")
         base = (self._tpl_safe_name(entry['name']) or 'perfil.json')[:-5]
         name, i = base, 2
         while os.path.exists(self._profile_path(name)):
@@ -21542,11 +21607,11 @@ class WidgetManager(QObject):
         finally:
             self.app_is_quitting = _q
         self._sync_windows_to_state()
-        parts = ["perfil activo"]
+        parts = ["set activo"]
         name = self.current_profile_name
         if name:
             self._write_profile_file(name)
-            parts.append("perfil \u00ab%s\u00bb" % name)
+            parts.append("set \u00ab%s\u00bb" % name)
         if self._backup_config():
             parts.append("configuraci\u00f3n")
         self._persist_history()
@@ -21643,7 +21708,7 @@ class WidgetManager(QObject):
                 i += 1
             self.save_template(dest, raw)
             self.show_template_chooser(select=dest)
-            self._osd("Template cargado: " + dest[:-5])
+            self._osd("Widget guardado cargado: " + dest[:-5])
             return 'template'
         if kind == 'config':
             if QMessageBox.question(parent, "Cargar configuraci\u00f3n",
@@ -21657,7 +21722,7 @@ class WidgetManager(QObject):
         if kind == 'set':
             notes = self._only_notes(raw)
             ch = self._ask_choice("Cargar widgets", "El archivo contiene %d widgets. \u00bfQu\u00e9 quieres hacer con ellas?" % len(notes),
-                                  ["Agregarlos a mis widgets", "Guardarlos como perfil nuevo", "Reemplazar mi perfil activo"])
+                                  ["Agregarlos a mis widgets", "Guardarlos como set nuevo", "Reemplazar mi set activo"])
             if ch is None:
                 return None
             import_embedded_images(raw.get('__config__'), notes)          # [PACK120]
@@ -21683,13 +21748,13 @@ class WidgetManager(QObject):
                 with open(self._profile_path(dest), 'w', encoding='utf-8') as f:
                     json.dump({k: v for k, v in raw.items() if k != '__config__'}, f, indent=2, ensure_ascii=False)
                 self.build_tray_menu()
-                self._osd("Perfil guardado: " + dest)
+                self._osd("Set guardado: " + dest)
             else:
                 self.restore_backup({'notes': notes}, active=True)
-                self._osd("Perfil reemplazado (se puede deshacer)")
+                self._osd("Set reemplazado (se puede deshacer)")
             return 'set'
 
-        QMessageBox.warning(parent, "Cargar archivo", "No reconozco este archivo: no parece un perfil, un template, una configuraci\u00f3n ni una copia.")
+        QMessageBox.warning(parent, "Cargar archivo", "No reconozco este archivo: no parece un set, un widget guardado, una configuraci\u00f3n ni una copia.")
         return None
 
     def show_backup_restore(self):
@@ -22125,7 +22190,7 @@ class WidgetManager(QObject):
                 refill()
 
         row = QHBoxLayout()
-        b_add = QPushButton("A\u00f1adir con selector...")
+        b_add = QPushButton("Agregar con selector...")
         b_edit = QPushButton("Cambiar...")
         b_del = QPushButton("Quitar")
         for b in (b_add, b_edit, b_del):
@@ -22135,7 +22200,7 @@ class WidgetManager(QObject):
         row2.addWidget(QLabel("O grados exactos:"))
         spin = QSpinBox()
         spin.setRange(0, 359)
-        b_deg = QPushButton("A\u00f1adir")
+        b_deg = QPushButton("Agregar")
         row2.addWidget(spin)
         row2.addWidget(b_deg)
         row2.addStretch(1)
@@ -22226,7 +22291,7 @@ class WidgetManager(QObject):
                     os.remove(os.path.join(FULL_BACKUP_DIR, f))
                 except OSError:
                     pass
-            log_info("Manager", f"Copia completa: {os.path.basename(path)} ({len(prof)} perfiles, {len(res)} sets en memoria)")
+            log_info("Manager", f"Copia completa: {os.path.basename(path)} ({len(prof)} sets, {len(res)} sets en memoria)")
             return path
         except Exception as e:
             log_warn("Manager", f"No se pudo hacer la copia completa: {e}")
@@ -22594,7 +22659,7 @@ class WidgetManager(QObject):
             with open(DEFAULT_TEMPLATE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(default_data, f, indent=4)
         except Exception as e:
-            print(f"ADVERTENCIA: No se pudo guardar el template predeterminado en {DEFAULT_TEMPLATE_FILE}. {e}")
+            print(f"ADVERTENCIA: No se pudo guardar el widget guardado predeterminado en {DEFAULT_TEMPLATE_FILE}. {e}")
             
         return default_data
 
@@ -22631,7 +22696,7 @@ class WidgetManager(QObject):
                 if f.lower().endswith('.json'):
                     paths.append(os.path.join(PROFILES_DIR, f))
         except Exception as e:
-            log_error("Manager", f"No se pudieron listar perfiles: {e}")
+            log_error("Manager", f"No se pudieron listar sets: {e}")
         paths.sort(key=lambda p: os.path.basename(p).lower())
         return paths
 
@@ -22647,10 +22712,10 @@ class WidgetManager(QObject):
                 json.dump(self.global_state, f, indent=4)
             self._set_current_profile(name)
             self._drop_resident(name)
-            log_info("Manager", f"Perfil guardado: {name}")
+            log_info("Manager", f"Set guardado: {name}")
             self.build_tray_menu()
         except Exception as e:
-            log_error("Manager", f"Error al guardar perfil '{name}': {e}")
+            log_error("Manager", f"Error al guardar set '{name}': {e}")
 
     @property
     def current_profile_name(self):
@@ -22701,7 +22766,7 @@ class WidgetManager(QObject):
                 self._sync_windows_to_state()
                 self._write_profile_file(name)
             except Exception as e:
-                log_error("Manager", f"No se pudo guardar automaticamente el perfil '{name}': {e}")
+                log_error("Manager", f"No se pudo guardar automaticamente el set '{name}': {e}")
 
     def _osd(self, text, ms=1100):
         """Aviso breve y discreto arriba en la pantalla (sin robar el foco)."""
@@ -22807,7 +22872,7 @@ class WidgetManager(QObject):
         with open(self._profile_path(name), 'r', encoding='utf-8') as f:
             raw = json.load(f)
         if not isinstance(raw, dict):
-            raise ValueError("formato de perfil no valido")
+            raise ValueError("formato de set no valido")
         return raw
 
     def _load_profile(self, name):
@@ -22823,8 +22888,8 @@ class WidgetManager(QObject):
             try:
                 raw = self._read_profile(name)
             except Exception as e:
-                log_error("Manager", f"No se pudo leer el perfil '{name}': {e}")
-                self._osd(f"El perfil \u00ab{name}\u00bb no se puede abrir")
+                log_error("Manager", f"No se pudo leer el set '{name}': {e}")
+                self._osd(f"El set \u00ab{name}\u00bb no se puede abrir")
                 return
         t0 = time.perf_counter()
         try:
@@ -22846,10 +22911,10 @@ class WidgetManager(QObject):
             self._refresh_connector_overlay()
             QTimer.singleShot(0, self._after_set_swap)
             ms = (time.perf_counter() - t0) * 1000
-            log_info("Manager", f"Perfil activado: {name} ({'residente' if res is not None else 'carga'}, {ms:.0f} ms)")
+            log_info("Manager", f"Set activado: {name} ({'residente' if res is not None else 'carga'}, {ms:.0f} ms)")
             self._osd(f"\u00ab{name}\u00bb")
         except Exception as e:
-            log_error("Manager", f"Error al cargar perfil '{name}': {e}")
+            log_error("Manager", f"Error al cargar set '{name}': {e}")
             if res is not None and name not in self._resident and all(self._win_alive(w) for w in res['windows'].values()) \
                     and not any(k in self.widgets for k in res['windows']):
                 self._resident[name] = res             # [PACK86] el set que no se pudo activar no se pierde
@@ -22906,7 +22971,7 @@ class WidgetManager(QObject):
         """Alt+N: activa el set de la ranura N."""
         name = self._slots().get(str(n))
         if not name:
-            self._osd(f"Ranura {n}: vac\u00eda  (Ctrl+Alt+{n % 10} guarda aqu\u00ed el perfil activo)", 1800)
+            self._osd(f"Ranura {n}: vac\u00eda  (Ctrl+Alt+{n % 10} guarda aqu\u00ed el set activo)", 1800)
         elif name == self.current_profile_name:
             self._osd(f"Ranura {n}: \u00ab{name}\u00bb (ya activo)")
         else:
@@ -22918,7 +22983,7 @@ class WidgetManager(QObject):
         cur = self.current_profile_name
         name = d.get(str(n))
         if not name:
-            name = cur if (cur and cur not in d.values()) else f"Perfil {n}"
+            name = cur if (cur and cur not in d.values()) else f"Set {n}"
         if cur and cur != name and self._profile_autosave():
             try:
                 self._sync_windows_to_state()
@@ -22928,10 +22993,10 @@ class WidgetManager(QObject):
         d[str(n)] = name
         self._store_slots(d)
         self._save_profile(name)
-        self._osd(f"Ranura {n}: perfil guardado como \u00ab{name}\u00bb")
+        self._osd(f"Ranura {n}: set guardado como \u00ab{name}\u00bb")
 
     def _unique_profile_name(self, base):
-        base = HotkeyManager.safe_profile_name(base) or "Perfil"
+        base = HotkeyManager.safe_profile_name(base) or "Set"
         name, i = base, 2
         while os.path.exists(self._profile_path(name)):
             name = f"{base} {i}"
@@ -22955,15 +23020,15 @@ class WidgetManager(QObject):
         info = f"  \u00b7  ranura {slot % 10} (Alt+{slot % 10})" if slot else ""
         if switch:
             self._load_profile(name)
-        self._osd(f"Perfil duplicado como \u00ab{name}\u00bb{info}", 2200)
+        self._osd(f"Set duplicado como \u00ab{name}\u00bb{info}", 2200)
         log_info("Manager", f"Set clonado: {name} (ranura {slot or '-'})")
         return name
 
     def clone_current_set(self, slot=None):
         """Dialogo para clonar el set activo: nombre, ranura (si no viene fijada) y si se cambia al clon."""
-        cur = self.current_profile_name or "Perfil"
+        cur = self.current_profile_name or "Set"
         dlg = QDialog(self.dialog_parent)
-        dlg.setWindowTitle("Duplicar el perfil activo")
+        dlg.setWindowTitle("Duplicar el set activo")
         dlg.setMinimumWidth(420)
         lay = QFormLayout(dlg)
         ed = QLineEdit(self._unique_profile_name(cur + " copia"))
@@ -22995,28 +23060,28 @@ class WidgetManager(QObject):
         return self._clone_set_do(ed.text().strip(), n_slot or None, sw.isChecked())
 
     def _build_profiles_menu(self, menu):
-        pm = QMenu("Perfiles", menu)
-        a_save = QAction("Guardar perfil activo...", self)
+        pm = QMenu("Sets de widgets", menu)
+        a_save = QAction("Guardar el set activo...", self)
         a_save.triggered.connect(self._save_profile_dialog)
         pm.addAction(a_save)
-        a_clone = QAction("Duplicar el perfil activo como perfil nuevo...", self)       # [PACK59]
+        a_clone = QAction("Duplicar el set activo como set nuevo...", self)       # [PACK59]
         a_clone.triggered.connect(lambda: self.clone_current_set())
         pm.addAction(a_clone)
-        auto = QAction("Guardar el perfil activo al cambiar de perfil", self)
+        auto = QAction("Guardar el set activo al cambiar de set", self)
         auto.setCheckable(True)
         auto.setChecked(self._profile_autosave())
         auto.toggled.connect(lambda on: self.global_state.__setitem__('profile_autosave', bool(on)))
         pm.addAction(auto)
-        pre = QAction("Precargar los perfiles con tecla (cambio instant\u00e1neo)", self)
+        pre = QAction("Precargar los sets con tecla (cambio instant\u00e1neo)", self)
         pre.setCheckable(True)
         pre.setChecked(self._profile_preload())
         pre.toggled.connect(lambda on: (self.global_state.__setitem__('profile_preload', bool(on)), on and self._schedule_preload(200)))
         pm.addAction(pre)
         pm.addSeparator()
-        a_next = QAction("Perfil siguiente", self)
+        a_next = QAction("Set siguiente", self)
         a_next.triggered.connect(lambda: self.cycle_profile(1))
         pm.addAction(a_next)
-        a_prev = QAction("Perfil anterior", self)
+        a_prev = QAction("Set anterior", self)
         a_prev.triggered.connect(lambda: self.cycle_profile(-1))
         pm.addAction(a_prev)
         pm.addSeparator()
@@ -23032,7 +23097,7 @@ class WidgetManager(QObject):
             act.triggered.connect(lambda checked, n=name: self._load_profile_dialog(n))
             pm.addAction(act)
         if not names:
-            none = QAction("(sin perfiles guardados)", self)
+            none = QAction("(sin sets guardados)", self)
             none.setEnabled(False)
             pm.addAction(none)
         pm.addSeparator()
@@ -23041,13 +23106,13 @@ class WidgetManager(QObject):
             cur_name = slots.get(str(n))
             empty = "(vac\u00eda)"
             sub = QMenu(f"{n % 10}:  {cur_name or empty}", sm)
-            a_here = QAction(f"Guardar aqu\u00ed el perfil activo (Ctrl+Alt+{n % 10})", self)
+            a_here = QAction(f"Guardar aqu\u00ed el set activo (Ctrl+Alt+{n % 10})", self)
             a_here.triggered.connect(lambda checked, k=n: self.hotkey_save_slot(k))
             sub.addAction(a_here)
-            a_cl = QAction("Duplicar aqu\u00ed el perfil activo como perfil nuevo...", self)
+            a_cl = QAction("Duplicar aqu\u00ed el set activo como set nuevo...", self)
             a_cl.triggered.connect(lambda checked, k=n: self.clone_current_set(k))
             sub.addAction(a_cl)
-            asg = QMenu("Asignar un perfil existente", sub)
+            asg = QMenu("Asignar un set existente", sub)
             for name in names:
                 a = QAction(name, self)
                 a.triggered.connect(lambda checked, k=n, nm=name: (self._store_slots({**self._slots(), str(k): nm}),
@@ -23063,6 +23128,10 @@ class WidgetManager(QObject):
         pm.addMenu(sm)
         pm.addSeparator()
         pm.addMenu(self._build_data_menu(pm, with_delete=False))       # [PACK72] importar / exportar / copias, tambien desde aqui
+        pm.addSeparator()
+        del_all = QAction("Eliminar todos los widgets del set activo...", self)       # [PACK121] antes dentro de Importar y exportar
+        del_all.triggered.connect(self._confirm_remove_all_widgets)
+        pm.addAction(del_all)
         menu.addMenu(pm)
 
     def _load_profile_dialog(self, name):
@@ -23072,14 +23141,14 @@ class WidgetManager(QObject):
             self._load_profile_dialog_confirm(name)
 
     def _save_profile_dialog(self):
-        name, ok = QInputDialog.getText(self.dialog_parent, "Guardar perfil",
-                                        "Nombre del perfil:", text=self.current_profile_name or "")
+        name, ok = QInputDialog.getText(self.dialog_parent, "Guardar set",
+                                        "Nombre del set:", text=self.current_profile_name or "")
         if ok and name.strip():
             self._save_profile(name.strip())
 
     def _load_profile_dialog_confirm(self, name):
-        reply = QMessageBox.question(self.dialog_parent, "Cargar perfil",
-                                     f"Se reemplazar谩n TODOS los widgets actuales por el perfil '{name}'.\n\n驴Continuar?",
+        reply = QMessageBox.question(self.dialog_parent, "Cargar set",
+                                     f"Se reemplazar\u00e1n TODOS los widgets actuales por el set '{name}'.\n\n\u00bfContinuar?",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             self._load_profile(name)

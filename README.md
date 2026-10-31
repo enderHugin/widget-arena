@@ -12,9 +12,9 @@ Funciona en Windows, macOS y Linux, con instalación de un clic.
 - **Conectar**: enlaza una nota con otra y los dos widgets quedan unidos por un cable, que cuelga como una cuerda con física y se balancea al moverlos.
 - **Jerarquizar**: padres, hijos, nietos… Los hijos pueden seguir al padre cuando lo arrastras, y puedes mover una rama entera.
 - **Plegar y desplegar**: oculta los hijos de una nota (o de todas) para ver solo lo que importa, y recupéralos cuando quieras.
-- **Perfiles**: guarda conjuntos completos de widgets y cambia entre ellos al instante con el teclado.
-- **Packs de estilos**: comparte o estrena estilos y tableros en un solo archivo `.wapack`; exporta lo que ya tienes.
-- **Configurable a fondo**: cables (grosor, opacidad, degradado, cuerda, calidad de dibujo), estilos de nota, templates, atajos de teclado y gestos del icono de bandeja.
+- **Sets de widgets**: guarda conjuntos completos de widgets y cambia entre ellos al instante con el teclado.
+- **Packs de widgets**: comparte o estrena widgets guardados y sets en un solo archivo `.wapack`; exporta lo que ya tienes.
+- **Configurable a fondo**: cables (grosor, opacidad, degradado, cuerda, calidad de dibujo), formas de papel, widgets guardados, atajos de teclado y gestos del icono de bandeja.
 - **Rápido y ligero**: la calidad de dibujo de los cables se adapta sola al ordenador.
 - **Tus datos son tuyos**: todo se guarda en archivos JSON en tu carpeta de usuario, con copias de seguridad.
 
@@ -41,16 +41,16 @@ Todo el código está en este repositorio (`installers/`) para que puedas leerlo
 
 ## Primer arranque
 
-La primera vez que se abre aparece el perfil **Bienvenida**: doce notas enlazadas por cables que sirven de tutorial (mover y enlazar con **Ctrl** / **Alt** + arrastrar,
-crear y clonar hijas, gestos y ayuda con **F1**, cambiar el tono con **Ctrl + rueda**, mover una rama entera, plegar y desplegar hijos, perfiles con **Ctrl + 1…0** y el icono de la bandeja).
-Además queda guardado un perfil de ejemplo de uso diario, «Ejemplo - semana», para que veas cómo se organiza un tablero real; cámbialo con **Ctrl + 2** (y vuelve con **Ctrl + 1**)
-o desde el menú del icono de bandeja → *Perfiles*. Puedes borrarlos cuando quieras: no vuelven a aparecer.
+La primera vez que se abre aparece el set **Bienvenida**: doce notas enlazadas por cables que sirven de tutorial (mover y enlazar con **Ctrl** / **Alt** + arrastrar,
+crear y clonar hijas, gestos y ayuda con **F1**, cambiar el tono con **Ctrl + rueda**, mover una rama entera, plegar y desplegar hijos, sets de widgets con **Ctrl + 1…0** y el icono de la bandeja).
+Además queda guardado un set de ejemplo de uso diario, «Ejemplo - semana», para que veas cómo se organiza un tablero real; cámbialo con **Ctrl + 2** (y vuelve con **Ctrl + 1**)
+o desde el menú del icono de bandeja → *Sets de widgets*. Puedes borrarlos cuando quieras: no vuelven a aparecer.
 
 ## Actualizaciones
 
 *Icono de bandeja → Buscar actualizaciones...* compara tu versión con la publicada en esta página (`dl/update.json`: número de pack, huellas sha256 y novedades).
 Si hay una más nueva, la descarga, comprueba que coincide con la huella y que es Python válido, **guarda una copia de la tuya** (carpeta `backups_programa/`) y reinicia el programa.
-Tus notas, perfiles y ajustes no se tocan, y *Volver a la versión anterior* restaura la copia. Nunca baja de versión: si tu copia es más nueva que la publicada, no hace nada.
+Tus notas, sets y ajustes no se tocan, y *Volver a la versión anterior* restaura la copia. Nunca baja de versión: si tu copia es más nueva que la publicada, no hace nada.
 
 Al abrir el programa pregunta, como cualquier aplicación, si hay una versión nueva («¿Descargarla e instalarla ahora?»). Marca *No mostrar más este mensaje* si prefieres actualizar a mano;
 se vuelve a activar en la ventana de actualizaciones. Es una conexión más a esta página; `WA_OFFLINE=1` la desactiva. En una instalación como ejecutable no se actualiza sola: baja el instalador nuevo.
@@ -59,7 +59,7 @@ se vuelve a activar en la ventana de actualizaciones. Es una conexión más a es
 
 Si usabas una versión anterior (o otro equipo), no hace falta copiar nada a mano: **Ajustes → Importar y exportar → Importar datos de otra instalación...**
 Elige la carpeta `widget_arena_data` de la versión anterior (suele estar junto al programa), la carpeta que la contiene, o una copia completa `.zip`, y marca lo que quieras traer:
-widgets (sustituyendo, añadiendo a los actuales o como perfil nuevo), perfiles, templates, imágenes y marcos, ajustes, atajos de teclado y la conexión con Telegram.
+widgets (sustituyendo, agregando a los actuales o como set nuevo), sets, widgets guardados, imágenes y marcos, ajustes, atajos de teclado y la conexión con Telegram.
 
 - Antes de tocar nada se guarda una copia completa de lo que tenías.
 - Nunca se pisa un archivo que ya exista con otro contenido: el importado entra con otro nombre («... (importado)»).
@@ -67,13 +67,13 @@ widgets (sustituyendo, añadiendo a los actuales o como perfil nuevo), perfiles,
 - Una copia completa `.zip` solo lleva los `.json`; para traer también las imágenes usa la carpeta.
 - Si cargas una copia vieja (un `.json`) y alguna nota se queda sin su base o su imagen, el programa avisa de cuáles faltan; *Importar y exportar → Buscar las imágenes que faltan (en otra carpeta)...* las recupera de la carpeta `widget_arena_data` de la versión anterior.
 
-## Pasar un árbol de widgets a otro perfil
+## Pasar un árbol de widgets a otro set
 
-Clic derecho sobre un widget → *Clonar*:
+Clic derecho sobre un widget (en la sección de gestión de widgets, entre *Clonar* y *Eliminar*):
 
 - **Copiar árbol (json)**: el widget y todos sus descendientes al portapapeles, solo como JSON (las imágenes tienen que existir en la instalación donde lo pegues).
-- **Pegar árbol (json)**: lo añade al perfil activo, con ids nuevos, la jerarquía intacta y un pequeño desplazamiento para que no quede encima del original.
-- **Exportar árbol a un archivo...**: un `.json` con las imágenes incluidas. Para usarlo en otro perfil, cámbiate a él y usa *Agregar widgets desde un archivo*.
+- **Pegar árbol (json)**: lo agrega al set activo, con ids nuevos, la jerarquía intacta y un pequeño desplazamiento para que no quede encima del original.
+- **Exportar árbol a un archivo...**: un `.json` con las imágenes incluidas. Para usarlo en otro set, cámbiate a él y usa *Agregar widgets desde un archivo*.
 
 ## Fuentes
 
@@ -87,12 +87,12 @@ parecida. Widget Arena trae tres, con licencia SIL Open Font License (están en 
   sin red no pasa nada y lo reintenta pasadas unas horas. Para desactivarla, define la variable de entorno `WA_OFFLINE=1`.
 - Al **exportar un pack** te pregunta por las fuentes que usa: las del sistema no se pueden incluir, las libres se marcan solas y las demás solo se incluyen si confirmas que tienes derecho.
 
-## Packs de estilos
+## Packs de widgets
 
-Un **pack** (`.wapack`, un zip) reúne estilos de notas y conjuntos de widgets ya colocados, con las imágenes que usan, para compartir o estrenar.
-Abre *icono de bandeja → Packs de estilos...* (o arrastra un `.wapack` a la ventana *Guardar y cargar*): ves sus estilos con vista previa y los añades a tus
-templates y perfiles. Las notas base no guardan imagen: se vuelven a dibujar y se pueden seguir editando. También puedes **exportar lo que ya tienes**
-(*Exportar mis estilos y widgets...*), y tus notas, estilos y perfiles de siempre se leen sin cambios.
+Un **pack** (`.wapack`, un zip) reúne widgets guardados y sets de widgets ya colocados, con las imágenes que usan, para compartir o estrenar.
+Abre *icono de bandeja → Guardar y cargar → Packs de widgets...* (o arrastra un `.wapack` a la ventana *Guardar y cargar*): ves sus widgets guardados con vista previa y los agregas a los tuyos
+o a tus sets. Las notas base no guardan imagen: se vuelven a dibujar y se pueden seguir editando. También puedes **exportar lo que ya tienes**
+(*Exportar mis widgets y sets...*), y tus notas, widgets guardados y sets de siempre se leen sin cambios.
 
 Con el primer arranque se instala un pack de ejemplo, **Notas de colores** (8 colores y dos tableros). Descárgalo también desde la página: `dl/notas-de-colores.wapack`.
 El formato está descrito en [docs/FORMATO-WAPACK.md](docs/FORMATO-WAPACK.md).
@@ -101,14 +101,14 @@ El formato está descrito en [docs/FORMATO-WAPACK.md](docs/FORMATO-WAPACK.md).
 
 | Gesto | Qué hace |
 |---|---|
-| Clic derecho en una nota | Menú del widget: capas, aspecto, relaciones, clonar, eliminar |
+| Clic derecho en una nota | Menú del widget: capas, aspecto, relaciones, clonar, gestión de widgets, eliminar |
 | Arrastrar | Mover el widget (los hijos con posición ligada lo siguen) |
 | **Ctrl** + arrastrar sobre otra nota | Enlazar: pasa a ser **hija** de la nota donde sueltas |
 | **Alt** + arrastrar sobre otra nota | Enlazar: pasa a ser **padre** de la nota donde sueltas |
 | **Ctrl + Alt + Win** + arrastrar | Mover el widget con todos sus descendientes |
 | **Ctrl + Alt + Mayús** + arrastrar | Crear un hijo bajo el cursor |
 | Doble clic | Ocultar el widget (pide confirmación) |
-| **Ctrl + 1…0** | Cargar el perfil número N |
+| **Ctrl + 1…0** | Cargar el set de widgets número N |
 | **Ctrl + Alt + B** | Navegador de todos tus widgets |
 | **F1** | Guía de gestos y atajos completa |
 

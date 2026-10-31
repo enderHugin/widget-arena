@@ -2902,7 +2902,7 @@
     "enabled": true,
     "always_on_top": false,
     "template_name": "Nota doblada.json",
-    "custom_name": "Perfiles",
+    "custom_name": "Sets de widgets",
     "template_data": {
       "geometry": {
         "x": -7,
@@ -3153,7 +3153,7 @@
       "upright_angle": 0.0,
       "layer1": {
         "type": "text",
-        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Perfiles</b><br><span style=\"font-size:10pt;\">Un perfil es un conjunto de notas. Ctrl + 1…0 carga el perfil nº N de la lista. Prueba Ctrl + 2 y vuelve con Ctrl + 1.</span></p>",
+        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Sets de widgets</b><br><span style=\"font-size:10pt;\">Un set de widgets es un conjunto de notas guardado con nombre. Ctrl + 1…0 carga el set nº N de la lista. Prueba Ctrl + 2 y vuelve con Ctrl + 1.</span></p>",
         "background": "transparent",
         "font_family": "Segoe Print",
         "font_size": 11,
@@ -3443,7 +3443,7 @@
       "upright_angle": 0.0,
       "layer1": {
         "type": "text",
-        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Icono de la bandeja</b><br><span style=\"font-size:10pt;\">Junto al reloj. Doble clic: nota nueva. Clic derecho: perfiles, ajustes y packs. Ctrl + Alt + B: navegador.</span></p>",
+        "content": "<p style=\"color:#1f2937;\" align=\"center\"><b>Icono de la bandeja</b><br><span style=\"font-size:10pt;\">Junto al reloj. Doble clic: nota nueva. Clic derecho: sets de widgets, guardar y cargar y ajustes. Ctrl + Alt + B: navegador.</span></p>",
         "background": "transparent",
         "font_family": "Segoe Print",
         "font_size": 11,
