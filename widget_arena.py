@@ -441,7 +441,7 @@ from PySide6.QtGui import (
     QPixmap, QColor, QFont, QIcon, QAction, QActionGroup,
     QKeyEvent, QPainter, QBitmap, QWheelEvent, QTransform,
     QImage, QCursor, QPen, QPainterPath, QBrush, QLinearGradient,
-    QTextDocument, QTextCursor, QTextCharFormat, QTextOption, QPainterPathStroker
+    QTextDocument, QTextCursor, QTextCharFormat, QTextOption, QPainterPathStroker, QRegion
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineProfile # <--- PARCHE WEB PERSISTENCIA: Importar QWebEngineProfile
@@ -2736,6 +2736,7 @@ class StickerWindow(QMainWindow):
         self.layer1_original_image = None
         self.layer2_original_image = None
         self._cached_paper_bounds = None
+        self._l2_clip_key = None                           # [PACK134]
 
         # --- Layer 2 (Inferior) ---
         l2_data = data.get('layer2', {})
@@ -2851,6 +2852,7 @@ class StickerWindow(QMainWindow):
                 self._force_web_reload = False
             self.layer2_web.setGeometry(l2_geom)
             self.layer2_web.setStyleSheet(f"background-color: {l2_background_color};")
+            self._web_clip_apply()                         # [PACK134]
             self.layer2_web.show()
             active_l2_widget = self.layer2_web
 
@@ -2966,6 +2968,8 @@ class StickerWindow(QMainWindow):
             log_debug(self.widget_id, "Comportamiento de clic estandar. L1 no es click-through.")
             self.layer1_label.setAttribute(Qt.WA_TransparentForMouseEvents, False)
 
+        self._l2_clip_key = None                           # [PACK134] la capa 1 ya esta puesta y visible: se recorta la capa 2 por su silueta
+        self._l2_clip_refresh()
         self._recalculate_and_normalize()
 
     def update_window_mask(self):
@@ -5389,6 +5393,9 @@ class StickerWindow(QMainWindow):
             aspect_mode = Qt.IgnoreAspectRatio if l2_scaled_type else Qt.KeepAspectRatio
             
             scaled_base_pixmap = self._scaled_cached('l2', self.layer2_base_pixmap, original_geom_size, aspect_mode)
+            _ck = self._l2_clip()                         # [PACK134] recorte de forma: gira con la imagen
+            if _ck[0] in (1, 2) and not scaled_base_pixmap.isNull():
+                scaled_base_pixmap = _apply_clip_mask(scaled_base_pixmap, _clip_shape_image(_ck[0], scaled_base_pixmap.width(), scaled_base_pixmap.height(), _ck[1]))
 
             if rotation_angle % 360 == 0:
                 rotated_pixmap = scaled_base_pixmap
@@ -5396,6 +5403,9 @@ class StickerWindow(QMainWindow):
                 transform = QTransform().rotate(rotation_angle)
                 rotated_pixmap = scaled_base_pixmap.transformed(transform, Qt.SmoothTransformation)
             
+            if _ck[0] == 3:                               # [PACK134] recorte por la silueta de la capa 1: queda fijo en el widget
+                rotated_pixmap = self._clip_l2_silhouette(rotated_pixmap, QPoint(int(round(center_x_widget - rotated_pixmap.width() / 2.0)),
+                                                                                 int(round(center_y_widget - rotated_pixmap.height() / 2.0))))
             self.layer2_label.setScaledContents(False) 
             self.layer2_label.setPixmap(rotated_pixmap)
             
@@ -5455,10 +5465,119 @@ class StickerWindow(QMainWindow):
             new_y = int(round(center_y - new_size.height() / 2.0))
             
             self.layer1_label.setGeometry(new_x, new_y, new_size.width(), new_size.height())
+            self._l2_clip_refresh()                        # [PACK134]
             self._schedule_tint_refresh()
         except Exception as e:
             log_error(self.widget_id, f"Fallo al rotar L1: {e}")
 
+
+    # ---------------------------------------------------------------- [PACK134] recorte de la capa 2 y region del widget
+    def _l2_clip(self):
+        """Recorte de la capa 2: (modo, radio %). Modo 0 sin recorte, 1 esquinas redondeadas, 2 elipse, 3 silueta de la capa 1."""
+        c = (self.current_template_data.get('layer2') or {}).get('clip')
+        if not isinstance(c, dict):
+            return (0, 0)
+        try:
+            m, r = int(c.get('mode', 0)), int(c.get('radius', 25))
+        except (TypeError, ValueError):
+            return (0, 0)
+        return (m if m in (1, 2, 3) else 0, max(0, min(100, r)))
+
+    def _l1_png_ready(self):
+        l1 = self.current_template_data.get('layer1') or {}
+        return l1.get('type') == 'png' and not self.layer1_label.isHidden() and not self.layer1_label.pixmap().isNull()
+
+    def _silhouette_of_l1(self):
+        """Mascara de la silueta de la capa 1 tal como se ve (con su giro), en coordenadas de su etiqueta; cacheada por imagen."""
+        p1 = self.layer1_label.pixmap()
+        key = p1.cacheKey()
+        c = getattr(self, '_sil_cache', None)
+        if c is None or c[0] != key:
+            c = (key, _silhouette_image(p1.toImage()))
+            self._sil_cache = c
+        return c[1]
+
+    def _clip_l2_silhouette(self, pm, topleft):
+        """Recorta la imagen de la capa 2 (colocada en topleft) a la silueta de la capa 1: asi no hace falta ajustar las medidas
+        al milimetro, lo que sobra queda bajo el marco o fuera de la forma."""
+        if not self._l1_png_ready():
+            return pm
+        g1 = self.layer1_label.geometry()
+        mask = QImage(pm.size(), QImage.Format_ARGB32_Premultiplied)
+        mask.fill(Qt.transparent)
+        q = QPainter(mask)
+        q.drawImage(g1.x() - topleft.x(), g1.y() - topleft.y(), self._silhouette_of_l1())
+        q.end()
+        return _apply_clip_mask(pm, mask)
+
+    def _l2_clip_refresh(self):
+        """Tras cambiar la capa 1 (imagen, giro o posicion): si la capa 2 se recorta por su silueta, se vuelve a recortar."""
+        if getattr(self, '_l2_clip_busy', False) or self._l2_clip()[0] != 3 or not self._l1_png_ready():
+            return
+        key = (self.layer1_label.pixmap().cacheKey(), tuple(self.layer1_label.geometry().getRect()),
+               tuple(self.layer2_label.geometry().getRect()), tuple(self.layer2_web.geometry().getRect()))
+        if getattr(self, '_l2_clip_key', None) == key:
+            return
+        self._l2_clip_busy = True
+        try:
+            if self.layer2_web.isVisible():
+                self._web_clip_apply()
+            elif not self.layer2_base_pixmap.isNull():
+                self._on_layer2_rotation_changed(self.layer2_label.property("rotation") or 0)
+            self._l2_clip_key = (self.layer1_label.pixmap().cacheKey(), tuple(self.layer1_label.geometry().getRect()),
+                                 tuple(self.layer2_label.geometry().getRect()), tuple(self.layer2_web.geometry().getRect()))
+        finally:
+            self._l2_clip_busy = False
+
+    def _web_clip_apply(self):
+        """Recorte de una capa 2 web: mascara del propio visor (mejor esfuerzo: depende de que la plataforma la respete)."""
+        w = self.layer2_web
+        mode, rad = self._l2_clip()
+        g = w.geometry()
+        try:
+            if mode in (1, 2) and g.width() > 0 and g.height() > 0:
+                w.setMask(_bool_to_region(_image_alpha(_clip_shape_image(mode, g.width(), g.height(), rad)) >= 128))
+            elif mode == 3 and self._l1_png_ready() and g.width() > 0 and g.height() > 0:
+                g1 = self.layer1_label.geometry()
+                canvas = QImage(g.size(), QImage.Format_ARGB32_Premultiplied)
+                canvas.fill(Qt.transparent)
+                q = QPainter(canvas)
+                q.drawImage(g1.x() - g.x(), g1.y() - g.y(), self._silhouette_of_l1())
+                q.end()
+                w.setMask(_bool_to_region(_image_alpha(canvas) >= 128))
+            else:
+                w.clearMask()
+        except Exception as e_wc:
+            log_warn(self.widget_id, "Recorte de la capa web: %s" % e_wc)
+
+    def body_region(self):
+        """Region (coordenadas de la ventana) que ocupa de verdad el widget: lo opaco de sus capas de imagen (sin el halo de la
+        sombra) o el recuadro de la web. Se usa para que los cables no se vean dentro de los widgets que unen."""
+        try:
+            parts = []
+            if self.layer2_label.isVisible() and not self.layer2_label.pixmap().isNull():
+                parts.append(('l2', self.layer2_label.pixmap(), self.layer2_label.geometry().topLeft()))
+            elif self.layer2_web.isVisible():
+                parts.append(('w', None, self.layer2_web.geometry()))
+            if self._l1_png_ready():
+                parts.append(('l1', self.layer1_label.pixmap(), self.layer1_label.geometry().topLeft()))
+            key = tuple((n, (pm.cacheKey() if pm is not None else 0),
+                         (tl.x(), tl.y()) if n != 'w' else tuple(tl.getRect())) for n, pm, tl in parts)
+            c = getattr(self, '_body_cache', None)
+            if c is not None and c[0] == key:
+                return c[1]
+            reg = QRegion()
+            for n, pm, tl in parts:
+                if n == 'w':
+                    reg = reg.united(QRegion(tl))
+                else:
+                    reg = reg.united(_alpha_region(pm).translated(tl))
+            if reg.isEmpty():
+                reg = QRegion(self.calculate_bounding_box())
+            self._body_cache = (key, reg)
+            return reg
+        except Exception:
+            return QRegion(self.rect())
 
     def _get_shortest_angle_path(self, start_angle, target_angle):
         diff = target_angle - start_angle
@@ -7499,10 +7618,90 @@ class ConnectorOverlay(QWidget):
 
         # Estilo: hacia el PADRE (ancestros) = continuo y grueso; hacia los HIJOS = punteado y fino.
         # (el parametro is_dimmed de draw_edge significa ahora "estilo punteado")
+        _in_op = int(self.manager.get_cable_param('_cable_inside_op'))        # [PACK134] el cable dentro de los widgets que une
+        _in_bl = int(self.manager.get_cable_param('_cable_inside_blur'))
+        _ov_rect = self.rect()
+
+        def _inside_region(win):
+            try:
+                return win.body_region().translated(win.geometry().topLeft() - offset)
+            except Exception:
+                return QRegion(win.geometry().translated(-offset))
+
+        def draw_edge_fx(p_id, c_id, is_dimmed):
+            nonlocal painter
+            if _in_op >= 100 and _in_bl <= 0:
+                draw_edge(p_id, c_id, is_dimmed)
+                return
+
+            pw, cw = self.manager.widgets.get(p_id), self.manager.widgets.get(c_id)
+            if not pw or not pw.isVisible() or not cw or not cw.isVisible():
+                draw_edge(p_id, c_id, is_dimmed)
+                return
+
+            inside = _inside_region(pw).united(_inside_region(cw))
+            if inside.isEmpty():
+                draw_edge(p_id, c_id, is_dimmed)
+                return
+
+            painter.save()                                      # fuera de los dos widgets: el cable de siempre
+            painter.setClipRegion(QRegion(_ov_rect).subtracted(inside))
+            draw_edge(p_id, c_id, is_dimmed)
+            painter.restore()
+
+            if _in_op <= 0:
+                return
+
+            if _in_bl <= 0:                                     # dentro: mas tenue (cristal)
+                painter.save()
+                painter.setClipRegion(inside)
+                painter.setOpacity(painter.opacity() * _in_op / 100.0)
+                draw_edge(p_id, c_id, is_dimmed)
+                painter.restore()
+                return
+
+            main_p = painter                                    # dentro y difuminado: se pinta aparte (una vez por widget, en su recuadro) y se desenfoca
+
+            for reg in (_inside_region(pw), _inside_region(cw)):
+                bb = reg.boundingRect().intersected(_ov_rect)
+                if bb.isEmpty():
+                    continue
+
+                img = QImage(bb.size(), QImage.Format_ARGB32_Premultiplied)
+                img.fill(Qt.transparent)
+
+                p2 = QPainter(img)
+                p2.setRenderHints(main_p.renderHints())
+                p2.translate(-bb.topLeft())
+                p2.setClipRegion(reg)
+                p2.setOpacity(main_p.opacity() * _in_op / 100.0)
+
+                painter = p2
+                try:
+                    draw_edge(p_id, c_id, is_dimmed)
+                finally:
+                    p2.end()
+                    painter = main_p
+
+                al = np.frombuffer(img.constBits(), dtype=np.uint8).reshape((img.height(), img.width(), 4))[:, :, 3]
+                rows, cols = np.flatnonzero(al.any(axis=1)), np.flatnonzero(al.any(axis=0))
+                if not len(rows):                                                  # el cable no pasa por este widget: nada que desenfocar
+                    continue
+
+                pad = 3 * _in_bl + 2                                               # solo se desenfoca el trozo donde esta el cable
+                crop = QRect(int(cols[0]), int(rows[0]), int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1)).adjusted(-pad, -pad, pad, pad).intersected(img.rect())
+                img = _blur_image(img.copy(crop), _in_bl, 0.55)
+
+                painter.save()
+                painter.setClipRegion(reg)
+                painter.setOpacity(1.0)
+                painter.drawImage(bb.topLeft() + crop.topLeft(), img)
+                painter.restore()
+
         for p, c in edges_to_draw_normal:
-            draw_edge(p, c, True)
+            draw_edge_fx(p, c, True)
         for p, c in edges_to_draw_dimmed:
-            draw_edge(p, c, False)
+            draw_edge_fx(p, c, False)
         self._rope_box = (_rope_bx[0].toAlignedRect().adjusted(-70, -70, 70, 70) if _rope_bx[0] is not None else None)
         self._rope_fast = _rope_fast[0]
         if _rope_live[0]:
@@ -11524,7 +11723,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 133                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 134                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -14687,6 +14886,11 @@ CABLE_DIALOG_SPEC = [
             ('_rope_fps', "Fotogramas por segundo m\u00e1ximos de la animaci\u00f3n de las cuerdas", 'i', " fps", None)],
          "En un PC justo, 'Ligera' es lo m\u00e1s r\u00e1pido. En 'Autom\u00e1tica' la animaci\u00f3n tambi\u00e9n se pausa mientras hay un men\u00fa abierto y se limita sola seg\u00fan lo que tarda en pintar."),
     ])]),
+    ("Widgets", [
+        ("El cable dentro de los widgets que une", [
+            ('_cable_inside_op', "Opacidad del cable dentro de esos widgets (0 % = no se ve: nace del borde)", 'i', " %", None),
+            ('_cable_inside_blur', "Difuminado del cable dentro de esos widgets (0 = n\u00edtido)", 'i', " px", None)],
+         "Con 0 % el cable se ve solo desde el borde del widget hacia fuera, aunque el papel sea transl\u00facido. Con un valor intermedio se ve a trav\u00e9s del papel como a trav\u00e9s de un cristal, y el difuminado lo desenfoca. Con 100 % y 0 px se ve entero, nazca donde nazca.")]),
     ("Color y brillo", [
         ("Degradado de color entre padre e hijo", [
             ('_cable_grad_start', "Color puro junto a cada widget (tramo por extremo, m\u00e1x. 50 %)", 'i', " %", 'grad')],
@@ -15208,13 +15412,153 @@ def _grad_brush(p, w, h, pad):
     return QBrush(g)
 
 
+# ---------------------------------------------------------------- [PACK134] recorte de capas, silueta, difuminado y regiones
+def _image_alpha(img):
+    """Canal alfa (matriz alto x ancho de uint8, copia propia) de una QImage."""
+    im = img.convertToFormat(QImage.Format_RGBA8888)
+    w, h = im.width(), im.height()
+    return np.array(np.frombuffer(im.bits(), dtype=np.uint8).reshape((h, w, 4))[:, :, 3], copy=True)
+
+
+def _bool_to_region(m):
+    """QRegion con los pixeles True de una matriz booleana (alto x ancho)."""
+    h, w = m.shape
+    bits = np.packbits(m.astype(np.uint8), axis=1, bitorder='little')
+    return QRegion(QBitmap.fromData(QSize(w, h), bits.tobytes(), QImage.Format_MonoLSB))
+
+
+def _alpha_region(pm):
+    """Region que ocupa de verdad una imagen: sus pixeles con algo de opacidad (sin el halo tenue de la sombra)."""
+    img = pm.toImage() if isinstance(pm, QPixmap) else pm
+    a = _image_alpha(img)
+    amax = int(a.max()) if a.size else 0
+    if amax <= 0:
+        return QRegion()
+    return _bool_to_region(a >= max(8, min(48, int(amax * 0.6))))
+
+
+def _clip_shape_image(mode, w, h, radius_pct=25):
+    """Mascara (QImage; solo importa su alfa) de un recorte de forma: 1 = rectangulo de esquinas redondeadas, 2 = elipse."""
+    w, h = max(1, int(w)), max(1, int(h))
+    img = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+    img.fill(Qt.transparent)
+    q = QPainter(img)
+    q.setRenderHint(QPainter.Antialiasing)
+    q.setPen(Qt.NoPen)
+    q.setBrush(Qt.black)
+    if mode == 2:
+        q.drawEllipse(QRectF(0, 0, w, h))
+    else:
+        r = max(0.0, min(100.0, float(radius_pct))) / 100.0 * min(w, h) / 2.0
+        q.drawPath(_rounded_rect_path(0, 0, w, h, [r] * 4))
+    q.end()
+    return img
+
+
+def _silhouette_image(img, thr=96):
+    """Mascara (QImage del mismo tamano; solo importa su alfa) de la silueta de una imagen con huecos, por ejemplo un marco:
+    lo solido mas los huecos cerrados que quedan dentro. Lo transparente que toca el borde de la imagen queda fuera, y asi
+    tambien su sombra suave. El relleno se calcula a baja resolucion y se afina con el alfa de la propia imagen."""
+    a = _image_alpha(img)
+    h, w = a.shape
+    f = max(1, -(-max(w, h) // 200))
+    if f > 1:
+        hh, ww = -(-h // f), -(-w // f)
+        ap = np.zeros((hh * f, ww * f), np.uint8)
+        ap[:h, :w] = a
+        lo = ap.reshape(hh, f, ww, f).max(axis=(1, 3))
+    else:
+        lo = a
+    free = lo < thr
+    reach = np.zeros_like(free)
+    reach[0, :] = free[0, :]
+    reach[-1, :] |= free[-1, :]
+
+    reach[:, 0] |= free[:, 0]
+    reach[:, -1] |= free[:, -1]
+    for _i in range(4000):
+        n = reach.copy()
+        n[1:, :] |= reach[:-1, :]
+        n[:-1, :] |= reach[1:, :]
+        n[:, 1:] |= reach[:, :-1]
+        n[:, :-1] |= reach[:, 1:]
+        n &= free
+        if np.array_equal(n, reach):
+            break
+        reach = n
+    hole = free & ~reach
+    if f > 1:
+        hole = np.kron(hole, np.ones((f, f), np.uint8))[:h, :w].astype(bool)
+    for _i in range(f + 1):                       # un poco mas grande que el hueco: lo tapa el aro
+        g = hole.copy()
+        g[1:, :] |= hole[:-1, :]
+
+        g[:-1, :] |= hole[1:, :]
+        g[:, 1:] |= hole[:, :-1]
+        g[:, :-1] |= hole[:, 1:]
+        hole = g
+    m = np.clip((a.astype(np.int32) - int(thr)) * 255 // max(1, 255 - int(thr)), 0, 255).astype(np.uint8)
+    out = np.zeros((h, w, 4), np.uint8)
+    out[:, :, 3] = np.maximum(m, hole.astype(np.uint8) * 255)
+    return QImage(out.tobytes(), w, h, w * 4, QImage.Format_ARGB32_Premultiplied).copy()
+
+
+def _apply_clip_mask(pm, mask_img):
+    """Copia de un QPixmap con solo lo que cae dentro de la mascara (su alfa), del mismo tamano."""
+    out = QPixmap(pm.size())
+    out.fill(Qt.transparent)
+    q = QPainter(out)
+    q.drawPixmap(0, 0, pm)
+    q.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+    q.drawImage(0, 0, mask_img)
+    q.end()
+    return out
+
+
+def _blur_image(img, r, keep_peak=0.0):
+    """Desenfoque (3 pasadas de caja, ~gaussiano) de una QImage ARGB premultiplicada. Con radios grandes se hace a media o
+    cuarta parte de resolucion (cuesta mucho menos). Con keep_peak > 0 se compensa lo que el desenfoque diluye (una linea fina se volveria
+    invisible): se multiplica para que el pico quede en esa fraccion del original (hasta 40 veces)."""
+    r = int(r)
+    if r <= 0:
+        return img
+    im = img.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    W, H = im.width(), im.height()
+    sc = (4 if r >= 12 else 2 if r >= 4 else 1) if (W >= 16 and H >= 16) else 1
+    half = sc > 1
+    if half:
+        im = im.scaled(max(1, W // sc), max(1, H // sc), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        r = max(1, r // sc)
+    w, h = im.width(), im.height()
+    arr = np.frombuffer(im.bits(), dtype=np.uint8).reshape((h, w, 4)).astype(np.float32)
+    k = max(1, r)
+    pre_max = float(arr[:, :, 3].max()) if keep_peak > 0 else 0.0
+
+    for _p in range(3):
+        for ax in (0, 1):
+            c = np.cumsum(np.pad(arr, [(k + 1, k) if i == ax else (0, 0) for i in range(3)], mode='constant'), axis=ax)
+            n = arr.shape[ax]
+
+            def sl(a_, b_, ax=ax):
+                return tuple(slice(a_, b_) if i == ax else slice(None) for i in range(3))
+            arr = (c[sl(2 * k + 1, 2 * k + 1 + n)] - c[sl(0, n)]) / (2 * k + 1)
+    if keep_peak > 0 and pre_max > 0:
+        post_max = float(arr[:, :, 3].max())
+        if post_max > 0:
+            arr = arr * min(40.0, max(1.0, keep_peak * pre_max / post_max))
+    out = QImage(np.clip(arr, 0, 255).astype(np.uint8).tobytes(), w, h, w * 4, QImage.Format_ARGB32_Premultiplied).copy()
+    if half:
+        out = out.scaled(W, H, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    return out
+
+
 # ---------------------------------------------------------------- [PACK131] marcos editables
 FRAME_DEFAULTS = {'w': 300, 'h': 300, 'bt': 26, 'br': 26, 'bb': 26, 'bl': 26, 'radius': 3, 'iradius': 0,
                   'color': '#8a5a2b', 'grad': True, 'color2': '#5e3b1a', 'grad_angle': 90,
-                  'bevel': 5, 'bevel_light': 45, 'bevel_dark': 40, 'tex': 1, 'tex_amt': 35,
+                  'bevel': 5, 'bevel_light': 45, 'bevel_dark': 40, 'tex': 1, 'tex_amt': 35, 'shape': 0,
                   'ishadow': 10, 'ishadow_op': 45, 'line': 2, 'line_op': 55,
                   'shadow': 14, 'shadow_op': 40, 'shadow_dx': 0, 'shadow_dy': 6, 'shadow_color': '#000000'}
-FRAME_RANGES = {'w': (40, 1600), 'h': (40, 1600), 'bt': (1, 500), 'br': (1, 500), 'bb': (1, 500), 'bl': (1, 500), 'radius': (0, 300), 'iradius': (0, 300),
+FRAME_RANGES = {'w': (40, 1600), 'h': (40, 1600), 'bt': (1, 500), 'br': (1, 500), 'bb': (1, 500), 'bl': (1, 500), 'radius': (0, 300), 'iradius': (0, 300), 'shape': (0, 1),
                 'grad_angle': (0, 359), 'bevel': (0, 60), 'bevel_light': (0, 100), 'bevel_dark': (0, 100), 'tex': (0, 3), 'tex_amt': (0, 100),
                 'ishadow': (0, 80), 'ishadow_op': (0, 100), 'line': (0, 20), 'line_op': (0, 100),
                 'shadow': (0, 80), 'shadow_op': (0, 100), 'shadow_dx': (-80, 80), 'shadow_dy': (-80, 80)}
@@ -15228,6 +15572,9 @@ FRAME_PRESETS = [
     ("Rojo laca", {'color': '#a31621', 'color2': '#6d0d15', 'grad': True, 'grad_angle': 90, 'bevel': 4, 'tex': 0}),
     ("Fino negro", {'color': '#16181d', 'grad': False, 'bt': 10, 'br': 10, 'bb': 10, 'bl': 10, 'bevel': 2, 'tex': 0, 'radius': 0, 'ishadow': 6}),
     ("Paspart\u00fa", {'color': '#f6f3ea', 'grad': False, 'bt': 54, 'br': 54, 'bb': 54, 'bl': 54, 'bevel': 0, 'tex': 0, 'ishadow': 18, 'line': 2, 'radius': 1, 'shadow': 8}),
+    ("Redondeado", {'radius': 70, 'iradius': 42, 'bt': 30, 'br': 30, 'bb': 30, 'bl': 30}),
+    ("\u00d3valo dorado", {'shape': 1, 'color': '#d6b13a', 'color2': '#8d6b0c', 'grad': True, 'grad_angle': 135, 'bevel': 7, 'tex': 2, 'tex_amt': 30,
+                      'bt': 24, 'br': 24, 'bb': 24, 'bl': 24}),
 ]
 
 
@@ -15268,6 +15615,18 @@ def _frame_layout(p):
     return {'pad': pad, 'W': p['w'] + 2 * pad, 'H': p['h'] + 2 * pad, 'hole': (pad + p['bl'], pad + p['bt'], hw, hh)}
 
 
+def _frame_paths(p, L):
+    """[PACK134] Contorno exterior y hueco de un marco: rectangulo con esquinas redondeadas o elipse."""
+    pad = L['pad']
+    hx, hy, hw, hh = L['hole']
+    if p.get('shape', 0) == 1:
+        outer, hole = QPainterPath(), QPainterPath()
+        outer.addEllipse(QRectF(pad, pad, p['w'], p['h']))
+        hole.addEllipse(QRectF(hx, hy, hw, hh))
+        return outer, hole
+    return _rounded_rect_path(pad, pad, p['w'], p['h'], [p['radius']] * 4), _rounded_rect_path(hx, hy, hw, hh, [p['iradius']] * 4)
+
+
 def render_frame(p):
     """Imagen (QImage ARGB) de un marco: aro con ingletes, bisel, textura, sombra exterior y sombra interior; el hueco es transparente."""
     from PySide6.QtCore import QPointF
@@ -15282,8 +15641,8 @@ def render_frame(p):
     img.fill(Qt.transparent)
     q = QPainter(img)
     q.setRenderHint(QPainter.Antialiasing)
-    outer = _rounded_rect_path(ox, oy, ow, oh, [p['radius']] * 4)
-    hole = _rounded_rect_path(hx, hy, hw, hh, [p['iradius']] * 4)
+    outer, hole = _frame_paths(p, L)
+    ell = p.get('shape', 0) == 1
     ring = outer.subtracted(hole)
     if p['shadow'] > 0 and p['shadow_op'] > 0:
         sp = QTransform().translate(p['shadow_dx'], p['shadow_dy']).map(ring)
@@ -15320,11 +15679,22 @@ def render_frame(p):
              'r': [(ox + ow, oy), (ox + ow, oy + oh), (hx + hw, hy + hh), (hx + hw, hy)],
              'b': [(ox + ow, oy + oh), (ox, oy + oh), (hx, hy + hh), (hx + hw, hy + hh)],
              'l': [(ox, oy + oh), (ox, oy), (hx, hy), (hx, hy + hh)]}
+    if ell:                                   # [PACK134] elipse: una sola zona (el aro) con la textura en horizontal, sin costuras
+        sides = {'t': [(ox, oy), (ox + ow, oy), (ox + ow, oy + oh), (ox, oy + oh)]}
     q.save()
     q.setClipPath(ring)
     light, dark = p['bevel_light'] * 2.55, p['bevel_dark'] * 2.55
-    for k, col in (('t', QColor(255, 255, 255, int(light * 0.30))), ('l', QColor(255, 255, 255, int(light * 0.16))),
-                   ('b', QColor(0, 0, 0, int(dark * 0.36))), ('r', QColor(0, 0, 0, int(dark * 0.22)))):
+    if ell:                                   # [PACK134] luz continua desde arriba a la izquierda (en vez de cuatro ingletes)
+        from PySide6.QtGui import QConicalGradient
+        _cg = QConicalGradient(ox + ow / 2.0, oy + oh / 2.0, 135)
+        _cg.setColorAt(0.0, QColor(255, 255, 255, int(light * 0.30)))
+        _cg.setColorAt(0.5, QColor(0, 0, 0, int(dark * 0.36)))
+        _cg.setColorAt(1.0, QColor(255, 255, 255, int(light * 0.30)))
+        q.setPen(Qt.NoPen)
+        q.setBrush(QBrush(_cg))
+        q.drawPath(ring)
+    for k, col in (() if ell else (('t', QColor(255, 255, 255, int(light * 0.30))), ('l', QColor(255, 255, 255, int(light * 0.16))),
+                                   ('b', QColor(0, 0, 0, int(dark * 0.36))), ('r', QColor(0, 0, 0, int(dark * 0.22))))):
         q.setPen(Qt.NoPen)
         q.setBrush(col)
 
@@ -15364,7 +15734,23 @@ def render_frame(p):
             q.restore()
 
     b = min(float(p['bevel']), min(p['bt'], p['br'], p['bb'], p['bl']) / 2.0 - 0.5)
-    if b >= 0.5:
+    if ell and b >= 0.5:                      # [PACK134] bisel de la elipse: una banda a lo largo de cada borde, con luz continua
+        from PySide6.QtGui import QConicalGradient
+        _ox, _oy = ox + ow / 2.0, oy + oh / 2.0
+        _g1 = QConicalGradient(_ox, _oy, 135)
+        _g1.setColorAt(0.0, QColor(255, 255, 255, int(min(255, light * 0.75))))
+        _g1.setColorAt(0.5, QColor(0, 0, 0, int(min(255, dark * 0.75))))
+        _g1.setColorAt(1.0, QColor(255, 255, 255, int(min(255, light * 0.75))))
+        q.setBrush(Qt.NoBrush)
+        q.setPen(QPen(QBrush(_g1), 2.0 * b))
+        q.drawPath(outer)
+        _g2 = QConicalGradient(_ox, _oy, 135)
+        _g2.setColorAt(0.0, QColor(0, 0, 0, int(min(255, dark * 0.60))))
+        _g2.setColorAt(0.5, QColor(255, 255, 255, int(min(255, light * 0.45))))
+        _g2.setColorAt(1.0, QColor(0, 0, 0, int(min(255, dark * 0.60))))
+        q.setPen(QPen(QBrush(_g2), 2.0 * b))
+        q.drawPath(hole)
+    if b >= 0.5 and not ell:
         outer_s = {'t': [(ox, oy), (ox + ow, oy), (ox + ow - b, oy + b), (ox + b, oy + b)],
                    'r': [(ox + ow, oy), (ox + ow, oy + oh), (ox + ow - b, oy + oh - b), (ox + ow - b, oy + b)],
                    'b': [(ox + ow, oy + oh), (ox, oy + oh), (ox + b, oy + oh - b), (ox + ow - b, oy + oh - b)],
@@ -15407,7 +15793,7 @@ def render_frame(p):
 def _gen_frame_image(p):
     """Ruta guardable de la imagen de un marco con los parametros p (la dibuja si hace falta; el nombre sale de los parametros)."""
     p = _fr_clean(p)
-    tag = hashlib.md5(json.dumps(p, sort_keys=True).encode('utf-8')).hexdigest()[:16]
+    tag = hashlib.md5(json.dumps({k: v for k, v in p.items() if not (k == 'shape' and not v)}, sort_keys=True).encode('utf-8')).hexdigest()[:16]
     path = os.path.join(FRAMES_DIR, "marco_%s.png" % tag)
     if not os.path.exists(path):
         os.makedirs(FRAMES_DIR, exist_ok=True)
@@ -15539,14 +15925,21 @@ class FrameDialog(QDialog):
         row.addWidget(QLabel("\u00d7"))
         row.addWidget(self.sp_h)
         f1.addRow("Tama\u00f1o exterior (ancho \u00d7 alto)", row)
+        self.cb_shape = QComboBox()                # [PACK134]
+        self.cb_shape.addItems(["Rect\u00e1ngulo (con esquinas redondeables)", "Elipse (\u00f3valo o c\u00edrculo)"])
+        self.cb_shape.setCurrentIndex(int(self.p['shape']))
+        self.cb_shape.currentIndexChanged.connect(lambda i: self._set('shape', int(i)))
+        self._sync.append(lambda: self.cb_shape.setCurrentIndex(int(self.p['shape'])))
+        f1.addRow("Forma", self.cb_shape)
         self.chk_same = QCheckBox("El mismo grosor en los cuatro lados")
         self.chk_same.setChecked(len({self.p['bt'], self.p['br'], self.p['bb'], self.p['bl']}) == 1)
         f1.addRow(self.chk_same)
         self.sp_b = {k: spin(k) for k in ('bt', 'br', 'bb', 'bl')}
         for k, lab in (('bt', "Grosor arriba"), ('br', "Grosor a la derecha"), ('bb', "Grosor abajo"), ('bl', "Grosor a la izquierda")):
             f1.addRow(lab, self.sp_b[k])
-        f1.addRow("Esquina exterior", spin('radius'))
-        f1.addRow("Esquina del hueco", spin('iradius'))
+        self.sp_rad, self.sp_irad = spin('radius'), spin('iradius')
+        f1.addRow("Esquina exterior", self.sp_rad)
+        f1.addRow("Esquina del hueco", self.sp_irad)
         f2 = page("Color y relieve")
         f2.addRow("Color", color_btn('color'))
         self.chk_grad = QCheckBox("Degradado hacia otro color")
@@ -15647,6 +16040,9 @@ class FrameDialog(QDialog):
         self._refresh()
 
     def _refresh(self, live=True):
+        if hasattr(self, 'sp_rad'):                # [PACK134] con la elipse las esquinas no cuentan
+            self.sp_rad.setEnabled(int(self.p['shape']) == 0)
+            self.sp_irad.setEnabled(int(self.p['shape']) == 0)
         L = _frame_layout(self.p)
         fr = render_frame(self.p)
         bg = QImage(fr.size(), QImage.Format_ARGB32_Premultiplied)
@@ -15661,7 +16057,10 @@ class FrameDialog(QDialog):
                     q.drawRect(xx, yy, cell, cell)
         hx, hy, hw, hh = L['hole']
         t = 3
+        q.save()
+        q.setClipPath(_frame_paths(self.p, L)[0])   # [PACK134] la imagen se recorta por la silueta del marco, como en el widget
         q.drawImage(hx - t, hy - t, _frame_sample_picture(hw + 2 * t, hh + 2 * t))
+        q.restore()
         q.drawImage(0, 0, fr)
         q.end()
 
@@ -19925,6 +20324,22 @@ class WidgetManager(QObject):
                     checked=ld.get('scaled_contents', n_ == 2), enabled=(lt == 'png'))
             if cm_.actions():
                 lm_.addMenu(cm_)
+            if n_ == 2:                                    # [PACK134] recorte de la capa 2 (cualquier imagen o web, no solo marcos)
+                _cl = ld.get('clip') if isinstance(ld.get('clip'), dict) else {}
+                _cm, _cr = int(_cl.get('mode', 0) or 0), int(_cl.get('radius', 25) or 0)
+                km_ = QMenu("Recorte de la capa", lm_)
+                km_.setToolTipsVisible(True)
+                add(km_, "Sin recorte", lambda c: self._set_layer_clip(widget_id, 0), checked=(_cm not in (1, 2, 3)),
+                    tip="La capa 2 se ve entera, como siempre")
+                for _lab, _rr in (("Esquinas redondeadas (10 %)", 10), ("Esquinas redondeadas (25 %)", 25), ("Esquinas muy redondeadas (50 %)", 50)):
+                    add(km_, _lab, lambda c, r_=_rr: self._set_layer_clip(widget_id, 1, r_), checked=(_cm == 1 and _cr == _rr),
+                        tip="Recorta la imagen (o la p\u00e1gina web) con esquinas redondeadas; el % es del radio respecto a la mitad del lado menor")
+                add(km_, "Elipse (o c\u00edrculo)", lambda c: self._set_layer_clip(widget_id, 2), checked=(_cm == 2),
+                    tip="Recorta la capa 2 con la elipse inscrita en su recuadro (un c\u00edrculo si es cuadrada)")
+                add(km_, "Silueta de la capa 1 (marcos y formas)", lambda c: self._set_layer_clip(widget_id, 3), checked=(_cm == 3),
+                    enabled=(template_data.get('layer1', {}).get('type') == 'png'),
+                    tip="Recorta la capa 2 con la forma exterior de la imagen de la capa 1 (su hueco cuenta como relleno): lo que sobra queda bajo el marco o fuera de \u00e9l, sin ajustar medidas al mil\u00edmetro")
+                lm_.addMenu(km_)
             add(lm_, "Posici\u00f3n y tama\u00f1o (X, Y, ancho, alto)...", lambda k=n_: self._edit_widget_geometry(widget_id, k))
             layers_menu.addMenu(lm_)
             lmenus[n_] = lm_
@@ -20288,6 +20703,24 @@ class WidgetManager(QObject):
             self.build_tray_menu()
         else:
             parent_widget.revert_preview(layer_num)
+
+    def _set_layer_clip(self, widget_id, mode, radius=25):
+        """[PACK134] Recorte de la capa 2: 0 sin recorte, 1 esquinas redondeadas (radio en % de la mitad del lado menor), 2 elipse,
+        3 silueta de la capa 1 (la forma exterior de un marco, con su hueco cerrado). Sirve para cualquier imagen, no solo para marcos."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict) or not isinstance(st.get('template_data'), dict):
+            return
+        td = st['template_data']
+        l2 = td.setdefault('layer2', {})
+        if int(mode) in (1, 2, 3):
+            l2['clip'] = {'mode': int(mode), 'radius': max(0, min(100, int(radius)))}
+        else:
+            l2.pop('clip', None)
+        win = self.widgets.get(widget_id)
+        if win is not None:
+            win.load_template_data(td)
+        self.save_global_state()
+        self.build_tray_menu()
 
     def _toggle_layer_scaled_contents(self, widget_id, layer_num, is_checked):
         
@@ -21525,6 +21958,7 @@ class WidgetManager(QObject):
             t = 3 * sc                                          # la imagen se mete un poco bajo el marco para que no asome el fondo
             l2['geometry'] = {"x": int(round(gx + hx * sc - t)), "y": int(round(gy + hy * sc - t)),
                               "w": int(round(hw * sc + 2 * t)), "h": int(round(hh * sc + 2 * t))}
+            l2['clip'] = {'mode': 3, 'radius': 0}              # [PACK134] la capa 2 se recorta por la silueta del marco: sobra sin que asome
             if l2.get('type') == 'png':
                 l2['scaled_contents'] = True
 
@@ -22024,6 +22458,8 @@ class WidgetManager(QObject):
         '_cable_width_min': (1.0, 0.3, 10.0),   # (antiguo, px) ahora derivado de _cable_wctr_pct
         '_cable_wctr_pct': (40, 5, 100),        # grosor del CENTRO de un cable largo, % del grosor de un cable corto
         '_cable_ograd_start': (10, 0, 50),      # % del cable con opacidad plena en CADA extremo (padre e hijo)
+        '_cable_inside_op': (0, 0, 100),        # [PACK134] % de opacidad del cable DENTRO de los widgets que une (0 = no se ve: nace del borde)
+        '_cable_inside_blur': (0, 0, 30),       # [PACK134] px de difuminado del cable dentro de esos widgets (0 = nitido)
         '_cable_octr_pct': (100, 5, 100),       # opacidad del CENTRO de un cable largo, % de la de sus extremos
         '_cable_glow': (0, 0, 100),             # intensidad del resplandor de los cables (0 = apagado: coste cero)
         '_cable_glow_size': (6, 1, 24),         # alcance del resplandor (px a cada lado)

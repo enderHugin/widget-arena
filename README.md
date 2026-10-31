@@ -14,7 +14,7 @@ Funciona en Windows, macOS y Linux, con instalación de un clic.
 - **Plegar y desplegar**: oculta los hijos de una nota (o de todas) para ver solo lo que importa, y recupéralos cuando quieras.
 - **Sets de widgets**: guarda conjuntos completos de widgets y cambia entre ellos al instante con el teclado.
 - **Packs y archivos de widgets**: comparte o estrena widgets en un solo archivo: `.wapack` (varios widgets guardados y sets), `.waset` (un árbol o todos los widgets de un set), `.wawidget` (un widget guardado) y `.wapaper` (una forma de papel). Todos van comprimidos con sus imágenes.
-- **Configurable a fondo**: cables (grosor, opacidad, degradado, cuerda, calidad de dibujo), formas de papel, widgets guardados, atajos de teclado y gestos del icono de bandeja.
+- **Configurable a fondo**: cables (grosor, opacidad, degradado, cuerda, calidad de dibujo; nacen del borde del widget y pueden verse como a través de un cristal), formas de papel, marcos rectangulares, redondeados u ovalados, recorte de imágenes, widgets guardados, atajos de teclado y gestos del icono de bandeja.
 - **Rápido y ligero**: la calidad de dibujo de los cables se adapta sola al ordenador.
 - **Tus datos son tuyos**: todo se guarda en archivos JSON en tu carpeta de usuario, con copias de seguridad.
 

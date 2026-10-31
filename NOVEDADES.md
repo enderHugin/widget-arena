@@ -1,3 +1,11 @@
+## Pack 134 · 2026-10-31
+- **El cable nace del borde del widget**, no del centro: ya no se ve a través de un papel translúcido. Es lo normal desde ahora (en *Ajustes de cables → Widgets*, «Opacidad del cable dentro de esos widgets», 0 %).
+- **Efecto cristal:** con una opacidad intermedia el cable se ve dentro del widget como a través de un cristal, y «Difuminado» lo desenfoca. Funciona igual en Windows, macOS y Linux (se dibuja dentro de la propia aplicación, sin efectos del sistema).
+- **Recorte de la capa 2** para cualquier imagen o página web (menú del widget → *Capas* → *Capa 2* → *Recorte de la capa*): esquinas redondeadas, elipse o silueta de la capa 1. Con la silueta, lo que sobra de la imagen queda bajo el marco o fuera de él, sin ajustar medidas al milímetro. En una página web el recorte depende de lo que permita cada plataforma.
+- **Marcos ovalados y redondeados:** el editor de marcos tiene una lista *Forma* (rectángulo o elipse), con bisel de luz continua; nuevos puntos de partida «Redondeado» y «Óvalo dorado». Al ajustar la capa 2 a un marco, se recorta sola por su silueta.
+- Los marcos rectangulares y los widgets anteriores se dibujan igual que antes. Una capa 2 de un widget existente no se recorta hasta que lo eliges.
+- **Web y README:** mencionan los cables desde el borde, el recorte y los marcos ovalados.
+
 ## Pack 133 · 2026-10-31
 - **Editor de marcos con vista en vivo:** los cambios (color, grosor, bisel, sombras, puntos de partida, ajuste de la capa 2...) se ven al momento en el widget real, igual que en el editor de formas de papel. La casilla *Ver los cambios en el widget real mientras edito* los activa o los apaga; al cancelar, el widget vuelve a como estaba, y al aceptar queda exactamente lo que se veía. El editor se abre a un lado del widget para no taparlo.
 
