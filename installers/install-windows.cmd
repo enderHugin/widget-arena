@@ -127,17 +127,17 @@ try {
     $py = $null; $uvTail = ''
     $tries = @(
         @{ n = 'normal'; dir = $Rt; env = @{} },
-        @{ n = 'carpeta nueva y certificados de Windows'; dir = (Join-Path $Root 'py2'); env = @{ UV_NATIVE_TLS = '1' } },
-        @{ n = 'carpeta corta y conexion lenta'; dir = (Join-Path $env:LOCALAPPDATA 'WA-py'); env = @{ UV_NATIVE_TLS = '1'; UV_HTTP_TIMEOUT = '300'; UV_CONCURRENT_DOWNLOADS = '1' } }
+        @{ n = 'carpeta nueva y certificados de Windows'; dir = (Join-Path $Root 'py2'); env = @{ UV_SYSTEM_CERTS = '1' } },
+        @{ n = 'carpeta corta y conexion lenta'; dir = (Join-Path $env:LOCALAPPDATA 'WA-py'); env = @{ UV_SYSTEM_CERTS = '1'; UV_HTTP_TIMEOUT = '300'; UV_CONCURRENT_DOWNLOADS = '1' } }
     )
     foreach ($t in $tries) {
         foreach ($k in $t.env.Keys) { Set-Item -Path ('Env:' + $k) -Value $t.env[$k] }
         if ($t -ne $tries[0]) { Say ('reintentando con ' + $t.n + '...') }
-        # una carpeta de un intento anterior a medias (sin python.exe) hace que uv falle al escribir dentro de ella
+        # una carpeta de un intento anterior a medias (sin Lib\os.py) hace que uv falle al escribir dentro de ella
         New-Item -ItemType Directory -Force -Path $t.dir | Out-Null
         $env:UV_PYTHON_INSTALL_DIR = $t.dir
         Get-ChildItem -LiteralPath $t.dir -Directory -Filter 'cpython-3.12*' -ErrorAction SilentlyContinue |
-            Where-Object { -not (Test-Path (Join-Path $_.FullName 'python.exe')) } |
+            Where-Object { -not (Test-Path (Join-Path $_.FullName 'Lib\os.py')) } |
             ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
         $r = Run-Uv @('python', 'install', '3.12')
         if ($r.rc -eq 0) {
@@ -199,6 +199,12 @@ try {
 
     # --- 4) instalacion (carpeta del programa, datos, entorno con sus librerias y accesos directos) -------------------
     Step 4 'Instalando el programa y sus librerias (la parte lenta)'
+    # un entorno a medias de un intento anterior (python.exe sin pyvenv.cfg) se rehace solo
+    $oldVenv = Join-Path $Prog '.venv'
+    if ((Test-Path $oldVenv) -and -not (Test-Path (Join-Path $oldVenv 'pyvenv.cfg'))) {
+        Say 'entorno anterior incompleto: se borra para rehacerlo'
+        Remove-Item -LiteralPath $oldVenv -Recurse -Force -ErrorAction SilentlyContinue
+    }
     Invoke-Native $py @('-u', (Join-Path $Stage 'herramientas.py'), 'install', 'widget_arena.py', '--mode', 'script', '--desktop', '--menu', '--venv', 'yes')
 
     # --- 5) icono, "Aplicaciones instaladas" y desinstalador -------------------------------------------------------

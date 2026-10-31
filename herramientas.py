@@ -338,13 +338,31 @@ def venv_python(venv_dir):
     return os.path.join(venv_dir, "Scripts", "python.exe") if IS_WIN else os.path.join(venv_dir, "bin", "python")
 
 
+def venv_ok(venv_dir):
+    """Un entorno es utilizable si tiene su python.exe, su pyvenv.cfg y el python arranca. Un entorno a medias (por ejemplo de una
+    instalacion que fallo) tiene python.exe pero no pyvenv.cfg: 'No pyvenv.cfg file' al usarlo."""
+    py = venv_python(venv_dir)
+    if not (os.path.isfile(py) and os.path.isfile(os.path.join(venv_dir, "pyvenv.cfg"))):
+        return False
+    try:
+        r = subprocess.run([py, "-c", "import sys"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90,
+                           creationflags=(0x08000000 if IS_WIN else 0))
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def ensure_venv(venv_dir, log=None):
     py = venv_python(venv_dir)
-    if os.path.isfile(py):
+    if venv_ok(venv_dir):
         return py
+    if os.path.isdir(venv_dir):
+        say(log, "==> El entorno aislado anterior esta incompleto o roto: se rehace (%s)" % venv_dir)
+        import shutil
+        shutil.rmtree(venv_dir, ignore_errors=True)
     say(log, "==> Creando entorno aislado en %s" % venv_dir)
     code = run_cmd([sys.executable, "-m", "venv", venv_dir], log)
-    if code != 0 or not os.path.isfile(py):
+    if code != 0 or not venv_ok(venv_dir):
         hint = "  (en Linux Mint/Ubuntu:  sudo apt install python3-venv)" if IS_LINUX else ""
         raise RuntimeError("no se pudo crear el entorno aislado%s" % hint)
     return py
