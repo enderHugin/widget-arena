@@ -64,7 +64,7 @@ widgets (sustituyendo, agregando a los actuales o como set nuevo), sets, widgets
 - Antes de tocar nada se guarda una copia completa de lo que tenías.
 - Nunca se pisa un archivo que ya exista con otro contenido: el importado entra con otro nombre («... (importado)»).
 - Las rutas de las imágenes se ajustan solas, también las absolutas de otro equipo o de Windows.
-- Una copia completa `.zip` (desde el pack 125) lleva también las imágenes que usan tus sets y widgets guardados; las copias anteriores solo llevan los `.json`: para traer también sus imágenes usa la carpeta `widget_arena_data`.
+- Una copia completa `.zip` (desde el pack 125) lleva también las imágenes que usan tus sets y widgets guardados (no las de la forma de papel, que el programa redibuja al cargar); las copias anteriores solo llevan los `.json`: para traer también sus imágenes usa la carpeta `widget_arena_data`.
 - Si cargas una copia vieja (un `.json`) y alguna nota se queda sin su base o su imagen, el programa avisa de cuáles faltan; *Importar y exportar → Buscar las imágenes que faltan (en otra carpeta)...* las recupera de la carpeta `widget_arena_data` de la versión anterior.
 
 ## Pasar un árbol de widgets a otro set
@@ -72,9 +72,9 @@ widgets (sustituyendo, agregando a los actuales o como set nuevo), sets, widgets
 Clic derecho sobre un widget (en la sección de gestión de widgets, entre *Clonar* y *Eliminar*):
 
 - **Mover árbol a otro set...**: lo saca de este set y lo lleva, con sus enlaces, a otro set que elijas **o a uno nuevo** (con la opción de ir a ese set después). Si en el destino ya hay widgets en esas posiciones, se desplaza un poco.
-- **Copiar árbol (json)**: el widget y todos sus descendientes al portapapeles, solo como JSON (las imágenes tienen que existir en la instalación donde lo pegues).
+- **Copiar árbol (json)**: el widget y todos sus descendientes al portapapeles como JSON. Sus imágenes (marcos, fotos; no la forma de papel, que se redibuja sola) van en un `.zip` temporal al que apunta una marca del JSON; al pegar se traen sin pisar nada. Lo mismo vale para copiar un widget guardado o una forma de papel. Si el `.zip` ya no existe (otro equipo), se pega igual y el programa avisa de las imágenes que faltan.
 - **Pegar árbol (json)**: lo agrega al set activo, con ids nuevos, la jerarquía intacta y un pequeño desplazamiento para que no quede encima del original.
-- **Exportar árbol a un archivo...**: un `.json` con las imágenes incluidas. Para usarlo en otro set, cámbiate a él y usa *Agregar widgets desde un archivo*.
+- **Exportar árbol a un archivo...**: un `.json` con las imágenes incluidas (igual que *Exportar el widget guardado...* y *Exportar todos los widgets a un archivo...*). Para usarlo en otro set, cámbiate a él y usa *Agregar widgets desde un archivo*.
 
 ## Fuentes
 

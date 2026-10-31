@@ -9820,24 +9820,27 @@ class TemplateBrowser(QWidget):
             if not os.path.splitext(path)[1]:
                 path += ".json"
             try:
+                _td = copy.deepcopy(self._data)
+                n_img, _sk = embed_images_b64(_td)                       # [PACK126] las imagenes viajan dentro del archivo
                 with open(path, 'w', encoding='utf-8') as f:
-                    json.dump(self._data, f, indent=4, ensure_ascii=False)
+                    json.dump(_td, f, indent=4, ensure_ascii=False)
             except (OSError, TypeError, ValueError) as e:
                 self.status.setText(f"No se pudo exportar: {e}")
                 return
-            self.status.setText(f"Exportado a {path}")
+            self.status.setText(f"Exportado a {path}" + (f" (con {n_img} im\u00e1genes)" if n_img else ""))
 
     def _copy_json(self):
         """[PACK96] Copia al portapapeles el JSON del template seleccionado."""
         if not self._data:
             return
         try:
-            txt = json.dumps(self._data, indent=2, ensure_ascii=False)
+            td, n_img = self.m._clip_bundle_td(self._data)               # [PACK126] imagenes en un .zip temporal
+            txt = json.dumps(td, indent=2, ensure_ascii=False)
         except (TypeError, ValueError) as e:
             self.status.setText(f"No se pudo copiar: {e}")
             return
         QApplication.clipboard().setText(txt)
-        self.status.setText(f"JSON copiado al portapapeles ({len(txt)} caracteres).")
+        self.status.setText(f"JSON copiado al portapapeles ({len(txt)} caracteres{', %d im\u00e1genes' % n_img if n_img else ''}).")
         try:
             self.m._osd("JSON del widget guardado copiado")
         except Exception:
@@ -11397,7 +11400,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 125                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 126                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -12462,8 +12465,12 @@ def backup_media_from_texts(texts):
         if isinstance(o, str):
             one(o)
         elif isinstance(o, dict):
-            for v in o.values():
-                walk(v)
+            gen = isinstance(o.get('base_note'), dict) and _is_generated_layer(o)           # [PACK126] la imagen de una forma de papel se dibuja al cargar
+            for k, v in o.items():
+                if gen and k == 'layer2' and isinstance(v, dict):
+                    walk({kk: vv for kk, vv in v.items() if kk not in ('content', 'base_hue_src')})
+                else:
+                    walk(v)
         elif isinstance(o, list):
             for v in o:
                 walk(v)
@@ -12473,6 +12480,117 @@ def backup_media_from_texts(texts):
         except (ValueError, TypeError):
             pass
     return found, sorted(outside), sorted(missing)
+
+
+def media_from_zip(zpath, names=None):
+    """[PACK126] Deja en la carpeta de datos las imagenes (sticky/, images/, frames/) de un .zip sin pisar nada: lo igual se salta y lo distinto con
+    el mismo nombre entra con otro. 'names' limita a esas entradas. Devuelve (copiadas, ya_estaban, {ruta_vieja: ruta_nueva})."""
+    import zipfile
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="wa_copia_")
+    try:
+        with zipfile.ZipFile(zpath) as z:
+            known = {}
+            for n in z.namelist():
+                parts = [p for p in n.replace('\\', '/').split('/') if p]
+                if len(parts) >= 2 and parts[0] in IMPORT_MEDIA and '..' not in parts and not n.endswith('/') and _IMP_EXT.search(n):
+                    known['/'.join(parts)] = n
+            total = 0
+            for nm in (list(known) if names is None else names):
+                zn = known.get(nm)
+                if not zn:
+                    continue
+                size = z.getinfo(zn).file_size
+                total += size
+                if size > BACKUP_MAX_FILE or total > BACKUP_MAX_TOTAL:
+                    continue
+                dst = os.path.join(tmp, *nm.split('/'))
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with z.open(zn) as src, open(dst, 'wb') as out:
+                    shutil.copyfileobj(src, out)
+
+        return import_copy_media(tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def clip_zip_write(imgs):
+    """[PACK126] Escribe en la carpeta temporal un .zip con las imagenes {'images/x.png': bytes} y devuelve su ruta (el nombre sale del
+    contenido: copiar dos veces lo mismo no lo repite). Se conservan los mas recientes. None si no hay imagenes o no se pudo."""
+    import zipfile
+    import tempfile
+    if not imgs:
+        return None
+    h = hashlib.sha1()
+    for k in sorted(imgs):
+        h.update(k.encode('utf-8', 'replace'))
+        h.update(hashlib.sha1(imgs[k]).digest())
+    try:
+        d = os.path.join(tempfile.gettempdir(), 'widget_arena_portapapeles')
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, 'copia_%s.zip' % h.hexdigest()[:16])
+        if os.path.isfile(path):
+            os.utime(path)
+        else:
+            with zipfile.ZipFile(path + '.tmp', 'w', zipfile.ZIP_STORED) as z:
+                for k in sorted(imgs):
+                    z.writestr(k, imgs[k])
+            os.replace(path + '.tmp', path)
+
+        olds = sorted((f for f in os.listdir(d) if f.startswith('copia_') and f.endswith('.zip')), key=lambda f: os.path.getmtime(os.path.join(d, f)), reverse=True)
+        for f in olds[12:]:
+            try:
+                os.remove(os.path.join(d, f))
+            except OSError:
+                pass
+        return path
+    except OSError as e:
+        log_warn("Portapapeles", "No se pudo guardar el .zip temporal de las im\u00e1genes: %s" % e)
+        return None
+
+
+def clip_take_images(zpath, objs):
+    """[PACK126] Trae las imagenes del .zip temporal que nombra un JSON copiado y reapunta las rutas de 'objs' (listas / dicts, en el sitio).
+    Devuelve (copiadas, ya_estaban) o None si el .zip ya no existe."""
+    if not isinstance(zpath, str) or not os.path.isfile(zpath):
+        return None
+    try:
+        new, same, ren = media_from_zip(zpath)
+    except Exception as e:
+        log_warn("Portapapeles", "No se pudieron leer las im\u00e1genes copiadas: %s" % e)
+        return None
+    for o in objs:
+        import_fix_paths(o, ren)
+    return new, same
+
+
+def embed_images_b64(td):
+    """[PACK126] Mete en el dict de un widget guardado ('__imagenes__': {'images/x.png': base64}) las imagenes que usa y deja sus rutas portables
+    (se llama sobre una copia). Devuelve (cuantas, [las que no se pudieron incluir])."""
+    import base64
+    imgs, skipped = tree_collect_images({'x': {'template_data': td}})
+    if imgs:
+        td['__imagenes__'] = {k: base64.b64encode(v).decode('ascii') for k, v in imgs.items()}
+    return len(imgs), skipped
+
+
+def import_template_images(td):
+    """[PACK126] Inversa: quita de un widget guardado '__imagenes__' / '__imagenes_zip__', deja las imagenes en la carpeta de datos (sin pisar) y reapunta
+    las rutas. Devuelve cuantas imagenes se trajeron."""
+    if not isinstance(td, dict):
+        return 0
+    emb = td.pop('__imagenes__', None)
+    zp = td.pop('__imagenes_zip__', None)
+    n = 0
+    holder = {'x': {'template_data': td}}
+    if isinstance(emb, dict) and emb:
+        new, same = import_embedded_images({'imagenes': emb}, holder)
+        n += new + same
+    if zp:
+        r = clip_take_images(zp, [td])
+        if r:
+            n += r[0] + r[1]
+    return n
 
 
 def import_embedded_images(cfg, notes):
@@ -18154,6 +18272,9 @@ class WidgetManager(QObject):
         return n if n.lower().endswith('.json') else n + '.json'
 
     def save_template(self, name, data):
+        if isinstance(data, dict) and ('__imagenes__' in data or '__imagenes_zip__' in data):          # [PACK126]
+            data = copy.deepcopy(data)
+            import_template_images(data)
         os.makedirs(TEMPLATES_DIR, exist_ok=True)
         with open(os.path.join(TEMPLATES_DIR, os.path.basename(name)), 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
@@ -19332,12 +19453,27 @@ class WidgetManager(QObject):
             return
             
         try:
+            template_data = copy.deepcopy(template_data)
+            n_img, skipped = embed_images_b64(template_data)          # [PACK126] las imagenes viajan dentro del archivo
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(template_data, f, indent=4)
             print(f"INFO [{widget_id}]: Widget guardado exportado a {path}")
+            self._osd("Widget guardado exportado%s%s" % ((" (con %d im\u00e1genes)" % n_img) if n_img else "",
+                                                       ("; no se pudieron incluir: " + ", ".join(skipped[:4])) if skipped else ""), 2600)
         except Exception as e:
             print(f"ERROR: No se pudo exportar el widget guardado a {path}: {e}")
             QMessageBox.critical(parent_widget, "Error de exportaci\u00f3n", f"No se pudo guardar el archivo JSON:\n{e}")
+
+    @staticmethod
+    def _clip_bundle_td(td):
+        """[PACK126] Copia de un widget guardado lista para el portapapeles: sus imagenes (las que no redibuja el programa) van en un .zip temporal
+        y el JSON lleva '__imagenes_zip__' con su ruta. Devuelve (dict, cuantas imagenes)."""
+        td = copy.deepcopy(td)
+        imgs, _sk = tree_collect_images({'x': {'template_data': td}})
+        zp = clip_zip_write(imgs)
+        if zp:
+            td['__imagenes_zip__'] = zp
+        return td, (len(imgs) if zp else 0)
 
     def _copy_widget_template(self, widget_id):
         """[PACK96] Copia al portapapeles el JSON del template (aspecto) de este widget."""
@@ -19345,12 +19481,13 @@ class WidgetManager(QObject):
         if not isinstance(st, dict) or not isinstance(st.get('template_data'), dict):
             return
         try:
-            txt = json.dumps(st['template_data'], indent=2, ensure_ascii=False)
+            td, n_img = self._clip_bundle_td(st['template_data'])
+            txt = json.dumps(td, indent=2, ensure_ascii=False)
         except (TypeError, ValueError) as e:
             log_warn("Widget guardado", f"No se pudo copiar el widget guardado de {widget_id}: {e}")
             return
         QApplication.clipboard().setText(txt)
-        self._osd("JSON del widget guardado copiado")
+        self._osd("JSON del widget guardado copiado" + (" (con %d im\u00e1genes)" % n_img if n_img else ""))
 
     @staticmethod
     def _clip_widget_data():
@@ -19381,13 +19518,14 @@ class WidgetManager(QObject):
         if isinstance(td.get('base_note'), dict):
             td['base_note'].pop('text', None)
         try:
+            td, n_img = self._clip_bundle_td(td)
             txt = json.dumps(td, indent=2, ensure_ascii=False)
         except (TypeError, ValueError) as e:
             log_warn("Widget guardado", f"No se pudo copiar la forma de papel de {widget_id}: {e}")
             return
 
         QApplication.clipboard().setText(txt)
-        self._osd("Forma de papel del widget copiada (JSON)")
+        self._osd("Forma de papel del widget copiada (JSON)" + (" (con %d im\u00e1genes)" % n_img if n_img else ""))
 
     def _paste_widget_data(self, widget_id, with_content):
         """[PACK98] Pega el JSON del portapapeles en este widget. with_content=True: template completo (con su texto);
@@ -19401,6 +19539,9 @@ class WidgetManager(QObject):
             return False
         old = copy.deepcopy(st['template_data'])
         new = copy.deepcopy(data)
+        _zp = new.pop('__imagenes_zip__', None)                  # [PACK126] imagenes que viajaban con lo copiado
+        if _zp:
+            clip_take_images(_zp, [new])
         og = old.get('geometry') if isinstance(old.get('geometry'), dict) else {}
         g = new.get('geometry') if isinstance(new.get('geometry'), dict) else {}
         g['x'], g['y'] = og.get('x', 100), og.get('y', 100)
@@ -21297,26 +21438,7 @@ class WidgetManager(QObject):
     def _restore_backup_media(self, zpath, names):
         """[PACK125] Saca del .zip las imagenes 'names' y las deja en la carpeta de datos sin pisar nada (lo igual se salta; lo distinto con el
         mismo nombre entra con otro). Devuelve (copiadas, ya_estaban, {ruta_vieja: ruta_nueva})."""
-        import zipfile
-        import tempfile
-        tmp = tempfile.mkdtemp(prefix="wa_copia_")
-        try:
-            with zipfile.ZipFile(zpath) as z:
-                known = {n.replace('\\', '/'): n for n in z.namelist()}
-                for nm in names:
-                    zn = known.get(nm)
-                    if not zn:
-                        continue
-                    info = z.getinfo(zn)
-                    if info.file_size > BACKUP_MAX_FILE:
-                        continue
-                    dst = os.path.join(tmp, *nm.split('/'))
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    with z.open(zn) as src, open(dst, 'wb') as out:
-                        shutil.copyfileobj(src, out)
-            return import_copy_media(tmp)
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+        return media_from_zip(zpath, names)
 
     def restore_backup(self, data, active=False, profiles=(), templates=False, images=False):
         """[PACK71] Restaura lo elegido de una copia (leida con read_backup). Devuelve un resumen.
@@ -21663,18 +21785,23 @@ class WidgetManager(QObject):
         return (str(st.get('custom_name') or '').strip() or widget_id)[:60]
 
     def copy_tree(self, widget_id):
-        """Copia al portapapeles, como JSON y sin imagenes, el widget y todos sus descendientes."""
+        """Copia al portapapeles, como JSON, el widget y todos sus descendientes. [PACK126] Sus imagenes (las que no redibuja el programa)
+        van en un .zip temporal al que apunta '__config__.imagenes_zip'; al pegar se traen sin pisar nada."""
         notes = self._tree_notes(widget_id)
         if not notes:
             return False
+        imgs, _sk = tree_collect_images(notes)
+        zp = clip_zip_write(imgs)
         data = dict(notes)
         data['__config__'] = {"arbol": {"raiz": widget_id, "widgets": len(notes), "app_pack": APP_PACK}}
+        if zp:
+            data['__config__']['imagenes_zip'] = zp
         txt = json.dumps(data, indent=2, ensure_ascii=False, default=str)
         if len(txt) > 8000000:
             self._osd("El \u00e1rbol es demasiado grande para copiarlo: usa \u00abExportar \u00e1rbol a un archivo...\u00bb", 3500)
             return False
         QApplication.clipboard().setText(txt)
-        self._osd("\u00c1rbol copiado (%d widgets, JSON)" % len(notes))
+        self._osd("\u00c1rbol copiado (%d widgets%s, JSON)" % (len(notes), (", %d im\u00e1genes" % len(imgs)) if zp else ""))
         return True
 
     @staticmethod
@@ -21696,6 +21823,9 @@ class WidgetManager(QObject):
             self._osd("No hay ning\u00fan \u00e1rbol copiado en el portapapeles")
             return 0
         notes = self._only_notes(d)
+        _cfg = d.get('__config__')
+        if isinstance(_cfg, dict):                                # [PACK126] imagenes del arbol copiado
+            clip_take_images(_cfg.get('imagenes_zip'), [notes])
         import_fix_paths(notes)
         self._sync_windows_to_state()
 
@@ -23074,14 +23204,22 @@ class WidgetManager(QObject):
             return
 
         try:
-            data = {k: v for k, v in self.global_state.items() if isinstance(v, dict)}
+            data = copy.deepcopy({k: v for k, v in self.global_state.items() if isinstance(v, dict)})
+            imgs, skipped = tree_collect_images(data)                  # [PACK126] las imagenes viajan dentro del archivo
             if QMessageBox.question(parent_widget, "Exportar widgets",
                                     "\u00bfIncluir tambi\u00e9n la configuraci\u00f3n (atajos de teclado, cables, jerarqu\u00eda, matices...)?\n\n"
                                     "Al importar el archivo se podr\u00e1 elegir si cargarla. Nunca incluye datos de Telegram.",
                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) == QMessageBox.Yes:
                 data['__config__'] = self._config_snapshot()
+            if imgs:
+                import base64
+                if not isinstance(data.get('__config__'), dict):
+                    data['__config__'] = {}
+                data['__config__']['imagenes'] = {k: base64.b64encode(v).decode('ascii') for k, v in imgs.items()}
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4)
+            self._osd("Widgets exportados%s%s" % ((" (con %d im\u00e1genes)" % len(imgs)) if imgs else "",
+                                                 ("; no se pudieron incluir: " + ", ".join(skipped[:4])) if skipped else ""), 2600)
         except Exception as e:
             print(f"ERROR: No se pudo exportar los widgets a {path}: {e}")
             QMessageBox.critical(parent_widget, "Error de exportaci\u00f3n", f"No se pudo guardar el archivo JSON:\n{e}")
