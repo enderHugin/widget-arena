@@ -64,7 +64,7 @@ widgets (sustituyendo, agregando a los actuales o como set nuevo), sets, widgets
 - Antes de tocar nada se guarda una copia completa de lo que tenías.
 - Nunca se pisa un archivo que ya exista con otro contenido: el importado entra con otro nombre («... (importado)»).
 - Las rutas de las imágenes se ajustan solas, también las absolutas de otro equipo o de Windows.
-- Una copia completa `.zip` solo lleva los `.json`; para traer también las imágenes usa la carpeta.
+- Una copia completa `.zip` (desde el pack 125) lleva también las imágenes que usan tus sets y widgets guardados; las copias anteriores solo llevan los `.json`: para traer también sus imágenes usa la carpeta `widget_arena_data`.
 - Si cargas una copia vieja (un `.json`) y alguna nota se queda sin su base o su imagen, el programa avisa de cuáles faltan; *Importar y exportar → Buscar las imágenes que faltan (en otra carpeta)...* las recupera de la carpeta `widget_arena_data` de la versión anterior.
 
 ## Pasar un árbol de widgets a otro set

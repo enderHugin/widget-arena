@@ -10414,6 +10414,8 @@ class BackupRestoreDialog(QDialog):
         rp.addWidget(self.lst_prof, 1)
         self.chk_tpl = QCheckBox("")
         rp.addWidget(self.chk_tpl)
+        self.chk_img = QCheckBox("")                      # [PACK125]
+        rp.addWidget(self.chk_img)
         self.btn = QPushButton("Restaurar lo marcado")
         self.btn.setStyleSheet("QPushButton{font-weight:bold;padding:6px;}")
         right.addWidget(self.btn)
@@ -10720,11 +10722,12 @@ class BackupRestoreDialog(QDialog):
         d = self._data()
         self.lst_prof.clear()
         ok = d is not None
-        for w in (self.chk_active, self.chk_tpl, self.btn):
+        for w in (self.chk_active, self.chk_tpl, self.chk_img, self.btn):
             w.setEnabled(ok)
         if not ok:
             self.chk_active.setText("")
             self.chk_tpl.setText("")
+            self.chk_img.setText("")
             self.cb_src.clear()
             self.lst_diff.clear()
             self.lbl_sum.setText("")
@@ -10747,6 +10750,14 @@ class BackupRestoreDialog(QDialog):
         self.chk_tpl.setText("Widgets guardados que faltan (%d)" % len(miss))
         self.chk_tpl.setEnabled(bool(miss))
         self.chk_tpl.setChecked(bool(miss))
+        media = d.get('media') or []                      # [PACK125] imagenes que lleva la copia y no estan en esta instalacion
+        miss_img = [m for m in media if not os.path.isfile(os.path.join(ROOT_DATA_DIR, *m.split('/')))]
+        if media:
+            self.chk_img.setText("Im\u00e1genes de la copia que faltan (%d de %d)" % (len(miss_img), len(media)))
+        else:
+            self.chk_img.setText("Esta copia no lleva im\u00e1genes (es de antes de que las copias las incluyeran)" if d.get('zip') else "Im\u00e1genes: esta copia no las lleva")
+        self.chk_img.setEnabled(bool(miss_img))
+        self.chk_img.setChecked(bool(miss_img))
         self.info.setText(self.items[self.lst.currentRow()]['label'] + "\nAntes de restaurar el set activo se hace una copia completa de lo actual, y el cambio se puede deshacer con Ctrl+Alt+Z.")
         self.status.setText("")
         self._fill_combos(d)
@@ -10760,13 +10771,14 @@ class BackupRestoreDialog(QDialog):
                  if self.lst_prof.item(i).checkState() == Qt.Checked]
         act = self.chk_active.isChecked()
         tpl = self.chk_tpl.isChecked()
-        if not (act or names or tpl):
+        img = self.chk_img.isChecked()
+        if not (act or names or tpl or img):
             self.status.setText("No hay nada marcado.")
             return
         if act and QMessageBox.question(self, "Restaurar set activo", "Se sustituir\u00e1n los widgets actuales por los de la copia. \u00bfContinuar?",
                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
-        msg = self.m.restore_backup(d, act, names, tpl)      # [PACK119] el aviso va despues de volver a seleccionar (que limpia la pantalla)
+        msg = self.m.restore_backup(d, act, names, tpl, img)      # [PACK119] el aviso va despues de volver a seleccionar (que limpia la pantalla)
         self._select(self.lst.currentRow())
         self.status.setText(msg)
 
@@ -11385,7 +11397,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 124                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 125                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -12412,6 +12424,55 @@ def tree_collect_images(notes):
             ld['content'] = DATA_DIRNAME + '/' + used[real]
 
     return out, sorted(set(skipped))
+
+
+BACKUP_MAX_FILE = 120 * 1024 * 1024            # [PACK125] topes de las imagenes en una copia completa (una sola imagen / total)
+BACKUP_MAX_TOTAL = 1500 * 1024 * 1024
+_BACKUP_STORED = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.apng')          # ya vienen comprimidas: se guardan tal cual
+
+
+def backup_media_from_texts(texts):
+    """Imagenes que nombran estos textos JSON (set activo, sets, widgets guardados). Devuelve
+    ({'sticky/x.png': ruta_real}, [las que estan fuera de la carpeta de datos], [las que no se encuentran])."""
+    found, outside, missing = {}, set(), set()
+    seen = set()
+
+    def one(s):
+        if len(s) > 400 or '<' in s or '\n' in s or s in seen or not _IMP_EXT.search(s.strip()):
+            return
+        seen.add(s)
+        q = s.strip()
+        if q.lower().startswith(('http://', 'https://', 'data:')):
+            return
+        real = _find_stored_file(q)
+        if not real:
+            if _IMP_SEG.search(q.replace('\\', '/')) or q.startswith(DATA_DIRNAME):
+                missing.add(os.path.basename(q.replace('\\', '/')))
+            return
+        try:
+            r = os.path.relpath(os.path.abspath(real), ROOT_DATA_DIR).replace(os.sep, '/')
+        except ValueError:
+            r = '..'
+        if r.startswith('..') or r.split('/')[0] not in IMPORT_MEDIA:
+            outside.add(os.path.basename(real))
+        else:
+            found[r] = real
+
+    def walk(o):
+        if isinstance(o, str):
+            one(o)
+        elif isinstance(o, dict):
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    for t in texts:
+        try:
+            walk(json.loads(t))
+        except (ValueError, TypeError):
+            pass
+    return found, sorted(outside), sorted(missing)
 
 
 def import_embedded_images(cfg, notes):
@@ -21202,11 +21263,16 @@ class WidgetManager(QObject):
 
     def read_backup(self, path):
         import zipfile
-        out = {'notes': None, 'profiles': {}, 'templates': {}}
+        out = {'notes': None, 'profiles': {}, 'templates': {}, 'zip': None, 'media': []}
         try:
             if path.lower().endswith('.zip'):
                 with zipfile.ZipFile(path) as z:
+                    out['zip'] = path
                     for n in z.namelist():
+                        parts = n.replace('\\', '/').split('/')                                   # [PACK125] imagenes de la copia (solo los nombres)
+                        if len(parts) >= 2 and parts[0] in IMPORT_MEDIA and '..' not in parts and not n.endswith('/') and _IMP_EXT.search(n):
+                            out['media'].append('/'.join(parts))
+                            continue
                         try:
                             raw = z.read(n).decode('utf-8')
                             base = os.path.basename(n)
@@ -21228,13 +21294,56 @@ class WidgetManager(QObject):
 
         return out
 
-    def restore_backup(self, data, active=False, profiles=(), templates=False):
-        """[PACK71] Restaura lo elegido de una copia (leida con read_backup). Devuelve un resumen."""
+    def _restore_backup_media(self, zpath, names):
+        """[PACK125] Saca del .zip las imagenes 'names' y las deja en la carpeta de datos sin pisar nada (lo igual se salta; lo distinto con el
+        mismo nombre entra con otro). Devuelve (copiadas, ya_estaban, {ruta_vieja: ruta_nueva})."""
+        import zipfile
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix="wa_copia_")
+        try:
+            with zipfile.ZipFile(zpath) as z:
+                known = {n.replace('\\', '/'): n for n in z.namelist()}
+                for nm in names:
+                    zn = known.get(nm)
+                    if not zn:
+                        continue
+                    info = z.getinfo(zn)
+                    if info.file_size > BACKUP_MAX_FILE:
+                        continue
+                    dst = os.path.join(tmp, *nm.split('/'))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    with z.open(zn) as src, open(dst, 'wb') as out:
+                        shutil.copyfileobj(src, out)
+            return import_copy_media(tmp)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def restore_backup(self, data, active=False, profiles=(), templates=False, images=False):
+        """[PACK71] Restaura lo elegido de una copia (leida con read_backup). Devuelve un resumen.
+        [PACK125] Si la copia lleva imagenes, se traen las de lo elegido (o todas las que faltan si se marca 'images')."""
         msg = []
+        ren = {}
+        has_media = bool(data.get('zip') and data.get('media'))
+        if has_media and ((active and data.get('notes')) or profiles or templates or images):
+            try:
+                mnew, msame, ren = self._restore_backup_media(data['zip'], data['media'])
+                msg.append("im\u00e1genes: %d copiadas, %d ya estaban%s" % (mnew, msame, (" (%d con otro nombre para no pisar las actuales)" % len(ren)) if ren else ""))
+                if mnew and not (active and data.get('notes')):
+                    for w in list(self.widgets.values()):                     # las notas actuales que esperaban una imagen la vuelven a buscar
+                        try:
+                            w.load_template_data(w.current_template_data)
+                        except Exception as e_w:
+                            log_warn("Manager", "no se pudo redibujar %s: %s" % (getattr(w, 'widget_id', '?'), e_w))
+            except Exception as e_m:
+                log_warn("Manager", f"Restaurar imagenes de la copia: {e_m}")
+                msg.append("no se pudieron traer las im\u00e1genes")
+                has_media = False
         if active and data.get('notes'):
             self._sync_windows_to_state()
             self._full_backup(manual=True)                     # red de seguridad: lo actual queda en una copia completa
             notes = copy.deepcopy(data['notes'])
+            if has_media:
+                import_fix_paths(notes, ren)
             self._hist_begin()
             try:
                 for wid in list(self.widgets.keys()):
@@ -21259,6 +21368,9 @@ class WidgetManager(QObject):
             safe = HotkeyManager.safe_profile_name(name)
             if not isinstance(prof, dict) or not safe:
                 continue
+            if has_media:
+                prof = copy.deepcopy(prof)
+                import_fix_paths(prof, ren)
             os.makedirs(PROFILES_DIR, exist_ok=True)
             target = safe
             if os.path.exists(self._profile_path(target)):
@@ -21274,6 +21386,13 @@ class WidgetManager(QObject):
             for t, raw in (data.get('templates') or {}).items():
                 p = os.path.join(TEMPLATES_DIR, t)
                 if not os.path.exists(p):
+                    if has_media:
+                        try:
+                            _o = json.loads(raw)
+                            import_fix_paths(_o, ren)
+                            raw = json.dumps(_o, indent=2, ensure_ascii=False)
+                        except ValueError:
+                            pass
                     with open(p, 'w', encoding='utf-8') as f:
                         f.write(raw)
                     n += 1
@@ -22550,18 +22669,39 @@ class WidgetManager(QObject):
             if not (manual or on_quit) and now - getattr(self, '_last_full_backup', 0) < 900:
                 return None
             prof = []
+            texts = []
             if os.path.isdir(PROFILES_DIR):
                 for f in sorted(os.listdir(PROFILES_DIR)):
                     if f.lower().endswith('.json'):
                         st = os.stat(os.path.join(PROFILES_DIR, f))
                         prof.append((f, st.st_mtime_ns, st.st_size))
+                        texts.append(self._read_text_quiet(os.path.join(PROFILES_DIR, f)))
             cur = json.dumps(self.global_state, indent=2, ensure_ascii=False, default=str)
             res = {}
             for name, r in getattr(self, '_resident', {}).items():
                 data = dict(r.get('scalars', {}))
                 data.update(r.get('notes', {}))
                 res[name] = json.dumps(data, indent=2, ensure_ascii=False, default=str)
-            sig = hashlib.md5((cur + repr(prof) + "".join(res.values())).encode('utf-8', 'replace')).hexdigest()
+            if os.path.isdir(TEMPLATES_DIR):
+                for f in sorted(os.listdir(TEMPLATES_DIR)):
+                    if f.lower().endswith('.json'):
+                        texts.append(self._read_text_quiet(os.path.join(TEMPLATES_DIR, f)))
+            # [PACK125] imagenes que usan el set activo, todos los sets y los widgets guardados (tambien las notas base dibujadas por el programa)
+            media, outside, missing = backup_media_from_texts([cur] + list(res.values()) + texts)
+            skipped, picked, total = [], [], 0
+            for arc in sorted(media):
+                try:
+                    size = os.path.getsize(media[arc])
+                    mt = os.stat(media[arc]).st_mtime_ns
+                except OSError:
+                    skipped.append(os.path.basename(arc))
+                    continue
+                if size > BACKUP_MAX_FILE or total + size > BACKUP_MAX_TOTAL:
+                    skipped.append(os.path.basename(arc))
+                    continue
+                total += size
+                picked.append((arc, media[arc], mt, size))
+            sig = hashlib.md5((cur + repr(prof) + "".join(res.values()) + repr([(a, m, s) for a, _r, m, s in picked])).encode('utf-8', 'replace')).hexdigest()
             self._last_full_backup = now
             if not manual and sig == getattr(self, '_last_full_sig', None):
                 return None
@@ -22579,7 +22719,17 @@ class WidgetManager(QObject):
                     for f in sorted(os.listdir(TEMPLATES_DIR)):
                         if f.lower().endswith('.json'):
                             z.write(os.path.join(TEMPLATES_DIR, f), 'templates/' + f)
+                skipped_w = []
+                for arc, real, _m, _s in picked:                    # [PACK125] sticky/..., images/..., frames/...: la misma forma que la carpeta de datos
+                    try:
+                        z.write(real, arc, compress_type=zipfile.ZIP_STORED if arc.lower().endswith(_BACKUP_STORED) else zipfile.ZIP_DEFLATED)
+                    except OSError as e_i:
+                        skipped.append(os.path.basename(arc))
+                        skipped_w.append(arc)
+                        log_warn("Manager", f"Copia completa: no se pudo guardar {arc}: {e_i}")
             os.replace(path + '.tmp', path)
+            self._last_full_info = {'images': len(picked) - len(skipped_w), 'bytes': total, 'outside': outside,
+                                    'skipped': sorted(set(skipped)), 'missing': missing}
             self._preview_enqueue(path, os.path.join(PREVIEW_DIR, os.path.basename(path) + '.png'))
             self._last_full_sig = sig
             olds = sorted(f for f in os.listdir(FULL_BACKUP_DIR) if f.startswith('widget_arena_completo.') and f.endswith('.zip'))
@@ -22588,16 +22738,40 @@ class WidgetManager(QObject):
                     os.remove(os.path.join(FULL_BACKUP_DIR, f))
                 except OSError:
                     pass
-            log_info("Manager", f"Copia completa: {os.path.basename(path)} ({len(prof)} sets, {len(res)} sets en memoria)")
+            log_info("Manager", f"Copia completa: {os.path.basename(path)} ({len(prof)} sets, {len(res)} sets en memoria, {len(picked) - len(skipped_w)} im\u00e1genes, {total // 1024} KB)")
+            for what, lst in (("fuera de la carpeta de datos (no se pueden guardar)", outside), ("demasiado grandes o ilegibles", skipped), ("no encontradas", missing)):
+                if lst:
+                    log_warn("Manager", "Copia completa: im\u00e1genes %s: %s" % (what, ", ".join(lst[:12]) + ("..." if len(lst) > 12 else "")))
             return path
         except Exception as e:
             log_warn("Manager", f"No se pudo hacer la copia completa: {e}")
+            try:
+                _tmp = locals().get('path')
+                if _tmp and os.path.exists(_tmp + '.tmp'):
+                    os.remove(_tmp + '.tmp')
+            except Exception:
+                pass
             return None
+
+    @staticmethod
+    def _read_text_quiet(p):
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                return f.read()
+        except (OSError, ValueError):
+            return ""
 
     def _full_backup_now(self):
         self._sync_windows_to_state()
         p = self._full_backup(manual=True)
-        self._osd("Copia completa guardada en backups/full" if p else "No se pudo hacer la copia completa", 1800)
+        if not p:
+            self._osd("No se pudo hacer la copia completa", 1800)
+            return
+        inf = getattr(self, '_last_full_info', None) or {}
+        warn = inf.get('outside', []) + inf.get('skipped', [])
+        self._osd("Copia completa guardada en backups/full (%d im\u00e1genes, %.1f MB)%s" % (
+            inf.get('images', 0), inf.get('bytes', 0) / 1048576.0,
+            ("\nNo se han podido incluir %d im\u00e1genes (fuera de la carpeta de datos o demasiado grandes): mira el registro." % len(warn)) if warn else ""), 4000 if warn else 2200)
 
     # --- [PACK92] Vistas previas del mapa completo: se dibujan AQUI, de una en una, sin competir con un arrastre y sin repetir
     #     dibujos iguales (si el contenido ya esta dibujado en otra vista, se copia el PNG).
