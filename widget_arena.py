@@ -5225,7 +5225,7 @@ class StickerWindow(QMainWindow):
         if self.manager.app_is_quitting:
             return
             
-        if not self._undoing:
+        if not self._undoing and self.widget_id != getattr(self.manager, '_live_wid', None):       # [PACK127] la vista en vivo no entra en el historial
             self._record_history()
             
         self.manager.update_widget_state(self.widget_id, self.current_template_data)
@@ -9027,7 +9027,7 @@ class MoveTreeDialog(QDialog):
     """[PACK123] Elige a qu\u00e9 set se mueve un \u00e1rbol de widgets: uno de los que ya existen o uno nuevo."""
     NEW = "(Set nuevo...)"
 
-    def __init__(self, label, count, names, suggested, parent=None):
+    def __init__(self, label, count, names, suggested, parent=None, labels=None):
         super().__init__(parent)
         self.setWindowTitle("Mover \u00e1rbol a otro set")
         self.setMinimumWidth(440)
@@ -9040,11 +9040,16 @@ class MoveTreeDialog(QDialog):
         form = QFormLayout()
         self.cb = QComboBox()
         for n in self._names:
-            self.cb.addItem(n, n)
+            self.cb.addItem((labels or {}).get(n, n), n)          # [PACK127] con su tecla y si esta en memoria
         self.cb.addItem(self.NEW, None)
         self.cb.setCurrentIndex(0)
         self.ed = QLineEdit(suggested)
         form.addRow("Mover a:", self.cb)
+        if labels:
+            leyenda = QLabel("[N] = el set se carga con Ctrl + N o Alt + N (1 a 9 y 0)  \u00b7  \u25cf = ya est\u00e1 en memoria (cambio instant\u00e1neo)")
+            leyenda.setWordWrap(True)
+            leyenda.setStyleSheet("color:#888;")
+            form.addRow("", leyenda)
         form.addRow("Nombre del set nuevo:", self.ed)
         v.addLayout(form)
         self.chk = QCheckBox("Ir a ese set despu\u00e9s")
@@ -11400,7 +11405,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 126                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 127                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -21182,6 +21187,20 @@ class WidgetManager(QObject):
     def update_widget_state(self, widget_id, template_data_dict):
         if widget_id not in self.global_state:
             return
+        if widget_id == getattr(self, '_live_wid', None):           # [PACK127] editando su forma de papel en vivo (por ejemplo, arrastrar el widget con el editor abierto):
+            _st = self.global_state[widget_id].get('template_data')    # solo cambia la posicion; la vista previa no se toma como estado
+            _g = template_data_dict.get('geometry') if isinstance(template_data_dict, dict) else None
+            _w = self.widgets.get(widget_id)
+            if isinstance(_st, dict):
+                _sg = _st.setdefault('geometry', {})
+                if _w is not None and _w.isVisible():
+                    _sg['x'], _sg['y'] = _w.pos().x(), _w.pos().y()
+                elif isinstance(_g, dict):
+                    for _k in ('x', 'y'):
+                        if _k in _g:
+                            _sg[_k] = _g[_k]
+            self._pending_disk_write = True
+            return
         self.global_state[widget_id]['template_data'] = template_data_dict
         self._pending_disk_write = True
 
@@ -21876,9 +21895,29 @@ class WidgetManager(QObject):
             return raw
         return self._read_profile(name)
 
+    def _set_key_map(self):
+        """[PACK127] {set: n} con la tecla (1..10; 10 = la tecla 0) que carga cada set: su ranura (Alt+N / Ctrl+N) o, si no tiene, el puesto que ocupa
+        en la lista por orden alfabetico cuando esa ranura esta libre (Ctrl+N)."""
+        slots = self._slots()
+        names = self._all_set_names()
+        out = {}
+        for k, v in slots.items():
+            try:
+                if v in names and 1 <= int(k) <= 10 and v not in out:
+                    out[v] = int(k)
+            except ValueError:
+                pass
+        for i, nm in enumerate(names[:10], 1):
+            if nm not in out and not slots.get(str(i)):
+                out[nm] = i
+        return out
+
     def move_tree_dialog(self, widget_id):
         n = len(self.get_descendants(widget_id)) + 1
-        dlg = MoveTreeDialog(self._tree_label(widget_id), n, self._other_set_names(), self._unique_profile_name("Set nuevo"), self.dialog_parent)
+        keys = self._set_key_map()
+        names = sorted(self._other_set_names(), key=lambda s: (keys.get(s, 99), s.lower()))          # [PACK127] primero los que tienen tecla, por orden de tecla
+        labels = {s: "[%s]  %s%s" % ((keys[s] % 10) if s in keys else "\u2013", s, "   \u25cf" if s in self._resident else "") for s in names}
+        dlg = MoveTreeDialog(self._tree_label(widget_id), n, names, self._unique_profile_name("Set nuevo"), self.dialog_parent, labels)
         if not dlg.exec():
             return None
         target, new_name, switch = dlg.values()

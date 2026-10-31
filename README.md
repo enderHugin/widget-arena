@@ -71,7 +71,7 @@ widgets (sustituyendo, agregando a los actuales o como set nuevo), sets, widgets
 
 Clic derecho sobre un widget (en la sección de gestión de widgets, entre *Clonar* y *Eliminar*):
 
-- **Mover árbol a otro set...**: lo saca de este set y lo lleva, con sus enlaces, a otro set que elijas **o a uno nuevo** (con la opción de ir a ese set después). Si en el destino ya hay widgets en esas posiciones, se desplaza un poco.
+- **Mover árbol a otro set...**: lo saca de este set y lo lleva, con sus enlaces, a otro set que elijas **o a uno nuevo** (con la opción de ir a ese set después). La lista muestra la tecla de cada set (`[1]`…`[0]`, Ctrl / Alt + N) y marca con ● los que están en memoria. Si en el destino ya hay widgets en esas posiciones, se desplaza un poco.
 - **Copiar árbol (json)**: el widget y todos sus descendientes al portapapeles como JSON. Sus imágenes (marcos, fotos; no la forma de papel, que se redibuja sola) van en un `.zip` temporal al que apunta una marca del JSON; al pegar se traen sin pisar nada. Lo mismo vale para copiar un widget guardado o una forma de papel. Si el `.zip` ya no existe (otro equipo), se pega igual y el programa avisa de las imágenes que faltan.
 - **Pegar árbol (json)**: lo agrega al set activo, con ids nuevos, la jerarquía intacta y un pequeño desplazamiento para que no quede encima del original.
 - **Exportar árbol a un archivo...**: un `.json` con las imágenes incluidas (igual que *Exportar el widget guardado...* y *Exportar todos los widgets a un archivo...*). Para usarlo en otro set, cámbiate a él y usa *Agregar widgets desde un archivo*.
