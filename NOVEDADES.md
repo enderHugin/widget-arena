@@ -1,3 +1,8 @@
+## Pack 135 · 2026-11-01
+- **Estudio rápido del equipo** (opcional): dibuja cables de prueba en cada nivel de calidad, mide la pantalla, el procesador, la animación de las cuerdas y el difuminado, y recomienda la **calidad de dibujo**, los **fotogramas por segundo** de las cuerdas y un **tope de difuminado**. Dura unos 3 segundos, no toca tus widgets y no cambia nada hasta que aceptes con *Aplicar la recomendación*.
+- **Cuándo sale:** una sola vez tras instalar el programa (si dices *Ahora no*, no vuelve a salir solo) y siempre que quieras desde *Cables → Punteados y rendimiento*, con el botón *Medir este equipo y recomendar la calidad...* junto a las opciones de rendimiento. Desde ahí rellena los controles, así que *Cancelar* los deja como estaban. El último estudio se ve junto al botón.
+- El resultado se guarda solo en este equipo (`rendimiento.json`): no va en las copias de seguridad ni en los sets. Una instalación existente que se actualiza no recibe el aviso.
+
 ## Pack 134 · 2026-10-31
 - **El cable nace del borde del widget**, no del centro: ya no se ve a través de un papel translúcido. Es lo normal desde ahora (en *Ajustes de cables → Widgets*, «Opacidad del cable dentro de esos widgets», 0 %).
 - **Efecto cristal:** con una opacidad intermedia el cable se ve dentro del widget como a través de un cristal, y «Difuminado» lo desenfoca. Funciona igual en Windows, macOS y Linux (se dibuja dentro de la propia aplicación, sin efectos del sistema).

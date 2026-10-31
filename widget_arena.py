@@ -11719,11 +11719,12 @@ def font_boot(m):
     m._font_fetcher.done.connect(m.font_downloaded)
     QTimer.singleShot(2000, lambda: m._font_fetcher.start())
     QTimer.singleShot(3500, m.font_first_run_prompt)
+    QTimer.singleShot(7000, m.perf_first_run_prompt)       # [PACK135] despues de la fuente
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 134                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 135                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -14883,8 +14884,9 @@ CABLE_DIALOG_SPEC = [
          "En p\u00edxeles: no cambian al variar el grosor del cable. Menos hueco = m\u00e1s frecuencia; hueco muy corto lo hace casi continuo."),
         ("Rendimiento: cu\u00e1nto gasta el dibujo de los cables", [
             ('_cable_quality', "Calidad de dibujo", 'c', ("Autom\u00e1tica (baja sola si hay muchos cables o el PC va justo)", "M\u00e1xima (siempre todos los detalles)", "Ligera (sin resplandor ni grosor variable; cuerdas quietas)", "M\u00ednima (ademas sin suavizado de bordes: para PCs modestos)"), None),
-            ('_rope_fps', "Fotogramas por segundo m\u00e1ximos de la animaci\u00f3n de las cuerdas", 'i', " fps", None)],
-         "En un PC justo, 'Ligera' es lo m\u00e1s r\u00e1pido. En 'Autom\u00e1tica' la animaci\u00f3n tambi\u00e9n se pausa mientras hay un men\u00fa abierto y se limita sola seg\u00fan lo que tarda en pintar."),
+            ('_rope_fps', "Fotogramas por segundo m\u00e1ximos de la animaci\u00f3n de las cuerdas", 'i', " fps", None),
+            ('@perf', "Medir este equipo y recomendar la calidad...", 'b', None, None)],
+         "En un PC justo, 'Ligera' es lo m\u00e1s r\u00e1pido. En 'Autom\u00e1tica' la animaci\u00f3n tambi\u00e9n se pausa mientras hay un men\u00fa abierto y se limita sola seg\u00fan lo que tarda en pintar. El bot\u00f3n dibuja cables de prueba (unos 3 segundos) y propone la calidad, los fotogramas y el difuminado; no cambia nada hasta que lo aceptes."),
     ])]),
     ("Widgets", [
         ("El cable dentro de los widgets que une", [
@@ -15410,6 +15412,359 @@ def _grad_brush(p, w, h, pad):
 
     g.setColorAt(1.0, c2)
     return QBrush(g)
+
+
+# ---------------------------------------------------------------- [PACK135] estudio de rendimiento del equipo
+PERF_CFG = os.path.join(DATA_DIR, "rendimiento.json")      # solo de este equipo: no entra en copias de seguridad ni en los sets
+PERF_LEVEL_NAMES = {1: "M\u00e1xima", 0: "Autom\u00e1tica", 2: "Ligera", 3: "M\u00ednima"}
+_PERF_N = 12                                               # cables del cuadro de prueba (una escena normal)
+
+
+def perf_cfg_load():
+    try:
+        with open(PERF_CFG, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def perf_cfg_save(d):
+    try:
+        tmp = PERF_CFG + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(d, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, PERF_CFG)
+    except OSError as e:
+        log_warn("Rendimiento", "No se pudo guardar rendimiento.json: %s" % e)
+
+
+def _perf_curves(n, w, h):
+    """Camino y puntos de n cables curvos de ~110 puntos, parecidos a las cuerdas del programa."""
+    out = []
+    for i in range(n):
+        x0, y0 = 80 + (i * 97) % (w - 160), 60 + (i * 53) % (h - 120)
+        x1, y1 = w - 80 - (i * 71) % (w - 160), h - 60 - (i * 89) % (h - 120)
+        sag = 60 + (i % 5) * 18
+        pts = []
+        for k in range(110):
+            t = k / 109.0
+            pts.append(QPointF(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + sag * math.sin(math.pi * t) + 6 * math.sin(14 * t + i)))
+        path = QPainterPath(pts[0])
+        for q in pts[1:]:
+            path.lineTo(q)
+        out.append((path, pts))
+    return out
+
+
+def _perf_paint(img, curves, lod):
+    """Un fotograma de cables de prueba con el mismo tipo de trabajo que cada nivel de detalle: 0 resplandor, degradado y grosor
+    variable; 1 sin resplandor; 2 ademas grosor fijo y punteado; 3 ademas sin suavizado de bordes."""
+    p = QPainter(img)
+    p.setCompositionMode(QPainter.CompositionMode_Source)
+    p.fillRect(img.rect(), Qt.transparent)
+    p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    if lod < 3:
+        p.setRenderHint(QPainter.Antialiasing)
+    for i, (path, pts) in enumerate(curves):
+        col = QColor.fromHsv((i * 29) % 360, 160, 230)
+        if lod == 0:
+            for wd, al in ((6, 30),):
+                g = QColor(col)
+                g.setAlpha(al)
+                pen = QPen(g, wd)
+                pen.setCapStyle(Qt.RoundCap)
+                p.setPen(pen)
+                p.drawPath(path)
+
+        if lod <= 1:
+            grad = QLinearGradient(pts[0], pts[-1])
+            grad.setColorAt(0.0, col)
+            grad.setColorAt(1.0, col.lighter(135))
+            pen = QPen(QBrush(grad), 3.5)
+        else:
+            pen = QPen(col, 3.0)
+        if i % 2:
+            pen.setDashPattern([6.0, 5.0])
+        if lod == 0:
+            for k in range(0, len(pts) - 1, 37):
+                pen.setWidthF(2.2 + 2.0 * abs(math.sin(0.5 * k + i)))
+                p.setPen(pen)
+                p.drawPolyline(pts[k:k + 38])
+        else:
+            p.setPen(pen)
+            p.drawPath(path)
+    p.end()
+
+
+def _perf_median_ms(fn, min_runs=5, max_s=0.35):
+    ts = []
+    t_end = time.perf_counter() + max_s
+    while len(ts) < min_runs or (time.perf_counter() < t_end and len(ts) < 40):
+        t0 = time.perf_counter()
+        fn()
+        ts.append((time.perf_counter() - t0) * 1000.0)
+    ts.sort()
+    return ts[len(ts) // 2]
+
+
+def _perf_rope_ms(n=_PERF_N):
+    """Coste por fotograma de integrar n cuerdas (mismo tipo de operaciones con arrays que _ropes_integrate)."""
+    NM = 40
+    U = np.random.rand(2, n, NM)
+    V = np.zeros_like(U)
+
+    def frame():
+        for _k in range(16):
+            F = -4.0 * U - 0.5 * V
+            F[:, :, 1:-1] += (U[:, :, :-2] + U[:, :, 2:] - 2.0 * U[:, :, 1:-1]) * 3.0
+            V.__iadd__(F * 0.01)
+            U.__iadd__(V * 0.01)
+    return _perf_median_ms(frame, 4, 0.2)
+
+
+def perf_steps():
+    """Banco de pruebas en pasos cortos (generador): cada paso da (fraccion, texto) y el resultado final es el valor del generador.
+    Dura unos 2-3 segundos; no toca los widgets del usuario: dibuja en imagenes aparte."""
+    m = {'ver': 1, 'n': _PERF_N, 'cores': int(os.cpu_count() or 1)}
+    yield 0.03, "Midiendo la pantalla y el procesador..."
+    try:
+        scr = QGuiApplication.primaryScreen()
+        g = scr.geometry()
+        dpr = float(scr.devicePixelRatio() or 1.0)
+        sw, sh = int(g.width() * dpr), int(g.height() * dpr)
+        for s_ in QGuiApplication.screens():
+            if s_ is not scr:
+                m.setdefault('extra_screens', 0)
+                m['extra_screens'] += 1
+    except Exception:
+        sw, sh = 1920, 1080
+    sw, sh = max(640, min(sw, 7680)), max(360, min(sh, 4320))
+    m['screen'] = [sw, sh]
+
+    def py_loop():
+        s = 0
+        for i in range(120000):
+            s += i & 7
+        return s
+    m['py_ms'] = round(_perf_median_ms(py_loop, 3, 0.15), 2)
+    curves = _perf_curves(_PERF_N, 1280, 720)
+    img = QImage(1280, 720, QImage.Format_ARGB32_Premultiplied)
+    paint = {}
+    for lod, label in ((0, "calidad m\u00e1xima"), (1, "sin resplandor"), (2, "calidad ligera"), (3, "calidad m\u00ednima")):
+        yield 0.12 + 0.16 * lod, "Dibujando cables de prueba: %s..." % label
+        _perf_paint(img, curves, lod)                       # calentamiento
+        paint[lod] = round(_perf_median_ms(lambda lod=lod: _perf_paint(img, curves, lod)), 2)
+    m['paint_ms'] = paint
+    yield 0.78, "Midiendo el cuadro completo de pantalla..."
+    big = QImage(sw, sh, QImage.Format_ARGB32_Premultiplied)
+
+    def fill():
+        big.fill(Qt.transparent)
+        q = QPainter(big)
+        q.drawImage(0, 0, img)
+        q.end()
+    fill()
+    m['fill_ms'] = round(_perf_median_ms(fill, 4, 0.2), 2)
+    yield 0.86, "Midiendo la animaci\u00f3n de las cuerdas..."
+    m['rope_ms'] = round(_perf_rope_ms(), 2)
+    yield 0.94, "Midiendo el difuminado..."
+    bl = QImage(200, 150, QImage.Format_ARGB32_Premultiplied)
+    bl.fill(Qt.transparent)
+    q = QPainter(bl)
+    q.setPen(QPen(QColor(255, 0, 0, 160), 2))
+    q.drawLine(10, 70, 190, 90)
+    q.end()
+    m['blur_ms'] = round(_perf_median_ms(lambda: _blur_image(bl, 6, 0.55), 4, 0.2), 2)
+    yield 1.0, "Listo"
+
+    return m
+
+
+def perf_measure(on_step=None):
+    """Ejecuta todo el banco de pruebas de una vez y devuelve las medidas (para pruebas y para uso sin ventana)."""
+    g = perf_steps()
+    try:
+        while True:
+            fr, lb = next(g)
+            if on_step:
+                on_step(fr, lb)
+    except StopIteration as e:
+        return e.value
+
+
+def perf_estimate(m, lod, n=_PERF_N):
+    """Milisegundos estimados por fotograma con n cables y el nivel de detalle lod (0 maxima, 2 ligera, 3 minima)."""
+    k = float(n) / float(m.get('n') or _PERF_N)
+    ms = m['paint_ms'][lod] * k + m['fill_ms']
+    if lod <= 1:
+        ms += m['rope_ms'] * k                                # solo con 'maxima' las cuerdas se mueven siempre
+    return ms
+
+
+def perf_recommend(m):
+    """Del resultado del banco de pruebas: calidad de dibujo, fotogramas de las cuerdas y tope de difuminado recomendados."""
+    e = lambda lod, n: perf_estimate(m, lod, n)
+    if e(0, 30) <= 10.0:
+        q = 1
+    elif e(0, 30) <= 22.0:
+        q = 0
+    elif e(2, 30) <= 22.0:
+        q = 2
+    else:
+        q = 3
+    lod = 0 if q in (0, 1) else q
+    e12 = e(lod, 12)
+    fps = 60 if e12 <= 8.0 else 45 if e12 <= 14.0 else 30 if e12 <= 22.0 else 24 if e12 <= 33.0 else 15
+    fps = min(fps, 30 if q == 2 else 20 if q == 3 else 60)
+    bl = 24.0 * m['blur_ms']
+    blur_max = 0 if q in (2, 3) else (30 if bl <= 12.0 else 8 if bl <= 24.0 else 0)
+    rec = {'quality': q, 'fps': int(fps), 'blur_max': int(blur_max),
+           'est': {str(l): [round(e(l, 12), 1), round(e(l, 30), 1)] for l in (0, 2, 3)}}
+
+    rec['why'] = ("Con 12 cables, un fotograma cuesta unos %.0f ms en m\u00e1xima calidad y unos %.0f ms con 30 cables; en ligera, %.0f y %.0f ms."
+                  % (e(0, 12), e(0, 30), e(2, 12), e(2, 30)))
+    return rec
+
+
+def perf_apply(mgr, rec):
+    """Aplica una recomendacion a los ajustes del programa (el difuminado solo se baja, nunca se sube)."""
+    G = mgr.global_state
+    G['_cable_quality'] = int(rec['quality'])
+    G['_rope_fps'] = int(rec['fps'])
+    G['_cable_inside_blur'] = min(int(mgr.get_cable_param('_cable_inside_blur')), int(rec['blur_max']))
+    mgr.save_global_state(record_history=False)
+    try:
+        if mgr.connector_overlay.isVisible():
+            mgr.connector_overlay.update()
+    except Exception:
+        pass
+
+
+class PerfStudyDialog(QDialog):
+    """[PACK135] Estudio breve del equipo: dibuja cables de prueba y recomienda calidad, fotogramas y difuminado."""
+
+    def __init__(self, manager, parent=None, first_run=False, apply_cb=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QProgressBar
+        self._mgr, self._apply_cb, self.first_run = manager, apply_cb, bool(first_run)
+        self.metrics = self.rec = self._gen = None
+        self.setWindowTitle("Medir el rendimiento de este equipo")
+        lay = QVBoxLayout(self)
+        self.info = QLabel(("Opcional. " if first_run else "") +
+                           "En unos 3 segundos el programa dibuja cables de prueba en cada nivel de calidad, mide la pantalla y la "
+                           "animaci\u00f3n de las cuerdas, y recomienda la calidad de dibujo, los fotogramas por segundo y el difuminado "
+                           "que van fluidos en este equipo. No toca tus widgets y no cambia nada hasta que aceptes la recomendaci\u00f3n.")
+        self.info.setWordWrap(True)
+        lay.addWidget(self.info)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 100)
+        self.bar.setVisible(False)
+        lay.addWidget(self.bar)
+        self.lbl = QLabel("")
+
+        lay.addWidget(self.lbl)
+        self.out = QLabel("")
+        self.out.setWordWrap(True)
+        self.out.setTextFormat(Qt.RichText)
+        self.out.setVisible(False)
+        lay.addWidget(self.out)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.b_run = QPushButton("Medir ahora")
+        self.b_apply = QPushButton("Aplicar la recomendaci\u00f3n")
+        self.b_close = QPushButton("Ahora no" if first_run else "Cerrar")
+        self.b_apply.setEnabled(False)
+        self.b_run.clicked.connect(self.start)
+        self.b_apply.clicked.connect(self._apply)
+        self.b_close.clicked.connect(self.reject)
+        for b in (self.b_run, self.b_apply, self.b_close):
+            row.addWidget(b)
+        lay.addLayout(row)
+
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._tick)
+        self.setMinimumWidth(520)
+
+    def start(self):
+        if self._gen is not None:
+            return
+        self.b_run.setEnabled(False)
+        self.b_apply.setEnabled(False)
+        self.out.setVisible(False)
+        self.lbl.setVisible(True)
+        self.bar.setValue(0)
+        self.bar.setVisible(True)
+        self._gen = perf_steps()
+        self._timer.start(30)
+
+    def _tick(self):
+        try:
+            fr, lb = next(self._gen)
+        except StopIteration as e:
+            self._gen = None
+            self._finish(e.value)
+            return
+        except Exception as e_ps:
+            self._gen = None
+            log_warn("Rendimiento", "El estudio fall\u00f3: %s" % e_ps)
+            self.lbl.setText("No se pudo medir este equipo (%s)." % e_ps)
+            self.bar.setVisible(False)
+            self.b_run.setEnabled(True)
+            return
+        self.bar.setValue(int(fr * 100))
+        self.lbl.setText(lb)
+        self._timer.start(15)
+
+    def _finish(self, m):
+        self.metrics, self.rec = m, perf_recommend(m)
+        r = self.rec
+        self.bar.setVisible(False)
+        self.lbl.setVisible(False)
+        self.b_close.setText("Cerrar")
+        rows = ""
+        for lod, nm in ((0, "M\u00e1xima"), (2, "Ligera"), (3, "M\u00ednima")):
+            e12, e30 = r['est'][str(lod)]
+            rows += "<tr><td>%s</td><td align='right'>&nbsp;&nbsp;%.0f ms (\u2248 %d fps)</td><td align='right'>&nbsp;&nbsp;%.0f ms (\u2248 %d fps)</td></tr>" % (
+                nm, e12, min(999, 1000 / max(e12, 0.1)), e30, min(999, 1000 / max(e30, 0.1)))
+        self.out.setText(
+            "<p><b>Recomendado:</b> calidad <b>%s</b>, cuerdas a <b>%d fps</b> y difuminado interior de hasta <b>%d px</b>.</p>"
+            "<table><tr><td></td><td>&nbsp;&nbsp;<i>con 12 cables</i></td><td>&nbsp;&nbsp;<i>con 30 cables</i></td></tr>%s</table>"
+            "<p>%s Pantalla de %d\u00d7%d, %d n\u00facleos.</p>"
+            "<p>La calidad \u00abAutom\u00e1tica\u00bb baja sola cuando hay muchos cables; \u00abM\u00e1xima\u00bb solo se recomienda si sobra margen "
+            "incluso con 30.</p>" % (PERF_LEVEL_NAMES[r['quality']], r['fps'], r['blur_max'], rows, r['why'],
+                                      m['screen'][0], m['screen'][1], m['cores']))
+
+        self.out.setVisible(True)
+        self.b_run.setText("Repetir")
+        self.b_run.setEnabled(True)
+        self.b_apply.setEnabled(True)
+        cfg = perf_cfg_load()
+        cfg.update({'asked': True, 'pendiente': False, 'fecha': datetime.datetime.now().isoformat(timespec='seconds'),
+                    'metrics': m, 'rec': {k: v for k, v in r.items() if k != 'why'}, 'applied': False})
+        perf_cfg_save(cfg)
+
+    def _apply(self):
+        if not self.rec:
+            return
+        if self._apply_cb is not None:
+            self._apply_cb(self.rec)
+        else:
+            perf_apply(self._mgr, self.rec)
+        cfg = perf_cfg_load()
+        cfg['applied'] = True
+        perf_cfg_save(cfg)
+        self.accept()
+
+    def done(self, r):
+        self._timer.stop()
+        self._gen = None
+        cfg = perf_cfg_load()
+        if not cfg.get('asked'):
+            cfg.update({'asked': True, 'pendiente': False})       # con "Ahora no" no se vuelve a ofrecer solo
+            perf_cfg_save(cfg)
+        super().done(r)
 
 
 # ---------------------------------------------------------------- [PACK134] recorte de capas, silueta, difuminado y regiones
@@ -18698,6 +19053,16 @@ class WidgetManager(QObject):
                 t.update()
 
         def add_row(grid, r, key, label, kind, suffix, thumb):
+            if kind == 'b':                                  # [PACK135] fila de boton (estudio del equipo)
+                btn = QPushButton(label)
+                btn.clicked.connect(lambda _c=False: self._cable_perf_study(controls, dlg))
+                grid.addWidget(btn, r, 0, 1, 2)
+                _pc = perf_cfg_load()
+                if _pc.get('fecha') and isinstance(_pc.get('rec'), dict):
+                    _lb = QLabel("\u00daltimo estudio (%s): recomend\u00f3 %s" % (str(_pc['fecha'])[:10], PERF_LEVEL_NAMES.get(int(_pc['rec'].get('quality', 0)), "?")))
+                    _lb.setWordWrap(True)
+                    grid.addWidget(_lb, r, 2)
+                return
             if key == '_cable_hover_opacity':
                 default, lo, hi, cur = 35, 5, 100, self.get_cable_hover_opacity_pct()
             else:
@@ -23724,6 +24089,45 @@ class WidgetManager(QObject):
             self.show_updates(check=False).apply_result(r)
 
     # ---- [PACK113] fuentes
+    # ---------------------------------------------------------------- [PACK135] estudio de rendimiento
+    def show_perf_study(self, first_run=False, parent=None, apply_cb=None):
+        d = self.perf_dialog = PerfStudyDialog(self, parent or self.dialog_parent, first_run, apply_cb)
+        d.show()
+        d.raise_()
+        d.activateWindow()
+        return d
+
+    def perf_first_run_prompt(self, tries=0):
+        """Una sola vez tras instalar (y hasta que se conteste): ofrece el estudio rapido del equipo, despues del de la fuente."""
+        if os.environ.get('WA_NO_FONT_PROMPT') or os.environ.get('WA_NO_PERF_PROMPT'):
+            return
+        cfg = perf_cfg_load()
+        if cfg.get('asked'):
+            return
+        if FIRST_RUN and not cfg.get('pendiente'):
+            cfg['pendiente'] = True                      # si se cierra el programa antes de contestar, se ofrece en el siguiente arranque
+            perf_cfg_save(cfg)
+        if not cfg.get('pendiente'):
+            return
+        fd = getattr(self, 'font_dialog', None)
+        if fd is not None and fd.isVisible() and tries < 40:
+            QTimer.singleShot(4000, lambda: self.perf_first_run_prompt(tries + 1))
+            return
+        self.show_perf_study(True)
+
+    def _cable_perf_study(self, controls, parent):
+        """Desde Cables: el estudio rellena los controles (asi 'Cancelar' los deja como estaban)."""
+        def cb(rec):
+            vals = {'_cable_quality': rec['quality'], '_rope_fps': rec['fps']}
+            if '_cable_inside_blur' in controls:
+                vals['_cable_inside_blur'] = min(int(controls['_cable_inside_blur'][0].value()), int(rec['blur_max']))
+            for k, v in vals.items():
+                if k in controls:
+                    controls[k][0].setValue(int(v))
+        d = PerfStudyDialog(self, parent, False, cb)
+        self.perf_dialog = d
+        d.exec()
+
     def show_font_chooser(self, first_run=False):
         d = getattr(self, 'font_dialog', None)
         if d is None or not d.isVisible():
