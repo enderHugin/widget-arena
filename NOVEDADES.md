@@ -1,4 +1,5 @@
 ## Pack 130 · 2026-10-31
+- **Valores iniciales de las instalaciones nuevas** (`defaults/config.json`): cables, cuerda, resorte, corona, jerarquía y nota base con los ajustes del autor. Se aplican una sola vez en el primer arranque y no pisan nada existente.
 - **Instalador: entornos a medias.** Si una instalación anterior dejó un `.venv` sin `pyvenv.cfg` («No pyvenv.cfg file»), el instalador y `herramientas.py` lo detectan, lo borran y lo rehacen. Las carpetas de Python a medias (sin `Lib\os.py`) también se limpian antes de reintentar.
 - **Instalador de Windows más robusto.** Si `uv python install 3.12` falla (antivirus que inspecciona HTTPS, proxy, red lenta), ahora reintenta con los certificados de Windows y con una conexión más paciente, pasa a `uv` el proxy del sistema y, como último recurso, baja Python con PowerShell y lo descomprime con `tar`. Si aun así no puede, el aviso incluye los últimos mensajes de `uv` en vez de solo el código de error.
 - **Web:** los papeles con doblez usan tu diseño y el texto y los cables se colocan sobre el papel (no sobre su sombra); los marcos de ejemplo son PNG con hueco transparente.
