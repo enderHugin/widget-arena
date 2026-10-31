@@ -7677,7 +7677,7 @@ _MENU_GROUPS_W = (
 # [PACK104] menu del widget: Capas / Aspecto / Relaciones / Clonar / Eliminar son submenus
 _MENU_RULES_W = (
     ("Renombrar", "este"), ("Cancelar temporizador", "este"), ("Establecer temporizador", "este"),
-    ("Copiar \u00e1rbol", "gestion"), ("Pegar \u00e1rbol", "gestion"), ("Exportar \u00e1rbol", "gestion"), ("Usar como predeterminado", "gestion"),
+    ("Copiar \u00e1rbol", "gestion"), ("Pegar \u00e1rbol", "gestion"), ("Exportar \u00e1rbol", "gestion"), ("Mover \u00e1rbol", "gestion"), ("Usar como predeterminado", "gestion"),
     ("Ocultar", "este"), ("Mostrar", "este"), ("Siempre encima", "este"), ("Ver en el navegador", "este"),
     ("Capas", "aspecto"), ("Aspecto", "aspecto"), ("Relaciones", "familia"), ("Clonar", "copia"), ("Eliminar", "peligro"),
 )
@@ -9012,6 +9012,55 @@ TRAY_GESTURES = [
 # [PACK122] doble clic: sin tecla = mostrar / ocultar todos; May\u00fas = widget nuevo predeterminado; Ctrl / Alt = set anterior / siguiente de la rotacion.
 TRAY_GESTURE_DEFAULTS = {"double": "toggle_all", "shift+double": "new_default", "ctrl+double": "profile_prev",
                          "alt+double": "profile_next", "ctrl+alt+double": "open_browser", "middle": "open_browser"}
+
+
+class MoveTreeDialog(QDialog):
+    """[PACK123] Elige a qu\u00e9 set se mueve un \u00e1rbol de widgets: uno de los que ya existen o uno nuevo."""
+    NEW = "(Set nuevo...)"
+
+    def __init__(self, label, count, names, suggested, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mover \u00e1rbol a otro set")
+        self.setMinimumWidth(440)
+        self._names = list(names)
+        v = QVBoxLayout(self)
+        info = QLabel("Mover \u00ab%s\u00bb (%d widget%s, con sus enlaces) a otro set. Se elimina de este set y pasa al elegido." % (label, count, "" if count == 1 else "s"))
+        info.setTextFormat(Qt.PlainText)
+        info.setWordWrap(True)
+        v.addWidget(info)
+        form = QFormLayout()
+        self.cb = QComboBox()
+        for n in self._names:
+            self.cb.addItem(n, n)
+        self.cb.addItem(self.NEW, None)
+        self.cb.setCurrentIndex(0)
+        self.ed = QLineEdit(suggested)
+        form.addRow("Mover a:", self.cb)
+        form.addRow("Nombre del set nuevo:", self.ed)
+        v.addLayout(form)
+        self.chk = QCheckBox("Ir a ese set despu\u00e9s")
+        v.addWidget(self.chk)
+        self.bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.bb.accepted.connect(self.accept)
+        self.bb.rejected.connect(self.reject)
+        v.addWidget(self.bb)
+        self.cb.currentIndexChanged.connect(self._sync)
+        self.ed.textChanged.connect(self._sync)
+        self._sync()
+
+    def _is_new(self):
+        return self.cb.currentData() is None
+
+    def _sync(self, _i=0):
+        self.ed.setEnabled(self._is_new())
+        ok = self.bb.button(QDialogButtonBox.Ok)
+        ok.setEnabled(not self._is_new() or bool(self.ed.text().strip()))
+
+    def values(self):
+        """(set existente, nombre del set nuevo, ir a ese set): uno de los dos primeros es None."""
+        if self._is_new():
+            return None, self.ed.text().strip(), self.chk.isChecked()
+        return self.cb.currentData(), None, self.chk.isChecked()
 
 
 class SetRotationDialog(QDialog):
@@ -11327,7 +11376,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 122                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 123                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -18841,6 +18890,8 @@ class WidgetManager(QObject):
             tip="Agrega a este set el \u00e1rbol que hayas copiado (puede ser de otro set)")
         add(menu, "Exportar \u00e1rbol a un archivo...", lambda: self.export_tree(widget_id),
             tip="Guarda este widget y sus descendientes en un .json, con las im\u00e1genes que usen dentro del archivo")
+        add(menu, "Mover \u00e1rbol a otro set...", lambda: self.move_tree_dialog(widget_id),
+            tip=f"Saca de este set este widget y sus {n_desc} descendientes ({n_desc + 1} widgets) y los lleva a otro set, o a uno nuevo")      # [PACK123]
         pre_menu = QMenu("Usar como predeterminado", menu)
         add(pre_menu, "Para los widgets nuevos (Nuevo widget predeterminado)", lambda: self.set_widget_as_default(widget_id, 1))
         add(pre_menu, "Para el hijo que se crea con Ctrl+Alt+May\u00fas+Win+pulsar", lambda: self.set_widget_as_default(widget_id, 2))
@@ -21546,6 +21597,98 @@ class WidgetManager(QObject):
         miss = self.missing_images()
         self._osd("\u00c1rbol pegado (%d widgets)%s" % (len(notes), ("; " + self._missing_hint(miss)) if miss else ""), 3500 if miss else 1600)
         return len(notes)
+
+    # ---- [PACK123] mover un widget con sus descendientes a otro set
+    def _other_set_names(self):
+        cur = self.current_profile_name
+        return [n for n in self._all_set_names() if n != cur]
+
+    def _read_set_for_edit(self, name):
+        """Contenido de un set guardado tal como esta ahora (si esta apartado en memoria, sale de ahi: puede tener cambios sin guardar)."""
+        res = self._resident.get(name)
+        if res is not None and all(self._win_alive(w) for w in res['windows'].values()):
+            raw = copy.deepcopy(res['scalars'])
+            raw.update(copy.deepcopy(res['notes']))
+            return raw
+        return self._read_profile(name)
+
+    def move_tree_dialog(self, widget_id):
+        n = len(self.get_descendants(widget_id)) + 1
+        dlg = MoveTreeDialog(self._tree_label(widget_id), n, self._other_set_names(), self._unique_profile_name("Set nuevo"), self.dialog_parent)
+        if not dlg.exec():
+            return None
+        target, new_name, switch = dlg.values()
+        return self.move_tree_to_set(widget_id, target, new_name, switch)
+
+    def move_tree_to_set(self, widget_id, target=None, new_name=None, switch=False):
+        """Lleva el widget y todos sus descendientes a otro set (un set guardado, o uno nuevo si se da new_name) y los elimina de este.
+        Se conservan los enlaces y las posiciones (si ya hay widgets justo ahi, se desplazan). Devuelve (nombre del set, cuantos) o None."""
+        notes = self._tree_notes(widget_id)
+        if not notes:
+            return None
+        ids = list(reversed(self.get_descendants(widget_id))) + [widget_id]
+        try:
+            if new_name is not None:
+                name = self._unique_profile_name(new_name)
+                raw = {k: copy.deepcopy(v) for k, v in self.global_state.items() if not (isinstance(v, dict) and isinstance(v.get('template_data'), dict))}
+            else:
+                name = target
+                if not name or name == self.current_profile_name or not os.path.exists(self._profile_path(name)):
+                    self._osd("Ese set no existe")
+                    return None
+                raw = self._read_set_for_edit(name)
+            stamp = int(time.time())
+            taken = set(raw)
+            id_map = {}
+            for old in notes:
+                nid = "%s_m%d" % (old, stamp)
+                k = 1
+                while nid in taken:
+                    nid = "%s_m%d_%d" % (old, stamp, k)
+                    k += 1
+                taken.add(nid)
+                id_map[old] = nid
+
+            def pos(st):
+                g = st.get('template_data', {}).get('geometry') if isinstance(st, dict) else None
+                return (g.get('x', 0), g.get('y', 0)) if isinstance(g, dict) and 'x' in g else None
+            used = {p for p in (pos(s) for s in raw.values()) if p}
+            dx = 0
+            for _i in range(12):                 # que no queden justo encima de lo que ya hay en ese set
+                if not any(p and (p[0] + dx, p[1] + dx) in used for p in (pos(s) for s in notes.values())):
+                    break
+                dx += 40
+            for old, st in notes.items():
+                st = copy.deepcopy(st)
+                st['parent_id'] = id_map.get(st.get('parent_id')) if st.get('parent_id') else None
+                g = st.get('template_data', {}).get('geometry')
+                if dx and isinstance(g, dict) and 'x' in g:
+                    g['x'], g['y'] = g['x'] + dx, g.get('y', 0) + dx
+                raw[id_map[old]] = st
+            os.makedirs(PROFILES_DIR, exist_ok=True)
+            path = self._profile_path(name)
+            with open(path + '.tmp', 'w', encoding='utf-8') as f:
+                json.dump(raw, f, indent=4)
+            os.replace(path + '.tmp', path)
+        except Exception as e:
+            log_error("Manager", "No se pudo mover el arbol a otro set: %s" % e)
+            self._osd("No se pudo mover el \u00e1rbol: %s" % e, 3500)
+            return None
+
+        self._drop_resident(name)               # si estaba apartado en memoria, se vuelve a leer del archivo con lo nuevo
+        self._hist_begin()
+        try:
+            for wid in ids:
+                if wid in self.widgets or wid in self.global_state:
+                    self.remove_widget(wid)
+        finally:
+            self._hist_end()
+        self.build_tray_menu()
+        log_info("Manager", "Arbol movido a '%s': %d widgets" % (name, len(notes)))
+        self._osd("\u00c1rbol movido a \u00ab%s\u00bb (%d widget%s)" % (name, len(notes), "" if len(notes) == 1 else "s"), 2400)
+        if switch:
+            self._load_profile(name)
+        return name, len(notes)
 
     def export_tree(self, widget_id):
         """Guarda en un .json el widget y sus descendientes, con las imagenes que usen dentro del propio archivo. Se importa con
