@@ -81,9 +81,10 @@
   .w .btn:hover { background: #2c4380; }
   .w .btn.sent { background: #1c7a4d; box-shadow: 0 .14em 0 #0f4a2e; }
   .w .kids { position: absolute; right: -6px; top: -6px; background: var(--yellow); color: var(--yellow-ink); border-radius: 999px; font: 700 12px var(--ui); padding: 2px 8px; box-shadow: 0 2px 6px rgba(0,0,0,.3); }
-  .w.frame { background: #fffdf7; padding: 7% 7% 16%; border-radius: 3px; box-shadow: 0 8px 18px rgba(0,0,0,.3); }
-  .w.frame svg { display: block; width: 100%; height: auto; }
-  .w.frame .cap { position: absolute; left: 0; right: 0; bottom: 3%; text-align: center; font: 400 1em var(--hand); color: #3b3a33; }
+  .w.frame { background: none; padding: 0; border-radius: 0; box-shadow: none; aspect-ratio: 1; }
+  .w.frame .picw { position: absolute; inset: 10%; overflow: hidden; background: #fbfbfa; }
+  .w.frame .picw svg { display: block; width: 100%; height: 100%; }
+  .w.frame img.fr { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; user-select: none; -webkit-user-drag: none; }
   .w.web { border-radius: 10px; background: #fbfbfa; color: #1d2430; box-shadow: 0 10px 22px rgba(0,0,0,.35); overflow: hidden; font-family: var(--ui); }
   .w.web .bar { display: flex; align-items: center; gap: .35em; padding: .45em .6em; background: #e6e8ec; }
   .w.web .bar i { width: .55em; height: .55em; border-radius: 50%; background: #c3c8d0; }
@@ -133,13 +134,16 @@
   .stack .l1.light { color: #eef2f7; }
   .stack .l1 > .nt { display: grid; gap: .45em; place-items: center; width: 100%; }
   .stack .l1 .bts { display: grid; gap: .4em; margin-top: .3em; }
-  .stack .l1 .fr { position: absolute; inset: 6%; border: 24px solid var(--fc, #8a5a2b); border-radius: 3px; box-shadow: inset 0 0 0 2px rgba(0,0,0,.28), inset 0 5px 12px rgba(0,0,0,.4), 0 8px 16px rgba(0,0,0,.3); pointer-events: none; }
-  .stack .l2 .pic { position: absolute; inset: 9%; overflow: hidden; border-radius: 3px; background: #fbfbfa; }
+  .stack .l1 .fr { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .stack .l2 .pic { position: absolute; inset: 10%; overflow: hidden; background: #fbfbfa; }
   .stack .l2 .pic svg { width: 100%; height: 100%; display: block; border-radius: 0; }
   .stack .l2 .pic .mini { width: 100%; height: 100%; border-radius: 0; box-shadow: none; background: #fbfbfa; color: #1d2430; font: 600 13px var(--ui); text-align: left; }
   .stack .l2 .pic .mini .bar { background: #e1e4e9; padding: 5px 8px; font-weight: 400; font-size: 11px; color: #5b6475; }
-  .stack .l2 .pic .mini .pg { padding: 10px 12px; }
+  .stack .l2 .pic .mini .pg { padding: 8px 10px; }
   .stack .l2 .pic .mini .pg i { display: block; height: 6px; border-radius: 3px; background: #d9dde4; margin: 7px 0 0; }
+  .stack .l2 .pic .mini .btn { margin-top: 9px; font: 400 14px var(--hand); border: 0; padding: .2em .8em; border-radius: .5em; background: #1f2f55; color: #fff; cursor: pointer; }
+  .stack .l2 .pic .mini .btn.sent { background: #1c7a4d; }
+  .stack .l2 #l2web { inset: 14.8%; }
   .rule { font-size: 14.5px; margin-top: 14px; max-width: 33em; }
   .sub { font-size: 21px; line-height: 1.35; max-width: 27em; margin: 0 0 14px; color: var(--desk-ink, inherit); }
   .stack .l1 .btn { font: 400 18px var(--hand); border: 0; padding: .25em .9em; border-radius: .5em; background: #1f2f55; color: #fff; box-shadow: 0 3px 0 #0f1a36; cursor: pointer; }
@@ -285,8 +289,8 @@
               <img class="paper" src="img/papel-verde.png" alt=""><div class="txt"><b data-i="w_exam">Examen</b><span data-i="w_exam2">Tema 4 y 5, martes a las 9:00</span></div>
             </div>
             <div class="w frame" data-id="b" data-parent="a" style="--w:158;--r:-3deg" data-x=".08" data-y=".52" data-c="#c9a46a" tabindex="0" aria-label="Imagen con marco">
-              <svg viewBox="0 0 120 90" aria-hidden="true"><rect width="120" height="90" fill="#9fd3e6"/><circle cx="90" cy="24" r="11" fill="#fde68a"/><path d="M0 90V60l28-24 26 22 22-16 44 30v18z" fill="#4f8f6a"/><path d="M0 90V74l36-14 30 12 54-10v28z" fill="#356b52"/></svg>
-              <div class="cap" data-i="w_trip">Fin de semana</div>
+              <div class="picw"><svg viewBox="0 0 120 90" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect width="120" height="90" fill="#9fd3e6"/><circle cx="90" cy="24" r="11" fill="#fde68a"/><path d="M0 90V60l28-24 26 22 22-16 44 30v18z" fill="#4f8f6a"/><path d="M0 90V74l36-14 30 12 54-10v28z" fill="#356b52"/></svg></div>
+              <img class="fr" src="img/marco-madera.png" alt="">
             </div>
             <div class="w" data-id="c" data-parent="a" style="--w:176;--r:3deg" data-x=".60" data-y=".10" data-c="#8b7cf0" tabindex="0" aria-label="Nota redonda">
               <img class="paper" src="img/papel-redonda.png" alt=""><div class="txt"><span data-i="w_break">Descanso a las 11</span></div>
@@ -331,11 +335,11 @@
           <div class="l2">
             <img id="l2img" src="img/papel-amarillo.png" alt="">
             <div class="pic" id="l2pic" hidden><svg viewBox="0 0 120 90" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect width="120" height="90" fill="#9fd3e6"/><circle cx="90" cy="24" r="11" fill="#fde68a"/><path d="M0 90V60l28-24 26 22 22-16 44 30v18z" fill="#4f8f6a"/><path d="M0 90V74l36-14 30 12 54-10v28z" fill="#356b52"/></svg></div>
-            <div class="pic" id="l2web" hidden><div class="mini"><div class="bar">recetas.example/pan</div><div class="pg"><span data-i="w_pan">Pan de masa madre</span><i></i><i style="width:70%"></i><i style="width:85%"></i><i style="width:60%"></i></div></div></div>
+            <div class="pic" id="l2web" hidden><div class="mini"><div class="bar">recetas.example/pan</div><div class="pg"><span data-i="w_pan">Pan de masa madre</span><i></i><i style="width:70%"></i><i style="width:85%"></i><button class="btn" type="button" data-send data-i="b_fav">Guardar receta</button></div></div></div>
           </div>
           <div class="l1" id="l1">
             <div class="nt" id="l1note"><b data-i="w_week">Semana</b><span data-i="w_week2">Entregar el informe el jueves</span><div class="bts" id="l1btns" hidden><button class="btn" type="button" data-send data-i="b_panel">Abrir panel</button><button class="btn" type="button" data-send data-i="b_light">Luz del estudio</button></div></div>
-            <div class="fr" id="l1frame" hidden></div>
+            <img class="fr" id="l1frame" src="img/marco-madera.png" alt="" hidden>
           </div>
         </div>
         <span class="tag t1" data-i="tag1_note">Capa 1: texto y botones</span>
@@ -461,13 +465,13 @@
       lead: "Notas, imágenes, páginas web y botones que flotan sobre tus programas. Cambia de set con una tecla y déjalos a tu manera. Sin Python, sin administrador, un solo clic.",
       hint: "Arrastra cualquier widget", sets_l: "Sets de widgets:", set1: "Semana", set2: "Estudio",
       w_week: "Semana", w_week2: "Entregar el informe el jueves", w_ideas: "Ideas para la portada", w_pan: "Pan de masa madre", w_home: "Estudio",
-      b_panel: "Abrir panel", b_light: "Luz del estudio", sent: "Enviado",
+      b_panel: "Abrir panel", b_fav: "Guardar receta", b_light: "Luz del estudio", sent: "Enviado",
       w_exam: "Examen", w_exam2: "Temas 4 y 5, martes a las 9:00", w_trip: "Fin de semana", w_break: "Descanso a las 11", w_read: "Lecturas", w_read2: "Capítulo 7, resumen",
       h_layers: "Cada widget tiene dos capas",
       p_layers: "Una nota lleva el texto en la capa 1 y su fondo, la forma de papel, en la capa 2. Un marco lleva el marco en la capa 1 y, debajo, en la capa 2, una imagen enmarcada o una página web. Cada capa tiene su propio color, fuente, giro y tamaño.",
       l_type: "Tipo de widget", k_note: "Nota", k_img: "Marco con imagen", k_web: "Marco con página web", l_paper: "Fondo", l_frame: "Marco", l_btns: "Botones en la capa 1", l_split: "Separar las capas",
       rule_note: "Capa 1 es texto: el widget se trata como una nota, y es ahí donde funcionan los botones.",
-      rule_frame: "Capa 1 no es texto: el widget se trata como un marco para una imagen enmarcada o una página web.",
+      rule_frame: "Capa 1 no es texto: el widget se trata como un marco, un PNG con el centro transparente sobre una imagen enmarcada o una página web. Sobre una web el marco deja pasar los clics: prueba el botón.",
       tag1_note: "Capa 1: texto y botones", tag1_frame: "Capa 1: el marco", tag2_note: "Capa 2: el fondo (forma de papel)", tag2_img: "Capa 2: la imagen enmarcada", tag2_web: "Capa 2: la página web",
       h_ropes: "Si quieres, se enlazan como un árbol",
       p_ropes: "Es opcional: cada widget puede vivir suelto. Pero uno puede ser hijo de otro. Los cables cuelgan como cuerdas y se balancean al moverlos, y los hijos pueden seguir al padre cuando lo arrastras. Para ordenar la vista, contrae las ramas: los hijos desaparecen y al expandir vuelven en el mismo sitio.",
@@ -527,13 +531,13 @@
       lead: "Notes, images, web pages and buttons that float over your programs. Switch sets with one key and arrange them your way. No Python, no admin rights, one click.",
       hint: "Drag any widget", sets_l: "Widget sets:", set1: "Week", set2: "Study",
       w_week: "Week", w_week2: "Hand in the report on Thursday", w_ideas: "Ideas for the cover", w_pan: "Sourdough bread", w_home: "Studio",
-      b_panel: "Open panel", b_light: "Studio light", sent: "Sent",
+      b_panel: "Open panel", b_fav: "Save recipe", b_light: "Studio light", sent: "Sent",
       w_exam: "Exam", w_exam2: "Units 4 and 5, Tuesday at 9:00", w_trip: "Weekend away", w_break: "Break at 11", w_read: "Reading", w_read2: "Chapter 7, summary",
       h_layers: "Every widget has two layers",
       p_layers: "A note has its text on layer 1 and its background, the paper shape, on layer 2. A frame has the frame itself on layer 1 and, underneath on layer 2, a framed image or a web page. Each layer has its own colour, font, rotation and size.",
       l_type: "Widget type", k_note: "Note", k_img: "Frame with image", k_web: "Frame with web page", l_paper: "Background", l_frame: "Frame", l_btns: "Buttons on layer 1", l_split: "Pull the layers apart",
       rule_note: "Layer 1 is text: the widget is treated as a note, and that is where the buttons work.",
-      rule_frame: "Layer 1 is not text: the widget is treated as a frame for a framed image or a web page.",
+      rule_frame: "Layer 1 is not text: the widget is treated as a frame, a PNG with a transparent centre over a framed image or a web page. Over a web page the frame lets clicks through: try the button.",
       tag1_note: "Layer 1: text and buttons", tag1_frame: "Layer 1: the frame", tag2_note: "Layer 2: the background (paper shape)", tag2_img: "Layer 2: the framed image", tag2_web: "Layer 2: the web page",
       h_ropes: "If you want, they link up like a tree",
       p_ropes: "It is optional: every widget can live on its own. But one can be the child of another. Cables hang like ropes and sway when you move them, and children can follow their parent when you drag it. To tidy the view, collapse the branches: children disappear and come back in the same place when you expand.",
@@ -796,7 +800,7 @@
     var b = document.createElement("button"); b.type = "button"; b.setAttribute("aria-pressed", String(i === 0)); b.setAttribute("aria-label", f[1]);
     b.style.backgroundColor = f[0]; b.style.backgroundImage = "none";
     b.addEventListener("click", function () {
-      $("#stack").style.setProperty("--fc", f[0]);
+      $("#l1frame").src = "img/marco-" + f[1] + ".png";
       $$("button", fsw).forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
     });
     fsw.appendChild(b);
