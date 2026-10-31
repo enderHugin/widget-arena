@@ -75,6 +75,7 @@
   .w .txt { position: absolute; inset: 11% 10% 13% 10%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
             font-family: var(--hand); line-height: 1.15; color: #2a2517; gap: .35em; pointer-events: none; }
   .w .txt b { font-weight: 400; font-size: 1.12em; }
+  .w.fold .txt { inset: 22% 18% 19% 21%; }
   .w .txt.light { color: #eef2f7; }
   .w .btn { pointer-events: auto; font: 400 .82em var(--hand); border: 0; cursor: pointer; padding: .28em .8em; border-radius: .5em; background: #1f2f55; color: #fff;
             box-shadow: 0 .14em 0 #0f1a36; transition: background .15s; }
@@ -146,6 +147,8 @@
   .stack .l2 #l2web { inset: 14.8%; }
   .rule { font-size: 14.5px; margin-top: 14px; max-width: 33em; }
   .sub { font-size: 21px; line-height: 1.35; max-width: 27em; margin: 0 0 14px; color: var(--desk-ink, inherit); }
+  .stack.fold { width: 312px; height: 298px; }
+  .stack.fold .l1 { padding: 21.6% 17.6% 18.4% 20.6%; }
   .stack .l1 .btn { font: 400 18px var(--hand); border: 0; padding: .25em .9em; border-radius: .5em; background: #1f2f55; color: #fff; box-shadow: 0 3px 0 #0f1a36; cursor: pointer; }
   .stack .l1 .btn.sent { background: #1c7a4d; box-shadow: 0 3px 0 #0f4a2e; }
   .stack .l1 .mini { width: 100%; background: #fbfbfa; border-radius: 8px; overflow: hidden; color: #1d2430; font: 600 13px var(--ui); text-align: left; box-shadow: 0 3px 8px rgba(0,0,0,.25); }
@@ -272,7 +275,7 @@
             <div class="w" data-id="a" style="--w:176;--r:-3deg" data-x=".05" data-y=".07" data-c="#e9b949" tabindex="0" aria-label="Nota">
               <img class="paper" src="img/papel-amarillo.png" alt=""><div class="txt"><b data-i="w_week">Semana</b><span data-i="w_week2">Entregar el informe el jueves</span></div>
             </div>
-            <div class="w" data-id="b" data-parent="a" style="--w:168;--r:2deg" data-x=".47" data-y=".04" data-c="#6aa7e8" tabindex="0" aria-label="Nota">
+            <div class="w fold" data-body=".16,.17,.16,.17" data-id="b" data-parent="a" style="--w:210;--r:2deg" data-x=".47" data-y=".04" data-c="#6aa7e8" tabindex="0" aria-label="Nota">
               <img class="paper" src="img/papel-doblada.png" alt=""><div class="txt"><span data-i="w_ideas">Ideas para la portada</span></div>
             </div>
             <div class="w web" data-id="c" data-parent="a" style="--w:232;--r:0deg" data-x=".04" data-y=".58" data-c="#7a8699" tabindex="0" aria-label="Mini-navegador">
@@ -364,7 +367,7 @@
           <div class="set on" data-set="0">
             <svg class="ropes" aria-hidden="true"></svg>
             <div class="w" data-id="r" style="--w:150;--r:-2deg" data-x=".39" data-y=".05" data-c="#e9b949" tabindex="0"><img class="paper" src="img/papel-amarillo.png" alt=""><div class="txt"><b data-i="t_root">Proyecto</b></div></div>
-            <div class="w" data-id="k1" data-parent="r" style="--w:128;--r:2deg" data-x=".04" data-y=".40" data-c="#6aa7e8" tabindex="0"><img class="paper" src="img/papel-doblada.png" alt=""><div class="txt"><span data-i="t_design">Diseño</span></div></div>
+            <div class="w fold" data-body=".16,.17,.16,.17" data-id="k1" data-parent="r" style="--w:160;--r:2deg" data-x=".04" data-y=".40" data-c="#6aa7e8" tabindex="0"><img class="paper" src="img/papel-doblada.png" alt=""><div class="txt"><span data-i="t_design">Diseño</span></div></div>
             <div class="w" data-id="k2" data-parent="r" style="--w:128;--r:-2deg" data-x=".42" data-y=".42" data-c="#3fae6b" tabindex="0"><img class="paper" src="img/papel-verde.png" alt=""><div class="txt"><span data-i="t_text">Texto</span></div></div>
             <div class="w" data-id="k3" data-parent="r" style="--w:128;--r:3deg" data-x=".74" data-y=".38" data-c="#e87a9f" tabindex="0"><img class="paper" src="img/papel-degradado.png" alt=""><div class="txt"><span data-i="t_ship">Entrega</span></div></div>
             <div class="w" data-id="g1" data-parent="k2" style="--w:116;--r:-3deg" data-x=".40" data-y=".74" data-c="#8b7cf0" tabindex="0"><img class="paper" src="img/papel-redonda.png" alt=""><div class="txt"><span data-i="t_rev">Revisión</span></div></div>
@@ -642,7 +645,12 @@
   }
   Group.prototype.size = function () { return { w: this.board.el.clientWidth, h: this.board.el.clientHeight }; };
   Group.prototype.place = function (n) { n.el.style.left = (n.x * 100) + "%"; n.el.style.top = (n.y * 100) + "%"; };
-  Group.prototype.rect = function (n) { var s = this.size(); return { x: n.x * s.w, y: n.y * s.h, w: n.el.offsetWidth, h: n.el.offsetHeight }; };
+  Group.prototype.rect = function (n) {
+    var s = this.size(), w = n.el.offsetWidth, h = n.el.offsetHeight, x = n.x * s.w, y = n.y * s.h, b = n.el._body;
+    if (b === undefined) { var a = n.el.getAttribute("data-body"); b = n.el._body = a ? a.split(",").map(parseFloat) : null; }
+    if (b) { x += b[0] * w; y += b[1] * h; var bw = w * (1 - b[0] - b[2]), bh = h * (1 - b[1] - b[3]); w = bw; h = bh; }
+    return { x: x, y: y, w: w, h: h };
+  };
   Group.prototype.descendants = function (n) { var out = []; (function walk(m) { m.kids.forEach(function (k) { out.push(k); walk(k); }); })(n); return out; };
   Group.prototype.clamp = function (n) {
     var s = this.size(), r = { w: n.el.offsetWidth, h: n.el.offsetHeight };
@@ -783,13 +791,13 @@
   $("#follow").addEventListener("change", function () { treeG.follow = this.checked; });
 
   // capas
-  var papers = [["amarillo", "#fde68a"], ["doblada", "#bfdbfe"], ["degradado", "#fbcfe8"], ["verde", "#bbf7d0"], ["cinta", "#fef3c7"], ["redonda", "#ddd6fe"], ["oliva", "#c3c388"], ["oscura", "#334155"]];
+  var papers = [["amarillo", "#fde68a"], ["doblada", "#bfdbfe", 1], ["degradado", "#fbcfe8"], ["verde", "#bbf7d0"], ["cinta", "#fef3c7"], ["redonda", "#ddd6fe"], ["oliva", "#c3c388", 1], ["oscura", "#334155"]];
   var sw = $("#swatches");
   papers.forEach(function (p, i) {
     var b = document.createElement("button"); b.type = "button"; b.setAttribute("aria-pressed", String(i === 0)); b.setAttribute("aria-label", p[0]);
     b.style.backgroundImage = "url(img/papel-" + p[0] + ".png)";
     b.addEventListener("click", function () {
-      $("#l2img").src = "img/papel-" + p[0] + ".png"; $("#l1").classList.toggle("light", p[0] === "oscura");
+      $("#l2img").src = "img/papel-" + p[0] + ".png"; $("#l1").classList.toggle("light", p[0] === "oscura"); $("#stack").classList.toggle("fold", !!p[2]);
       $$("button", sw).forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
     });
     sw.appendChild(b);

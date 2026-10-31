@@ -110,11 +110,62 @@ try {
     $env:UV_PYTHON_PREFERENCE = 'only-managed'
     $env:UV_PYTHON_DOWNLOADS = 'automatic'
     $env:UV_NO_PROGRESS = '1'
-    Invoke-Native $uv @('python', 'install', '3.12')
-    $found = & $uv python find 3.12
-    if ($LASTEXITCODE -ne 0 -or -not $found) { throw 'No se encontro el Python 3.12 recien instalado.' }
-    $py = ([string]@($found)[0]).Trim()
-    if (-not (Test-Path $py)) { throw ('No existe ' + $py) }
+    # uv no lee el proxy de Windows: si PowerShell si llega a GitHub por uno, se lo pasamos.
+    if (-not ($env:HTTPS_PROXY -or $env:https_proxy)) {
+        try {
+            $sp = [Net.WebRequest]::GetSystemWebProxy(); $tu = [Uri]'https://github.com'
+            if (-not $sp.IsBypassed($tu)) { $pu = $sp.GetProxy($tu); if ($pu -and $pu.AbsoluteUri -ne $tu.AbsoluteUri) { $env:HTTPS_PROXY = $pu.AbsoluteUri; Say ('proxy del sistema: ' + $pu.AbsoluteUri) } }
+        } catch { }
+    }
+    function Run-Uv([string[]]$uvArgs) {
+        $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { $o = & $uv @uvArgs 2>&1 | ForEach-Object { [string]$_ }; $rc = $LASTEXITCODE } catch { $o = @([string]$_); $rc = 99 }
+        $ErrorActionPreference = $old
+        $o | ForEach-Object { Write-Host ('      ' + $_) }
+        return @{ rc = $rc; out = @($o) }
+    }
+    $py = $null; $uvTail = ''
+    $tries = @(
+        @{ n = 'normal'; env = @{} },
+        @{ n = 'certificados de Windows'; env = @{ UV_NATIVE_TLS = '1' } },
+        @{ n = 'conexion lenta'; env = @{ UV_NATIVE_TLS = '1'; UV_HTTP_TIMEOUT = '300'; UV_CONCURRENT_DOWNLOADS = '1' } }
+    )
+    foreach ($t in $tries) {
+        foreach ($k in $t.env.Keys) { Set-Item -Path ('Env:' + $k) -Value $t.env[$k] }
+        if ($t -ne $tries[0]) { Say ('reintentando con ' + $t.n + '...') }
+        $r = Run-Uv @('python', 'install', '3.12')
+        if ($r.rc -eq 0) {
+            $f = & $uv python find 3.12
+            if ($LASTEXITCODE -eq 0 -and $f) { $py = ([string]@($f)[0]).Trim(); break }
+        }
+        $uvTail = (($r.out | Where-Object { $_.Trim() } | Select-Object -Last 4) -join ' | ')
+        Start-Sleep -Seconds 2
+    }
+    if (-not $py -or -not (Test-Path $py)) {
+        # Plan B: bajar Python con PowerShell (que si respeta tu proxy y tus certificados) y descomprimirlo con tar.
+        Say 'uv no pudo bajar Python; probando una descarga directa...'
+        try {
+            $rel = Invoke-RestMethod -UseBasicParsing -Uri 'https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest'
+            $as = @($rel.assets | Where-Object { $_.name -match '^cpython-3\.12\.\d+\+\d+-x86_64-pc-windows-msvc-install_only\.tar\.gz$' }) | Select-Object -First 1
+            if (-not $as) { $as = @($rel.assets | Where-Object { $_.name -match '^cpython-3\.12\.\d+\+\d+-x86_64-pc-windows-msvc-install_only_stripped\.tar\.gz$' }) | Select-Object -First 1 }
+            if (-not $as) { throw 'no hay Python 3.12 para Windows en la ultima version publicada' }
+            $tgz = Join-Path $Root 'python-3.12.tar.gz'
+            Get-File $as.browser_download_url $tgz
+            $dest = Join-Path $Rt 'manual-3.12'
+            if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            & tar.exe -xzf $tgz -C $dest
+            if ($LASTEXITCODE -ne 0) { throw ('tar fallo (codigo ' + $LASTEXITCODE + ')') }
+            $cand = Join-Path $dest 'python\python.exe'
+            if (-not (Test-Path $cand)) { throw 'el archivo descargado no contiene python.exe' }
+            & $cand -c "import sys; assert sys.version_info[:2] == (3, 12)"
+            if ($LASTEXITCODE -ne 0) { throw 'el Python descargado no arranca' }
+            $py = $cand
+        } catch { $uvTail += ' | descarga directa: ' + $_.Exception.Message }
+    }
+    if (-not $py -or -not (Test-Path $py)) {
+        throw ('No se pudo conseguir Python 3.12. Puede ser tu antivirus, un proxy o un cortafuegos que bloquea las descargas de GitHub. Ultimos mensajes: ' + $uvTail)
+    }
     Say $py
 
     # --- 3) el programa --------------------------------------------------------------------------------------------
