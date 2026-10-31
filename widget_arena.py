@@ -441,7 +441,7 @@ from PySide6.QtGui import (
     QPixmap, QColor, QFont, QIcon, QAction, QActionGroup,
     QKeyEvent, QPainter, QBitmap, QWheelEvent, QTransform,
     QImage, QCursor, QPen, QPainterPath, QBrush, QLinearGradient,
-    QTextDocument, QTextCursor, QTextCharFormat, QTextOption
+    QTextDocument, QTextCursor, QTextCharFormat, QTextOption, QPainterPathStroker
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineProfile # <--- PARCHE WEB PERSISTENCIA: Importar QWebEngineProfile
@@ -11524,7 +11524,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 131                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 132                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -14742,6 +14742,11 @@ BASE_NOTE_DEFAULTS = {
     'w': 250, 'h': 250, 'color': '#fef08a', 'grad': False, 'color2': '#f9c74f', 'grad_angle': 90,
     'radius': 14, 'corners': [True, True, True, True],
     'border': 0, 'border_color': '#b08900',
+    'color_a': 100, 'color2_a': 100,                                # [PACK132] opacidad (0-100) de cada color del fondo
+    'border_a': 100, 'border_grad': False, 'border_color2': '#7a5c00', 'border_a2': 100,      # [PACK132] borde: opacidad y degradado propios
+    'border_grad_angle': 90, 'border_grad_bias': 50,
+    'fold_bw': 0, 'fold_bcolor': '#b08900', 'fold_ba': 100, 'fold_bgrad': False, 'fold_bcolor2': '#7a5c00',      # [PACK132] borde del doblez
+    'fold_ba2': 100, 'fold_bangle': 90, 'fold_bbias': 50,
     'shadow': 8, 'shadow_op': 45, 'shadow_dx': 0, 'shadow_dy': 3, 'shadow_color': '#000000',
     'strip': 0, 'strip_op': 30, 'strip_y': 0,
     'fold': False, 'fold_style': 0, 'fold_corner': 2, 'fold_size': 60, 'fold_tip': 100,
@@ -15095,13 +15100,80 @@ def _cx_shape(i, c):
             'fold_round': c['round'], 'fold_rlen': c['rlen'], 'fold_j1': c['j1'], 'fold_j2': c['j2'],
             'fold_k1': c['k1'], 'fold_k2': c['k2'], 'fold_k3': c['k3'], 'fold_k4': c['k4']}
 
+def _pct(v, d=100):
+    """[PACK132] Porcentaje 0-100 como fraccion 0-1 (valores raros -> el de por defecto)."""
+    try:
+        return max(0, min(100, int(v))) / 100.0
+    except (TypeError, ValueError):
+        return d / 100.0
+
+
+def _paper_colors(p):
+    """[PACK132] Los dos colores del fondo, cada uno con su opacidad."""
+    c1 = QColor(p['color'])
+    c2 = QColor(p.get('color2', p['color']))
+    c1.setAlphaF(_pct(p.get('color_a', 100)))
+    c2.setAlphaF(_pct(p.get('color2_a', 100)))
+    return c1, c2
+
+
+EDGE_BORDER = ('border_color', 'border_color2', 'border_a', 'border_a2', 'border_grad', 'border_grad_angle', 'border_grad_bias')
+EDGE_FOLD = ('fold_bcolor', 'fold_bcolor2', 'fold_ba', 'fold_ba2', 'fold_bgrad', 'fold_bangle', 'fold_bbias')
+
+
+def _edge_brush(p, keys, rect):
+    """[PACK132] Pincel de un borde: color liso o degradado lineal entre dos colores, cada uno con su opacidad,
+    con direccion (90 = hacia abajo) y balance, sobre el rectangulo dado."""
+    import math
+    kc, kc2, ka, ka2, kg, kang, kbias = keys
+    c1 = QColor(p[kc])
+    c1.setAlphaF(_pct(p.get(ka, 100)))
+    if not p.get(kg):
+        return QBrush(c1)
+    c2 = QColor(p.get(kc2, p[kc]))
+    c2.setAlphaF(_pct(p.get(ka2, 100)))
+    ang = math.radians(float(p.get(kang, 90)))
+    ux, uy = math.cos(ang), math.sin(ang)
+    half = max(1.0, (abs(ux) * rect.width() + abs(uy) * rect.height()) / 2.0)
+    cx, cy = rect.center().x(), rect.center().y()
+    g = QLinearGradient(cx - ux * half, cy - uy * half, cx + ux * half, cy + uy * half)
+    bias = max(5, min(95, int(p.get(kbias, 50)))) / 100.0
+    g.setColorAt(0.0, c1)
+    if bias != 0.5:
+        g.setColorAt(bias, QColor.fromRgbF((c1.redF() + c2.redF()) / 2.0, (c1.greenF() + c2.greenF()) / 2.0,
+                                           (c1.blueF() + c2.blueF()) / 2.0, (c1.alphaF() + c2.alphaF()) / 2.0))
+    g.setColorAt(1.0, c2)
+    return QBrush(g)
+
+
+def _edge_translucent(p, keys):
+    kc, kc2, ka, ka2, kg, kang, kbias = keys
+    return _pct(p.get(ka, 100)) < 1.0 or (bool(p.get(kg)) and _pct(p.get(ka2, 100)) < 1.0)
+
+
+def _paint_ring(q, ring, brush, translucent):
+    """[PACK132] Pinta un borde (una corona). Si es translucido primero vacia lo que hay debajo: la opacidad es la del borde
+    y deja ver lo que hay detras del widget, en vez de mezclarse con el color del papel."""
+    q.save()
+    q.setPen(Qt.NoPen)
+    if translucent:
+        q.setCompositionMode(QPainter.CompositionMode_Clear)
+        q.setBrush(Qt.black)
+        q.drawPath(ring)
+        q.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    q.setBrush(brush)
+    q.drawPath(ring)
+    q.restore()
+
+
 def _grad_brush(p, w, h, pad):
     """Pincel del fondo: color liso o degradado (0 lineal, 1 radial, 2 conico, 3 espejo) con direccion, tamano,
     centro, balance entre los dos colores y comportamiento fuera de su tamano (rellenar, reflejar, repetir)."""
     import math
     from PySide6.QtGui import QConicalGradient, QRadialGradient, QGradient
+    c1, c2 = _paper_colors(p)
     if not p.get('grad'):
-        return QBrush(QColor(p['color']))
+        return QBrush(c1)
     kind = max(0, min(3, int(p.get('grad_kind', 0))))
     ang_deg = float(p.get('grad_angle', 90))
     ang = math.radians(ang_deg)
@@ -15110,7 +15182,6 @@ def _grad_brush(p, w, h, pad):
     cx = pad + w / 2.0 + max(-100, min(100, int(p.get('grad_cx', 0)))) / 100.0 * w / 2.0
     cy = pad + h / 2.0 + max(-100, min(100, int(p.get('grad_cy', 0)))) / 100.0 * h / 2.0
     bias = max(5, min(95, int(p.get('grad_bias', 50)))) / 100.0
-    c1, c2 = QColor(p['color']), QColor(p.get('color2', p['color']))
     spread = {1: QGradient.ReflectSpread, 2: QGradient.RepeatSpread}.get(int(p.get('grad_spread', 0)), QGradient.PadSpread)
     half = max(1.0, (abs(ux) * w + abs(uy) * h) / 2.0 * size)
 
@@ -15695,20 +15766,14 @@ def render_base_note(p, with_text=False):
         q.fillRect(QRectF(pad, sy0 + st_h, w, 1.2), QColor(0, 0, 0, int(60 * so)))
         q.restore()
     bw = float(p.get('border', 0))
-    if bw > 0:
+    if bw > 0:                           # [PACK132] el borde es una corona con su propio degradado y su opacidad
         if not flaps and not pieces:
-            hb = bw / 2.0
-            inner = _rounded_rect_path(pad + hb, pad + hb, w - bw, h - bw, [max(0.0, x - hb) for x in radii])
-            q.setPen(QPen(QColor(p['border_color']), bw))
-            q.setBrush(Qt.NoBrush)
-            q.drawPath(inner)
+            ring = body.subtracted(_rounded_rect_path(pad + bw, pad + bw, max(1.0, w - 2 * bw), max(1.0, h - 2 * bw), [max(0.0, x - bw) for x in radii]))
         else:
-            q.save()
-            q.setClipPath(body)
-            q.setPen(QPen(QColor(p['border_color']), 2 * bw))
-            q.setBrush(Qt.NoBrush)
-            q.drawPath(body)
-            q.restore()
+            _st = QPainterPathStroker()
+            _st.setWidth(2 * bw)
+            ring = _st.createStroke(body).intersected(body)
+        _paint_ring(q, ring, _edge_brush(p, EDGE_BORDER, QRectF(pad, pad, w, h)), _edge_translucent(p, EDGE_BORDER))
 
     q.save()
     q.setClipPath(body)
@@ -15729,16 +15794,23 @@ def render_base_note(p, with_text=False):
             q.drawImage(0, 0, _shade_layer(img.size(), _tip_blob(pt, flap, ftip, fdir, ts, ts * 0.3), ts, tw, tsh))
         fc = _fold_color({'color': p['color'], 'grad': p.get('grad'), 'color2': p.get('color2', p['color']),
                           'fold_auto': c['rev_auto'], 'fold_color': c['rev_color']})
+        _pc = _paper_colors(p)                               # [PACK132] el reverso es el mismo papel: misma opacidad
+        fc.setAlphaF((_pc[0].alphaF() + (_pc[1].alphaF() if p.get('grad') else _pc[0].alphaF())) / 2.0)
         fg = QLinearGradient(fmid, ftip)
         fg.setColorAt(0.0, fc.lighter(128))
         fg.setColorAt(1.0, fc.darker(112))
         q.setPen(Qt.NoPen)
         q.setBrush(QBrush(fg))
         q.drawPath(flap)
-        q.setPen(QPen(QColor(255, 255, 255, 90), 1.0))      # brillo del filo del doblez
-
-        q.setBrush(Qt.NoBrush)
-        q.drawPath(flap)
+        fbw = float(p.get('fold_bw', 0))
+        if fbw > 0:                                          # [PACK132] borde del doblez: grosor, color, degradado y opacidad propios
+            _st = QPainterPathStroker()
+            _st.setWidth(2 * fbw)
+            _paint_ring(q, _st.createStroke(flap).intersected(flap), _edge_brush(p, EDGE_FOLD, flap.boundingRect()), _edge_translucent(p, EDGE_FOLD))
+        else:
+            q.setPen(QPen(QColor(255, 255, 255, 90), 1.0))      # brillo del filo del doblez
+            q.setBrush(Qt.NoBrush)
+            q.drawPath(flap)
         if tsh > 0 and c['fb_over']:                         # luz SOBRE la punta
             q.setClipPath(flap, Qt.IntersectClip)
             q.drawImage(0, 0, _shade_layer(img.size(), _tip_blob(pt, flap, ftip, fdir, ts, 0.0), ts, tw, tsh))
@@ -16029,9 +16101,9 @@ class AboutDialog(QDialog):
             lay.addLayout(hl)
         lay.addSpacing(6)
 
-        lay.addWidget(lab("Si WidgetArena te ahorra tiempo, inv\u00edtame a un caf\u00e9 y ay\u00fadame a seguir mejor\u00e1ndola.",
+        lay.addWidget(lab("Si WidgetArena te ahorra tiempo, puedes apoyar su desarrollo y ayudarme a seguir mejor\u00e1ndola.",
                           "color:#ffffff;font:600 15px 'Segoe UI';"))
-        self.btn = QPushButton("\u2615   Inv\u00edtame a un caf\u00e9 en Ko-fi")
+        self.btn = QPushButton("\u2764   Apoyar en Ko-fi")
         self.btn.setCursor(Qt.PointingHandCursor)
         self.btn.setFixedHeight(54)
         self.btn.setStyleSheet(
@@ -16817,7 +16889,7 @@ class _CornerModePicker(QWidget):
             self.currentIndexChanged.emit(m)
 
 
-_BN_COLOR_KEYS = ('color', 'color2', 'border_color', 'shadow_color', 'fold_color', 'text_color')
+_BN_COLOR_KEYS = ('color', 'color2', 'border_color', 'border_color2', 'fold_bcolor', 'fold_bcolor2', 'shadow_color', 'fold_color', 'text_color')
 
 
 def _bn_extract(src):
@@ -17060,11 +17132,18 @@ class BaseNoteDialog(QDialog):
         form.addRow("Esquinas redondeadas", crow)
 
         form = subpage("Color y degradado")
-        form.addRow("Color de fondo", color_btn('color'))
+        crow0 = QHBoxLayout()                # [PACK132] cada color con su opacidad
+        crow0.addWidget(color_btn('color'))
+        crow0.addWidget(QLabel("Opacidad"))
+        crow0.addWidget(spin('color_a', 0, 100, " %"))
+        form.addRow("Color de fondo", crow0)
         grow = QHBoxLayout()
         self.chk_grad = check('grad', "Degradado hasta")
         grow.addWidget(self.chk_grad)
         grow.addWidget(color_btn('color2'))
+        grow.addWidget(QLabel("Opacidad"))
+        self._grad_a2 = spin('color2_a', 0, 100, " %")
+        grow.addWidget(self._grad_a2)
         form.addRow(grow)
 
         def icombo(key, items):
@@ -17088,12 +17167,43 @@ class BaseNoteDialog(QDialog):
 
         self._grad_enable()
 
+        self._edge_groups = []               # [PACK132] (clave del grosor, clave del degradado, controles, controles del 2.o color)
+
+        def edge_rows(form_, width_key, keys, what):
+            kc, kc2, ka, ka2, kg, kang, kbias = keys
+            b1, a1 = color_btn(kc), spin(ka, 0, 100, " %")
+            r1 = QHBoxLayout()
+            r1.addWidget(b1)
+            r1.addWidget(QLabel("Opacidad"))
+            r1.addWidget(a1)
+            form_.addRow("Color " + what, r1)
+            r2 = QHBoxLayout()
+            cg = check(kg, "Degradado hasta")
+            b2, a2 = color_btn(kc2), spin(ka2, 0, 100, " %")
+            r2.addWidget(cg)
+            r2.addWidget(b2)
+            r2.addWidget(QLabel("Opacidad"))
+            r2.addWidget(a2)
+            form_.addRow(r2)
+            sg, sb = spin(kang, 0, 360, "\u00b0"), spin(kbias, 5, 95, " %")
+            form_.addRow("Direcci\u00f3n del degradado (90\u00b0 = hacia abajo)", sg)
+            form_.addRow("Balance entre los dos colores (50 % = centrado)", sb)
+            self._edge_groups.append((width_key, kg, [b1, a1, cg], [b2, a2, sg, sb]))
+
         form = subpage("Borde y franja adhesiva")
         form.addRow("Grosor del borde", spin('border', 0, 20, " px"))
-        form.addRow("Color del borde", color_btn('border_color'))
+        edge_rows(form, 'border', EDGE_BORDER, "del borde")
         form.addRow("Alto de la franja adhesiva (0 = sin franja)", spin('strip', 0, 200, " px"))
         form.addRow("Opacidad de la franja", spin('strip_op', 0, 100, " %"))
         form.addRow("Distancia de la franja al borde", spin('strip_y', 0, 400, " px"))
+
+        form = subpage("Borde del doblez")   # [PACK132] el filo de la solapa del pico doblado, aparte del borde del papel
+        nf_ = QLabel("Rodea la solapa del pico doblado (la parte vuelta). Con grosor 0 queda el filo claro de siempre.")
+        nf_.setWordWrap(True)
+        form.addRow(nf_)
+        form.addRow("Grosor del borde del doblez", spin('fold_bw', 0, 20, " px"))
+        edge_rows(form, 'fold_bw', EDGE_FOLD, "del doblez")
+        self._edge_enable()
 
         # ---- [PACK81] Pico doblado: cada esquina decide si se dobla, se levanta o nada, con sus curvas y sus luces
         _pw = QWidget()                      # [PACK102] sin desplazamiento de la pestana entera: solo el de cada esquina
@@ -17501,6 +17611,17 @@ class BaseNoteDialog(QDialog):
                'grad_angle': k in (0, 2, 3), 'grad_size': k in (0, 1, 3), 'grad_spread': k in (0, 1)}
         for key, w_ in rows.items():
             w_.setEnabled(bool(self.p['grad']) and use[key])
+        if getattr(self, '_grad_a2', None) is not None:
+            self._grad_a2.setEnabled(bool(self.p['grad']))
+
+    def _edge_enable(self):
+        """[PACK132] Los controles de un borde se activan con su grosor; los del segundo color, ademas con su degradado."""
+        for wk, gk, main, grad in getattr(self, '_edge_groups', ()):
+            on = int(self.p.get(wk, 0)) > 0
+            for w_ in main:
+                w_.setEnabled(on)
+            for w_ in grad:
+                w_.setEnabled(on and bool(self.p.get(gk)))
 
     def _save_preview_cfg(self):
         gs = getattr(self._mgr, 'global_state', None)
@@ -17619,6 +17740,7 @@ class BaseNoteDialog(QDialog):
         self._building = False
         self._fold_enable()
         self._grad_enable()
+        self._edge_enable()
         self._refresh()
 
     def _set(self, key, value):
@@ -17627,6 +17749,8 @@ class BaseNoteDialog(QDialog):
         self.p[key] = value
         if key in ('grad', 'grad_kind'):
             self._grad_enable()
+        if key in ('border', 'border_grad', 'fold_bw', 'fold_bgrad'):
+            self._edge_enable()
         self._refresh()
 
     def _set_corner(self, i, on):

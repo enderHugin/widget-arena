@@ -176,6 +176,10 @@
   .strip figure:nth-child(even) { transform: rotate(2deg); }
   .strip figure:hover { transform: rotate(0) translateY(-8px); }
   .strip img { width: 100%; display: block; }
+  .strip.frames { padding-top: 0; margin-top: 0; }
+  .strip.frames figure { position: relative; aspect-ratio: 1; }
+  .strip.frames figure::before { content: ""; position: absolute; inset: 15%; background: linear-gradient(180deg, #9fd3e8 0 58%, #4f9a73 58% 78%, #2f6f53 78%); }
+  .strip.frames img { position: relative; }
   .tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 44px; margin-top: 16px; }
   .tools div { border-top: 1px solid var(--line); padding: 14px 0 10px; }
   .tools h3 { font-size: 21px; }
@@ -379,12 +383,15 @@
   </section>
 
   <section class="block" id="paper">
-    <h2 data-i="h_paper">Formas de papel que se dibujan, no se buscan</h2>
-    <p class="muted" style="max-width:40em" data-i="p_paper">Doblez de esquina, cinta, borde, degradado, sombra y esquinas redondeadas: el editor dibuja el papel a partir de unos parámetros. Es lo que ves aquí: imágenes generadas por el propio programa. Como se redibujan solas, no pesan al compartirlas.</p>
+    <h2 data-i="h_paper">Formas de papel y marcos que diseñas tú</h2>
+    <p class="muted" style="max-width:40em" data-i="p_paper">Doblez de esquina, cinta, borde (también el del doblez), degradado con transparencia en cada color, sombra y esquinas redondeadas: el editor dibuja el papel a partir de unos parámetros. Los marcos se crean igual, con el grosor de cada lado, color, bisel, textura y sombras. Es lo que ves aquí: imágenes generadas por el propio programa; como se redibujan solas, no pesan al compartirlas.</p>
     <div class="strip" aria-hidden="true">
       <figure><img src="img/papel-amarillo.png" alt="" loading="lazy"></figure><figure><img src="img/papel-doblada.png" alt="" loading="lazy"></figure><figure><img src="img/papel-cinta.png" alt="" loading="lazy"></figure>
       <figure><img src="img/papel-degradado.png" alt="" loading="lazy"></figure><figure><img src="img/papel-oliva.png" alt="" loading="lazy"></figure><figure><img src="img/papel-redonda.png" alt="" loading="lazy"></figure>
       <figure><img src="img/papel-verde.png" alt="" loading="lazy"></figure><figure><img src="img/papel-oscura.png" alt="" loading="lazy"></figure>
+    </div>
+    <div class="strip frames" aria-hidden="true">
+      <figure><img src="img/marco-madera.png" alt="" loading="lazy"></figure><figure><img src="img/marco-oro.png" alt="" loading="lazy"></figure><figure><img src="img/marco-negro.png" alt="" loading="lazy"></figure><figure><img src="img/marco-blanco.png" alt="" loading="lazy"></figure>
     </div>
     <div class="tools">
       <div><h3 data-i="f1t">Sets de widgets</h3><p data-ih="f1p">Guarda lo que tienes en pantalla con un nombre y cambia entre sets al instante con <kbd>Ctrl</kbd> + <kbd>1</kbd>…<kbd>0</kbd>. Cada set recuerda sus propios cables y ajustes.</p></div>
@@ -392,7 +399,7 @@
       <div><h3 data-i="f3t">Color a mano</h3><p data-ih="f3p"><kbd>Ctrl</kbd> + rueda sobre un widget cambia su tono, y los cables toman sus colores. Con <kbd>Mayús</kbd> el ajuste es fino.</p></div>
       <div><h3 data-i="f4t">Todo configurable</h3><p data-i="f4p">Grosor, peso y curvatura de los cables, jerarquía, atajos de teclado y gestos del icono de la bandeja. Tus datos son archivos JSON en tu carpeta, con copias de seguridad.</p></div>
       <div><h3 data-i="f5t">Avisos en el móvil con Telegram</h3><p data-i="f5p">Ponle un temporizador a un widget y, al cumplirse, te llega un mensaje a Telegram. Es opcional y usa tu propio bot: necesitas el token del bot (te lo da BotFather) y tu ID de usuario o de chat.</p></div>
-      <div><h3 data-i="f6t">Tus propias formas de papel y marcos</h3><p data-i="f6p">Las formas de papel se diseñan en un editor (color, degradado, esquinas, doblez, sombra) y se guardan o se comparten como archivo. Los marcos tienen el suyo: grosor de cada lado, color, bisel, textura y sombras, con puntos de partida (madera, oro, plata, paspartú…), y se llevan con el widget.</p></div>
+      <div><h3 data-i="f6t">Tus propias formas de papel y marcos</h3><p data-i="f6p">Las formas de papel se diseñan en un editor (color y degradado con transparencia, borde, esquinas, doblez, sombra) y se guardan o se comparten como archivo. Los marcos tienen el suyo: grosor de cada lado, color, bisel, textura y sombras, con puntos de partida (madera, oro, plata, paspartú…), y se llevan con el widget.</p></div>
     </div>
   </section>
 
@@ -415,7 +422,7 @@
   <section class="block">
     <div class="comm">
       <h2 data-i="h_comm">Galería de escritorios: en preparación</h2>
-      <p data-i="p_comm">Queremos un sitio donde enseñes tu escritorio y puedas bajarte los de otras personas: sets, widgets y formas de papel en los archivos de arriba.</p>
+      <p data-i="p_comm">Sueño con un sitio donde enseñes tu escritorio y puedas bajarte los de otras personas: sets, widgets y formas de papel en los archivos de arriba.</p>
       <ul>
         <li data-i="c1">Cada envío se revisa antes de publicarse, con un filtro de palabras y una mirada humana.</li>
         <li data-i="c2">Lo que se publica es un archivo que puedes abrir en el programa, no una captura suelta.</li>
@@ -444,10 +451,10 @@
       <details><summary data-i="d3">¿Por qué mi sistema avisa de que no lo conoce?</summary><ul data-list="d3l"></ul></details>
     </div>
     <div class="kofi">
-      <p data-i="kofi_t">¿Te resulta útil? Es gratis y sin anuncios; si quieres apoyar su desarrollo, puedes invitarme a un café.</p>
+      <p data-i="kofi_t">¿Te resulta útil? Es gratis y sin anuncios; si quieres apoyar su desarrollo, puedes hacerlo desde aquí.</p>
       <a href="https://ko-fi.com/jaimeluisolguinmesina" target="_blank" rel="noopener">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h13v6a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5V8z"/><path d="M16 9h2a3 3 0 0 1 0 6h-2"/><path d="M7 2v2M11 2v2"/></svg>
-        <span data-i="kofi_b">Invítame a un café</span>
+        <span data-i="kofi_b">Apoyar</span>
       </a>
     </div>
   </section>
@@ -483,21 +490,21 @@
       p_ropes2: "<kbd>Ctrl</kbd> + arrastrar una nota sobre otra la hace hija suya; con <kbd>Alt</kbd>, madre. Con <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Mayús</kbd> + arrastrar nace una hija donde sueltes.",
       b_fold: "Contraer hijos", b_unfold: "Expandir hijos", l_follow: "Los hijos siguen al padre",
       t_root: "Proyecto", t_design: "Diseño", t_text: "Texto", t_ship: "Entrega", t_rev: "Revisión", hidden_n: "ocultos",
-      h_paper: "Formas de papel que se dibujan, no se buscan",
-      p_paper: "Doblez de esquina, cinta, borde, degradado, sombra y esquinas redondeadas: el editor dibuja el papel a partir de unos parámetros. Es lo que ves aquí: imágenes generadas por el propio programa. Como se redibujan solas, no pesan al compartirlas.",
+      h_paper: "Formas de papel y marcos que diseñas tú",
+      p_paper: "Doblez de esquina, cinta, borde (también el del doblez), degradado con transparencia en cada color, sombra y esquinas redondeadas: el editor dibuja el papel a partir de unos parámetros. Los marcos se crean igual, con el grosor de cada lado, color, bisel, textura y sombras. Es lo que ves aquí: imágenes generadas por el propio programa; como se redibujan solas, no pesan al compartirlas.",
       f1t: "Sets de widgets", f1p: "Guarda lo que tienes en pantalla con un nombre y cambia entre sets al instante con <kbd>Ctrl</kbd> + <kbd>1</kbd>…<kbd>0</kbd>. Cada set recuerda sus propios cables y ajustes.",
       f2t: "Botones y enlaces dentro del texto", f2p: "Un botón puede abrir una página en el mini-navegador o lanzar una llamada HTTP en segundo plano, sin abrir ninguna ventana.",
       f3t: "Color a mano", f3p: "<kbd>Ctrl</kbd> + rueda sobre un widget cambia su tono, y los cables toman sus colores. Con <kbd>Mayús</kbd> el ajuste es fino.",
       f4t: "Todo configurable", f4p: "Grosor, peso y curvatura de los cables, jerarquía, atajos de teclado y gestos del icono de la bandeja. Tus datos son archivos JSON en tu carpeta, con copias de seguridad.",
       f5t: "Avisos en el móvil con Telegram", f5p: "Ponle un temporizador a un widget y, al cumplirse, te llega un mensaje a Telegram. Es opcional y usa tu propio bot: necesitas el token del bot (te lo da BotFather) y tu ID de usuario o de chat.",
-      f6t: "Tus propias formas de papel y marcos", f6p: "Las formas de papel se diseñan en un editor (color, degradado, esquinas, doblez, sombra) y se guardan o se comparten como archivo. Los marcos tienen el suyo: grosor de cada lado, color, bisel, textura y sombras, con puntos de partida (madera, oro, plata, paspartú…), y se llevan con el widget.",
+      f6t: "Tus propias formas de papel y marcos", f6p: "Las formas de papel se diseñan en un editor (color y degradado con transparencia, borde, esquinas, doblez, sombra) y se guardan o se comparten como archivo. Los marcos tienen el suyo: grosor de cada lado, color, bisel, textura y sombras, con puntos de partida (madera, oro, plata, paspartú…), y se llevan con el widget.",
       h_share: "Llévatelo a otro equipo o compártelo",
       p_share: "Todo lo que creas se guarda en un archivo comprimido con sus imágenes dentro. Se abre arrastrándolo a la ventana de Widget Arena o con «Cargar un archivo»: el programa averigua qué es. Nunca lleva datos de Telegram.",
       b_example: "Descargar un pack de ejemplo",
       x_pack: "<b>Un pack:</b> varios widgets guardados y sets, listos para estrenar.", x_set: "<b>Widgets enlazados:</b> un árbol, o todos los de tu set, con la configuración si quieres.",
       x_widget: "<b>Un widget guardado:</b> su aspecto y su contenido.", x_paper: "<b>Una forma de papel:</b> solo el aspecto, sin texto ni posición.",
       h_comm: "Galería de escritorios: en preparación",
-      p_comm: "Queremos un sitio donde enseñes tu escritorio y puedas bajarte los de otras personas: sets, widgets y formas de papel en los archivos de arriba.",
+      p_comm: "Sueño con un sitio donde enseñes tu escritorio y puedas bajarte los de otras personas: sets, widgets y formas de papel en los archivos de arriba.",
       c1: "Cada envío se revisa antes de publicarse, con un filtro de palabras y una mirada humana.",
       c2: "Lo que se publica es un archivo que puedes abrir en el programa, no una captura suelta.",
       c3: "Todavía no hay galería ni subida de archivos: esta página es estática. Si te interesa, dínoslo.",
@@ -528,8 +535,8 @@
       d3l: ["El instalador no está firmado con un certificado de pago, así que Windows (SmartScreen) y macOS (Gatekeeper) lo avisan al abrir algo descargado que no conocen. Es normal.",
             "El código es abierto: puedes leer exactamente lo que hace el instalador en el repositorio de GitHub antes de ejecutarlo.",
             "Windows: «Más información» → «Ejecutar de todas formas». macOS: clic derecho sobre el archivo → «Abrir»."],
-      kofi_t: "¿Te resulta útil? Es gratis y sin anuncios; si quieres apoyar su desarrollo, puedes invitarme a un café.",
-      kofi_b: "Invítame a un café", ver: "Versión actual", foot: "Software libre con licencia MIT."
+      kofi_t: "¿Te resulta útil? Es gratis y sin anuncios; si quieres apoyar su desarrollo, puedes hacerlo desde aquí.",
+      kofi_b: "Apoyar", ver: "Versión actual", foot: "Software libre con licencia MIT."
     },
     en: {
       n_layers: "Widgets", n_ropes: "Hierarchies", n_paper: "Paper shapes", n_share: "Share", n_install: "Install",
@@ -551,21 +558,21 @@
       p_ropes2: "<kbd>Ctrl</kbd> + drag a note onto another to make it its child; with <kbd>Alt</kbd>, its parent. <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + drag creates a child where you drop it.",
       b_fold: "Collapse children", b_unfold: "Expand children", l_follow: "Children follow their parent",
       t_root: "Project", t_design: "Design", t_text: "Writing", t_ship: "Delivery", t_rev: "Review", hidden_n: "hidden",
-      h_paper: "Paper shapes that are drawn, not searched for",
-      p_paper: "Folded corner, tape, border, gradient, shadow and rounded corners: the editor draws the paper from a few parameters. What you see here are images generated by the program itself. Because they are redrawn on load, they add no weight when you share them.",
+      h_paper: "Paper shapes and frames you design yourself",
+      p_paper: "Folded corner, tape, border (the fold's too), a gradient with transparency on each colour, shadow and rounded corners: the editor draws the paper from a few parameters. Frames are created the same way, with the thickness of each side, colour, bevel, texture and shadows. What you see here are images generated by the program itself; because they are redrawn on load, they add no weight when you share them.",
       f1t: "Widget sets", f1p: "Save what is on screen under a name and switch between sets instantly with <kbd>Ctrl</kbd> + <kbd>1</kbd>…<kbd>0</kbd>. Each set remembers its own cables and settings.",
       f2t: "Buttons and links inside the text", f2p: "A button can open a page in the mini-browser or fire an HTTP call in the background, without opening any window.",
       f3t: "Colour by hand", f3p: "<kbd>Ctrl</kbd> + wheel over a widget changes its hue, and the cables take its colours. With <kbd>Shift</kbd> the adjustment is fine.",
       f4t: "Configurable all the way", f4p: "Cable thickness, weight and curvature, hierarchy, keyboard shortcuts and tray icon gestures. Your data is JSON files in your folder, with backups.",
       f5t: "Phone alerts through Telegram", f5p: "Set a timer on a widget and, when it ends, a message arrives on Telegram. It is optional and uses your own bot: you need the bot token (from BotFather) and your user or chat ID.",
-      f6t: "Your own paper shapes and frames", f6p: "Paper shapes are designed in an editor (colour, gradient, corners, fold, shadow) and saved or shared as a file. Frames will get their own editor in the next version.",
+      f6t: "Your own paper shapes and frames", f6p: "Paper shapes are designed in an editor (colour and gradient with transparency, border, corners, fold, shadow) and saved or shared as a file. Frames have theirs: thickness of each side, colour, bevel, texture and shadows, with starting points (wood, gold, silver, mat…); they travel with the widget.",
       h_share: "Take it to another computer or share it",
       p_share: "Everything you create is saved in a compressed file with its images inside. Open it by dragging it onto the Widget Arena window or with “Load a file”: the program works out what it is. It never carries Telegram data.",
       b_example: "Download an example pack",
       x_pack: "<b>A pack:</b> several saved widgets and sets, ready to use.", x_set: "<b>Linked widgets:</b> a tree, or all the widgets in your set, with the settings if you want.",
       x_widget: "<b>A saved widget:</b> its look and its content.", x_paper: "<b>A paper shape:</b> just the look, without text or position.",
       h_comm: "Desktop gallery: coming soon",
-      p_comm: "We want a place where you can show your desktop and download other people's: sets, widgets and paper shapes in the files above.",
+      p_comm: "I dream of a place where you can show your desktop and download other people's: sets, widgets and paper shapes in the files above.",
       c1: "Every submission is reviewed before it is published, with a word filter and a human look.",
       c2: "What gets published is a file you can open in the program, not just a screenshot.",
       c3: "There is no gallery or file upload yet: this page is static. If you are interested, tell us.",
@@ -596,8 +603,8 @@
       d3l: ["The installer is not signed with a paid certificate, so Windows (SmartScreen) and macOS (Gatekeeper) warn about downloaded files they do not know. That is expected.",
             "The code is open source: you can read exactly what the installer does in the GitHub repository before running it.",
             "Windows: “More info” → “Run anyway”. macOS: right-click the file → “Open”."],
-      kofi_t: "Find it useful? It is free and ad-free; if you want to support its development, you can buy me a coffee.",
-      kofi_b: "Buy me a coffee", ver: "Current version", foot: "Free software under the MIT license."
+      kofi_t: "Find it useful? It is free and ad-free; if you want to support its development, you can do it from here.",
+      kofi_b: "Support", ver: "Current version", foot: "Free software under the MIT license."
     }
   };
   var FILES = { win: "dl/install-windows.cmd", mac: "dl/install-macos.zip", linux: "dl/install-linux.sh" };

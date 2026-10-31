@@ -1,3 +1,11 @@
+## Pack 132 · 2026-10-31
+- **Forma de papel: transparencia en cada color.** El color de fondo y el segundo color del degradado tienen cada uno su **opacidad** (0-100 %), de modo que el papel puede desvanecerse de opaco a transparente (pestaña *Forma y color → Color y degradado*). El reverso del pico doblado sigue la opacidad del papel.
+- **Borde con degradado y opacidad propios** (*Borde y franja adhesiva*): color y opacidad del borde, y «Degradado hasta» con segundo color, su opacidad, la dirección y el balance. La opacidad del borde es independiente de la del papel y deja ver lo que hay detrás del widget (no se mezcla con el color del papel).
+- **Borde del doblez** (nueva pestaña *Borde del doblez*): rodea la solapa del pico doblado con grosor, color, degradado, opacidad, dirección y balance propios, aparte del borde del papel. Con grosor 0 queda el filo claro de siempre.
+- Todo es opcional y las formas de papel anteriores se dibujan igual que antes (valores por defecto: opaco, sin degradado en el borde, sin borde del doblez).
+- **Apoyar el proyecto:** el botón y el texto de *Acerca de*, la web y el README dicen ahora «Apoyar» en lugar de «Invítame a un café».
+- **Web:** la sección de papeles se titula «Formas de papel y marcos que diseñas tú», muestra también marcos y menciona que los marcos se crean con su propio editor; textos de la tarjeta de marcos y de la comunidad reescritos.
+
 ## Pack 131 · 2026-10-31
 - **Marcos editables**, igual que las formas de papel: menú del widget → *Aspecto* → *Marco* → *Generar marco...* / *Editar este marco...*. El editor deja fijar el tamaño y el grosor de cada lado, el color, el bisel, la textura, las sombras y el filo, con puntos de partida (Madera, Negro, Blanco, Oro, Plata, Rojo laca, Fino negro, Paspartú), vista previa sobre un paisaje y *Copiar marco / Pegar marco* en JSON. El marco es un PNG con el centro transparente en la capa 1 (la imagen o la web de la capa 2 se ajusta al hueco); sus parámetros se guardan en el widget, así que se puede volver a editar, y el PNG viaja con el widget en `.waset`, `.wawidget` y las copias.
 - **El efecto resorte también actúa sobre la cuerda** (antes la física de cuerda lo anulaba y solo se veía en la miniatura).

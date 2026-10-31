@@ -162,9 +162,9 @@ En el repositorio: **Settings → Pages → Build and deployment → Source: Git
 
 ## Apoyar el proyecto
 
-Es gratis y sin anuncios. Si te resulta útil, puedes invitarme a un café:
+Es gratis y sin anuncios. Si te resulta útil, puedes apoyar el proyecto:
 
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-Inv%C3%ADtame%20a%20un%20caf%C3%A9-ff5e5b?logo=ko-fi&logoColor=white&style=for-the-badge)](https://ko-fi.com/jaimeluisolguinmesina)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Apoyar-ff5e5b?logo=ko-fi&logoColor=white&style=for-the-badge)](https://ko-fi.com/jaimeluisolguinmesina)
 
 ## Si algo no funciona: los registros
 
