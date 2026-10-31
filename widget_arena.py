@@ -2245,10 +2245,19 @@ class StickerWindow(QMainWindow):
         self.central_widget.setMouseTracking(True)
         
     def _get_cache_key(self, path, rotation, effects):
+        # [PACK124] La ruta guardada es relativa a la carpeta de datos ('widget_arena_data/...'): hay que buscar el archivo real para
+        # leer su fecha y tamano. Antes, si el programa no se ejecutaba en esa carpeta, la fecha salia 0 y una imagen nueva con el mismo
+        # nombre (la vista en vivo del editor reutiliza vivo_1.png, vivo_2.png...) recibia la imagen vieja de la cache.
         mtime = 0
+        size = 0
         try:
-            norm_path = os.path.normpath(path)
-            mtime = os.path.getmtime(norm_path)
+            real = _find_stored_file(path) if isinstance(path, str) else None
+        except Exception:
+            real = None
+        try:
+            norm_path = os.path.normpath(real or path)
+            _st = os.stat(norm_path)
+            mtime, size = _st.st_mtime, _st.st_size
         except Exception as e:
             log_warn("Cache", f"No se pudo obtener mtime para {path}: {e}")
             norm_path = path
@@ -2257,7 +2266,7 @@ class StickerWindow(QMainWindow):
             effects = {}
         effects_str = json.dumps(effects, sort_keys=True)
         
-        key_str = f"{norm_path}|mtime:{mtime}|rot:{rotation}|fx:{effects_str}"
+        key_str = f"{norm_path}|mtime:{mtime}|size:{size}|rot:{rotation}|fx:{effects_str}"
         
         hash_name = hashlib.md5(key_str.encode('utf-8')).hexdigest()
         
@@ -11376,7 +11385,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 123                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 124                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -20342,16 +20351,19 @@ class WidgetManager(QObject):
 
         def live(params):                # [PACK80] pinta los cambios en la nota real; None = volver a como estaba
             if params is None:
+                self._live_wid = None
                 if live_state['on'] and win is not None:
                     win.load_template_data(st['template_data'])
                     live_state['on'] = False
                 return
+            self._live_wid = widget_id           # [PACK124] mientras tanto, guardar o cambiar de set no toma la vista previa como estado
             self.preview_base_note(widget_id, params)
             live_state['on'] = True
         dlg = BaseNoteDialog(self, self.dialog_parent, start if isinstance(start, dict) else {}, editing=True, live=live)
         try:
             ok = dlg.exec()
         finally:
+            self._live_wid = None
             self._live_cleanup()
         if ok:
             self.apply_base_note(widget_id, dlg.get_params())
@@ -20368,7 +20380,7 @@ class WidgetManager(QObject):
         d = os.path.join(STICKY_DIR, '_vivo')
         os.makedirs(d, exist_ok=True)
         self._live_n = getattr(self, '_live_n', 0) + 1
-        path = os.path.join(d, f"vivo_{self._live_n}.png")
+        path = os.path.join(d, f"vivo_{int(time.time() * 1000)}_{self._live_n}.png")      # [PACK124] nombre unico (no se repite entre ejecuciones)
         img.save(path, 'PNG')
         try:
             rel = _store_path(path)
@@ -20377,8 +20389,11 @@ class WidgetManager(QObject):
         W = img.width()
         pad = (W - int(p['w'])) // 2
         td = copy.deepcopy(st['template_data'])
-        td.setdefault('layer2', {}).update({"type": "png", "content": rel, "scaled_contents": True, "geometry": {"x": 0, "y": 0, "w": W, "h": img.height()}})
-        td.setdefault('layer1', {})['geometry'] = {"x": pad + 10, "y": pad + 10, "w": int(p['w']) - 20, "h": int(p['h']) - 20}
+        sc = self._base_note_scale(st['template_data'])       # [PACK124] como al aplicar: el widget no cambia de tamano al abrir el editor
+        td.setdefault('layer2', {}).update({"type": "png", "content": rel, "scaled_contents": True,
+                                            "geometry": {"x": 0, "y": 0, "w": int(round(W * sc)), "h": int(round(img.height() * sc))}})
+        td.setdefault('layer1', {})['geometry'] = {"x": int(round((pad + 10) * sc)), "y": int(round((pad + 10) * sc)),
+                                                   "w": int(round((int(p['w']) - 20) * sc)), "h": int(round((int(p['h']) - 20) * sc))}
         win.load_template_data(td)
 
     def _live_cleanup(self):
@@ -22958,6 +22973,8 @@ class WidgetManager(QObject):
             for widget_id, window in self.widgets.items():
                 if widget_id in self.global_state:
                     self.global_state[widget_id]['always_on_top'] = window.always_on_top
+                    if widget_id == getattr(self, '_live_wid', None):       # [PACK124] vista en vivo del editor: se guarda lo original
+                        continue
                     self.global_state[widget_id]['template_data'] = window.current_template_data
                     if window.isVisible():
                         # Red de seguridad: la posicion solo se guardaba al soltar un arrastre.
@@ -23026,9 +23043,15 @@ class WidgetManager(QObject):
 
     def _sync_windows_to_state(self):
         """Vuelca a global_state lo que solo vive en las ventanas (posicion, always_on_top, plantilla)."""
+        _lv = getattr(self, '_live_wid', None)
         for wid, w in self.widgets.items():
             if wid in self.global_state:
                 self.global_state[wid]['always_on_top'] = w.always_on_top
+                if wid == _lv:                # [PACK124] editando su forma de papel en vivo: lo guardado es lo original, solo la posicion se toma de la ventana
+                    if w.isVisible():
+                        g = self.global_state[wid]['template_data'].setdefault('geometry', {})
+                        g['x'], g['y'] = w.pos().x(), w.pos().y()
+                    continue
                 self.global_state[wid]['template_data'] = w.current_template_data
                 if w.isVisible():
                     g = w.current_template_data.setdefault('geometry', {})

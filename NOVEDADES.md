@@ -1,3 +1,7 @@
+## Pack 124 · 2026-10-31
+- **Editar forma de papel: la vista en vivo ya no enseña imágenes viejas.** Las imágenes de los widgets se guardan en una caché cuya clave incluía la fecha del archivo, pero esa fecha no se leía cuando el programa no se ejecutaba desde la carpeta de datos; entonces una imagen nueva con el mismo nombre recibía la antigua. La vista en vivo reutilizaba los nombres `vivo_1.png`, `vivo_2.png`... en cada ejecución, así que el widget enseñaba formas que no eran las actuales y los cambios de dimensiones no se veían bien. Ahora la clave usa el archivo real (ruta, fecha y tamaño) y cada imagen de la vista en vivo lleva un nombre único.
+- **Editar forma de papel**: al abrir el editor, el widget ya no cambia de tamaño (las notas de bienvenida, al 78 %, saltaban al tamaño normal). Y si mientras el editor está abierto algo guarda el estado (por ejemplo, un cambio de set con un atajo global), se guarda la forma original, no la vista previa.
+
 ## Pack 123 · 2026-10-31
 - **Mover un árbol de widgets a otro set**: clic derecho sobre un widget → *Mover árbol a otro set...* (en la sección de gestión de widgets, junto a *Copiar / Pegar / Exportar árbol*). Eliges un set de la lista **o *Set nuevo...*** y, si quieres, *Ir a ese set después*. El widget y todos sus descendientes se quitan de este set y pasan al otro con la jerarquía intacta; el set de destino no se pisa (si el nombre del set nuevo ya existe se le añade un número) y, si ya tiene widgets en esas posiciones, el árbol se desplaza un poco para que no quede encima.
 
