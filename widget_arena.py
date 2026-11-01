@@ -4170,6 +4170,15 @@ class StickerWindow(QMainWindow):
             event.ignore()
             return
 
+        if has_ctrl and has_alt and has_shift and not (modifiers & Qt.MetaModifier):        # [PACK140] Ctrl+Alt+Mayus+rueda: girar el widget de 5 en 5 grados
+            acc = getattr(self, '_rot_wheel_acc', 0) + delta_y                 # un toque de rueda = 120; un panel tactil manda trozos menores
+            n = int(acc / 120)
+            self._rot_wheel_acc = acc - n * 120
+            if n:
+                self.act_rotate_note_by(5 * n)
+            event.accept()
+            return
+
         if has_ctrl and not has_shift:
             btn_href = self._get_link_at(event.position().toPoint()) or ''
             if 'btn=1' in btn_href:
@@ -11902,7 +11911,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 139                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 140                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -20936,7 +20945,8 @@ class WidgetManager(QObject):
         a.triggered.connect(lambda: win.act_rotate_note(0))
         rn.addAction(a)
         rn.addSeparator()
-        for label, dg in (("Girar 180\u00b0", 180), ("Girar 90\u00b0 en sentido antihorario", -90), ("Girar 90\u00b0 en sentido horario", 90)):
+        for label, dg in (("Girar 5\u00b0 en sentido horario (Ctrl+Alt+May\u00fas+rueda arriba)", 5), ("Girar 5\u00b0 en sentido antihorario (Ctrl+Alt+May\u00fas+rueda abajo)", -5),
+                          ("Girar 180\u00b0", 180), ("Girar 90\u00b0 en sentido antihorario", -90), ("Girar 90\u00b0 en sentido horario", 90)):
             a = QAction(label, self)
             a.triggered.connect(lambda checked=False, d_=dg: win.act_rotate_note_by(d_))
             rn.addAction(a)

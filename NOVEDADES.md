@@ -1,3 +1,6 @@
+## Pack 140 · 2026-11-01
+- **Ctrl+Alt+Mayús+rueda gira el widget de 5 en 5 grados** (rueda arriba, en sentido horario; abajo, antihorario), con el widget bajo el cursor. Gira las dos capas por igual, como el resto de giros. Con un panel táctil se acumulan los movimientos pequeños hasta completar cada paso. También está en *Aspecto → Girar widget*.
+
 ## Pack 139 · 2026-11-01
 - **Arreglo: un widget que no es transparente ya no se vuelve transparente bajo otro que sí lo es.** El atenuado de los Packs 136-137 rebajaba la opacidad de *cualquier* widget bajo un cristal; con eso asomaban el escritorio (iconos, nombres de carpetas) y los widgets de abajo a través de un papel opaco que los tapaba. Ahora **solo se atenúa un papel transparente** (el que cubre menos de la mitad): los demás, aunque no sean opacos al 100 %, siguen tapando lo que tienen detrás, como una sola capa, y manda el orden por clic y jerarquía (un grupo corta al otro). Desaparece la lógica que ocultaba lo de debajo (Pack 137), que ya no hace falta.
 - El ajuste *Cables → Transparencias → Un widget bajo otro transparente* pasa a describir exactamente eso.
