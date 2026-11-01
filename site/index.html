@@ -37,15 +37,17 @@
   /* ---------- cabecera + portada: un escritorio ---------- */
   .desk { background: radial-gradient(1200px 520px at 75% 40%, #1d4a4e 0%, transparent 70%), linear-gradient(180deg, var(--desk), var(--desk-2)); color: var(--desk-ink); }
   header.top { display: flex; align-items: center; gap: 18px; padding: 16px 0; }
-  .brand { display: flex; align-items: center; gap: 10px; font: 700 21px var(--head); text-decoration: none; margin-right: auto; }
-  .brand img { width: 32px; height: 32px; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 700 25px var(--head); text-decoration: none; margin-right: auto; }
+  .brand img { width: 40px; height: 40px; }
   nav.main { display: flex; gap: 20px; font-size: 15px; }
   nav.main a { text-decoration: none; color: var(--desk-muted); padding: 4px 0; }
   nav.main a:hover { color: var(--desk-ink); }
   .lang { background: none; border: 1px solid #3e6a6a; color: var(--desk-muted); border-radius: 999px; padding: 6px 13px; font: inherit; font-size: 14px; cursor: pointer; }
   .lang:hover { color: var(--desk-ink); border-color: var(--desk-muted); }
   .hero { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 34px; align-items: center; padding: 18px 0 44px; }
-  h1 { font-size: clamp(34px, 4.1vw, 50px); margin-bottom: 16px; }
+  h1 { margin-bottom: 16px; }
+  h1 .wname { display: block; font-size: clamp(44px, 4.9vw, 62px); line-height: 1; letter-spacing: -.02em; margin-bottom: 12px; color: var(--desk-ink); }
+  h1 .tagline { display: block; font-size: clamp(24px, 2.7vw, 34px); line-height: 1.12; font-weight: 600; color: var(--yellow); }
   .lead { font-size: 19px; color: var(--desk-muted); max-width: 31em; margin-bottom: 26px; }
   .cta { display: inline-flex; align-items: center; gap: 12px; background: var(--yellow); color: var(--yellow-ink); text-decoration: none; font-weight: 700; font-size: 20px;
          padding: 15px 26px; border-radius: 12px; border: 2px solid var(--yellow-edge); box-shadow: 0 4px 0 var(--yellow-edge); transition: transform .08s, box-shadow .08s; }
@@ -242,7 +244,7 @@
 <div class="desk">
   <div class="wrap">
     <header class="top">
-      <a class="brand" href="#"><img src="favicon.png" alt="" width="32" height="32"><span>Widget Arena</span></a>
+      <a class="brand" href="#"><img src="favicon.png" alt="" width="40" height="40"><span>Widget Arena</span></a>
       <nav class="main" aria-label="Secciones">
         <a href="#layers" data-i="n_layers">Widgets</a>
         <a href="#ropes" data-i="n_ropes">Jerarquías</a>
@@ -256,7 +258,7 @@
     <main>
     <div class="hero">
       <div>
-        <h1 data-i="h1">Widgets para tu escritorio.</h1>
+        <h1><span class="wname">Widget Arena</span><span class="tagline" data-i="h1">Widgets para tu escritorio.</span></h1>
         <p class="sub" data-i="sub">Y si quieres, jerarquizables: enlázalos con cables como padres e hijos y contrae o expande las ramas.</p>
         <p class="lead" data-i="lead">Notas, imágenes, páginas web y botones que flotan sobre tus programas. Cambia de set con una tecla y déjalos a tu manera. Sin Python, sin administrador, un solo clic.</p>
         <a class="cta" id="cta" href="dl/install-windows.cmd" download>
