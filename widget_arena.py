@@ -4927,6 +4927,17 @@ class StickerWindow(QMainWindow):
         if c is not None and c[0] == key:
             return c[1]
         res = (0.0, 0.0, 1.0, 1.0)
+        bp = self.current_template_data.get('base_note')
+        _c2 = os.path.basename(str((self.current_template_data.get('layer2') or {}).get('content', '')).replace('\\', '/'))
+        if isinstance(bp, dict) and _c2.startswith('nota_base_'):         # [PACK136] nota base: el papel se sabe por sus medidas, no por los pixeles
+            try:
+                _pw, _ph, _mg = _bn_geom(bp)
+                _W0, _H0 = _pw + 2.0 * _mg, _ph + 2.0 * _mg
+                res = (_mg / _W0, _mg / _H0, (_mg + _pw) / _W0, (_mg + _ph) / _H0)
+                self._pfrac_cache = (key, res)
+                return res
+            except Exception:
+                res = (0.0, 0.0, 1.0, 1.0)
         try:
             k = 160.0 / max(pm.width(), pm.height(), 1)
             small = pm if k >= 1.0 else pm.scaled(max(1, int(pm.width() * k)), max(1, int(pm.height() * k)),
@@ -5554,6 +5565,8 @@ class StickerWindow(QMainWindow):
         """Region (coordenadas de la ventana) que ocupa de verdad el widget: lo opaco de sus capas de imagen (sin el halo de la
         sombra) o el recuadro de la web. Se usa para que los cables no se vean dentro de los widgets que unen."""
         try:
+            if _widget_kind({'template_data': self.current_template_data}) == 'nota':       # [PACK136] el papel, sin el halo de la sombra
+                return QRegion(self.paper_poly_global().translated(-self.geometry().topLeft()))
             parts = []
             if self.layer2_label.isVisible() and not self.layer2_label.pixmap().isNull():
                 parts.append(('l2', self.layer2_label.pixmap(), self.layer2_label.geometry().topLeft()))
@@ -5578,6 +5591,124 @@ class StickerWindow(QMainWindow):
             return reg
         except Exception:
             return QRegion(self.rect())
+
+    # ---------------------------------------------------------------- [PACK136] velo bajo widgets transparentes y orden de apilamiento
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        try:
+            self.manager.veil_schedule()
+        except Exception:
+            pass
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        try:
+            if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+                self.manager.veil_raised(self)
+        except Exception:
+            pass
+
+    def raise_(self):
+        super().raise_()
+        try:
+            self.manager.veil_raised(self)
+        except Exception:
+            pass
+
+    def paper_translucent(self):
+        """True si el papel de esta nota deja ver lo que hay detras (la parte central de su imagen no es opaca)."""
+        try:
+            if _widget_kind({'template_data': self.current_template_data}) != 'nota':
+                return False
+            pm = self.layer2_label.pixmap()
+            if pm is None or pm.isNull() or not self.layer2_label.isVisible():
+                return False
+            key = pm.cacheKey()
+            c = getattr(self, '_transl_cache', None)
+            if c is not None and c[0] == key:
+                return c[1]
+            a = _image_alpha(pm.toImage())
+            h, w = a.shape
+            core = a[h // 4:max(h // 4 + 1, 3 * h // 4), w // 4:max(w // 4 + 1, 3 * w // 4)]
+            v = bool(core.size and float(core.mean()) < 245.0)
+            self._transl_cache = (key, v)
+            return v
+        except Exception:
+            return False
+
+    def paper_poly_global(self):
+        """Poligono (coordenadas globales) del papel de la nota con su giro, sin el halo de la sombra. Para los cables y el velo."""
+        import math
+        from PySide6.QtGui import QPolygon
+        geo = self.geometry()
+        try:
+            l2w = self.layer2_label if self.layer2_label.isVisible() else self.layer2_web
+            g = l2w.geometry()
+
+            _pm = getattr(self, 'layer2_base_pixmap', None)
+            rot = float(self.layer2_label.property("rotation") or 0.0)
+            l2 = self.current_template_data.get('layer2', {})
+            og = l2.get('geometry', {})
+            key = (geo.x(), geo.y(), geo.width(), geo.height(), g.x(), g.y(), g.width(), g.height(), rot,
+                   _pm.cacheKey() if _pm is not None else 0, tuple(og.get(k_) for k_ in 'wh'), bool(l2.get('scaled_contents', True)))
+            c = getattr(self, '_ppoly_cache', None)
+            if c is not None and c[0] == key:
+                return c[1]
+
+            ow, oh = float(og.get('w', 0) or g.width()), float(og.get('h', 0) or g.height())
+            if ow <= 0 or oh <= 0 or g.width() <= 0 or g.height() <= 0:
+                raise ValueError('capa 2 sin tamano')
+
+            f0x, f0y, f1x, f1y = self._paper_fractions()
+            sw, sh = ow, oh
+            if _pm is not None and not _pm.isNull() and not l2.get('scaled_contents', True):
+                _ks = min(ow / max(1.0, _pm.width()), oh / max(1.0, _pm.height()))
+                sw, sh = _pm.width() * _ks, _pm.height() * _ks
+
+            w, h = (f1x - f0x) * sw, (f1y - f0y) * sh
+            a = math.radians(rot)
+            ca, sa = math.cos(a), math.sin(a)
+
+            lcx, lcy = g.x() + g.width() / 2.0, g.y() + g.height() / 2.0
+            dx, dy = ((f0x + f1x) / 2.0 - 0.5) * sw, ((f0y + f1y) / 2.0 - 0.5) * sh
+            cx, cy = lcx + dx * ca - dy * sa, lcy + dx * sa + dy * ca
+
+            hw, hh = w / 2.0 + 1.5, h / 2.0 + 1.5
+            poly = QPolygon([QPoint(int(round(geo.x() + cx + ux * ca - uy * sa)), int(round(geo.y() + cy + ux * sa + uy * ca)))
+                             for ux, uy in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))])
+
+            self._ppoly_cache = (key, poly)
+            return poly
+        except Exception:
+            return QPolygon(self.paper_rect_global())
+
+    def set_under_veil(self, global_regions, op_pct):
+        """Resta opacidad (hasta dejar op_pct %) a lo que este widget dibuja bajo esas regiones globales."""
+        v = getattr(self, '_under_veil', None)
+        if v is None:
+            if not global_regions:
+                return
+            v = self._under_veil = _UnderVeil(self.central_widget)
+        origin = v.mapToGlobal(QPoint(0, 0))
+        reg = QRegion()
+        for r in global_regions:
+            reg = reg.united(r)
+        reg = reg.translated(-origin.x(), -origin.y())
+        alpha = int(round(255 * (1.0 - max(0, min(100, op_pct)) / 100.0)))
+        if reg.isEmpty() or alpha <= 0:
+            if v.isVisible():
+                v.region = QRegion()
+                v.hide()
+            return
+
+        if reg == v.region and alpha == v.alpha and v.isVisible():
+            v.raise_()
+            return
+        v.setGeometry(self.central_widget.rect())
+        v.region, v.alpha = reg, alpha
+        v.show()
+        v.raise_()
+        v.update()
 
     def _get_shortest_angle_path(self, start_angle, target_angle):
         diff = target_angle - start_angle
@@ -11724,7 +11855,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 135                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 136                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -14888,11 +15019,14 @@ CABLE_DIALOG_SPEC = [
             ('@perf', "Medir este equipo y recomendar la calidad...", 'b', None, None)],
          "En un PC justo, 'Ligera' es lo m\u00e1s r\u00e1pido. En 'Autom\u00e1tica' la animaci\u00f3n tambi\u00e9n se pausa mientras hay un men\u00fa abierto y se limita sola seg\u00fan lo que tarda en pintar. El bot\u00f3n dibuja cables de prueba (unos 3 segundos) y propone la calidad, los fotogramas y el difuminado; no cambia nada hasta que lo aceptes."),
     ])]),
-    ("Widgets", [
+    ("Transparencias", [
         ("El cable dentro de los widgets que une", [
             ('_cable_inside_op', "Opacidad del cable dentro de esos widgets (0 % = no se ve: nace del borde)", 'i', " %", None),
             ('_cable_inside_blur', "Difuminado del cable dentro de esos widgets (0 = n\u00edtido)", 'i', " px", None)],
-         "Con 0 % el cable se ve solo desde el borde del widget hacia fuera, aunque el papel sea transl\u00facido. Con un valor intermedio se ve a trav\u00e9s del papel como a trav\u00e9s de un cristal, y el difuminado lo desenfoca. Con 100 % y 0 px se ve entero, nazca donde nazca.")]),
+         "Con 0 % el cable se ve solo desde el borde del widget hacia fuera, aunque el papel sea transl\u00facido. Con un valor intermedio se ve a trav\u00e9s del papel como a trav\u00e9s de un cristal, y el difuminado lo desenfoca. Con 100 % y 0 px se ve entero, nazca donde nazca."),
+        ("Un widget bajo otro transparente", [
+            ('_under_op', "Opacidad de lo que queda bajo el papel transl\u00facido de otro widget (100 % = sin cambio)", 'i', " %", None)],
+         "Ayuda a distinguir cu\u00e1l est\u00e1 encima: la parte de un widget que queda bajo un widget de papel transl\u00facido se ve mucho m\u00e1s tenue. Solo afecta a notas con papel transl\u00facido. El orden se aprende de los clics: si una ventana se sube por otra v\u00eda (otro programa, por ejemplo), puede equivocarse hasta que haces clic en ella.")]),
     ("Color y brillo", [
         ("Degradado de color entre padre e hijo", [
             ('_cable_grad_start', "Color puro junto a cada widget (tramo por extremo, m\u00e1x. 50 %)", 'i', " %", 'grad')],
@@ -15765,6 +15899,46 @@ class PerfStudyDialog(QDialog):
             cfg.update({'asked': True, 'pendiente': False})       # con "Ahora no" no se vuelve a ofrecer solo
             perf_cfg_save(cfg)
         super().done(r)
+
+
+# ---------------------------------------------------------------- [PACK136] papel real de las notas y velo sobre lo que queda bajo un widget transparente
+def _bn_geom(bp):
+    """(ancho, alto, margen) de la imagen de una nota base: el margen transparente que rodea al papel (sombra, luces de las
+    esquinas). Es la misma cuenta que hace render_base_note, y asi se conoce el papel sin tener que adivinarlo por los pixeles."""
+    pw, ph = max(20, int(bp['w'])), max(20, int(bp['h']))
+    sdw, sdx, sdy = max(0, int(bp.get('shadow', 0))), int(bp.get('shadow_dx', 0)), int(bp.get('shadow_dy', 0))
+    mg = (sdw + max(abs(sdx), abs(sdy)) + 2) if sdw > 0 else (max(abs(sdx), abs(sdy)) + 2)
+    if bp.get('fold'):
+        for _i, cc in enumerate(_norm_cx(bp)):
+            if cc['mode'] == 2:
+                for kk in ('la', 'lb'):
+                    if int(cc[kk + '_a']) > 0 and not cc['front']:
+                        mg = max(mg, int(cc[kk + '_s']) + 2 + max(abs(int(cc[kk + '_dx'])), abs(int(cc[kk + '_dy']))))
+                if int(cc['cast']) > 0 and sdw > 0:
+                    mg = max(mg, sdw + int(cc['cast']) + max(abs(sdx), abs(sdy)) + 2)
+    return pw, ph, mg
+
+
+class _UnderVeil(QWidget):
+    """Capa transparente a los clics, encima de todo lo de un widget: resta opacidad (composicion DestinationOut) a lo que hay
+    debajo, solo en las zonas que cubre un widget transparente de encima. Es pintura de Qt: igual en Windows, macOS y Linux."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.region = QRegion()      # en coordenadas de la capa
+        self.alpha = 0
+        self.hide()
+
+    def paintEvent(self, event):
+        if self.region.isEmpty() or self.alpha <= 0:
+            return
+        p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode_DestinationOut)
+        p.setClipRegion(self.region)
+        p.fillRect(self.rect(), QColor(0, 0, 0, int(self.alpha)))
+        p.end()
 
 
 # ---------------------------------------------------------------- [PACK134] recorte de capas, silueta, difuminado y regiones
@@ -22823,6 +22997,7 @@ class WidgetManager(QObject):
         '_cable_width_min': (1.0, 0.3, 10.0),   # (antiguo, px) ahora derivado de _cable_wctr_pct
         '_cable_wctr_pct': (40, 5, 100),        # grosor del CENTRO de un cable largo, % del grosor de un cable corto
         '_cable_ograd_start': (10, 0, 50),      # % del cable con opacidad plena en CADA extremo (padre e hijo)
+        '_under_op': (40, 5, 100),              # [PACK136] % de opacidad de lo que queda bajo el papel translucido de otro widget (100 = sin cambio)
         '_cable_inside_op': (0, 0, 100),        # [PACK134] % de opacidad del cable DENTRO de los widgets que une (0 = no se ve: nace del borde)
         '_cable_inside_blur': (0, 0, 30),       # [PACK134] px de difuminado del cable dentro de esos widgets (0 = nitido)
         '_cable_octr_pct': (100, 5, 100),       # opacidad del CENTRO de un cable largo, % de la de sus extremos
@@ -24127,6 +24302,70 @@ class WidgetManager(QObject):
         d = PerfStudyDialog(self, parent, False, cb)
         self.perf_dialog = d
         d.exec()
+
+    # ---------------------------------------------------------------- [PACK136] orden de apilamiento y velo
+    def veil_raised(self, win):
+        """Un widget paso al frente (se activo o se subio): se anota su orden, porque Qt no dice cual esta encima de cual."""
+        self._zseq = getattr(self, '_zseq', 0) + 1
+        win._zstamp = self._zseq
+        self.veil_schedule()
+
+    def veil_schedule(self):
+        t = getattr(self, '_veil_timer', None)
+        if t is None:
+            t = self._veil_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.setInterval(30)
+            t.timeout.connect(self._veil_apply)
+            p = self._veil_poll = QTimer(self)               # red de seguridad: cierres, ocultar, cambios de papel o de ajuste
+            p.setInterval(500)
+            p.timeout.connect(self._veil_poll_tick)
+            p.start()
+        if not t.isActive():
+            t.start()
+
+    def _veil_order(self):
+        """Widgets visibles de abajo arriba: los 'siempre encima' van sobre los demas; despues, el orden en que pasaron al frente."""
+        ws = [(i, w) for i, w in enumerate(self.widgets.values()) if w.isVisible() and not getattr(w, '_is_closing', False)]
+        ws.sort(key=lambda t: (1 if t[1].always_on_top else 0, getattr(t[1], '_zstamp', 0), t[0]))
+        return [w for _i, w in ws]
+
+    def _veil_sig(self):
+        op = int(self.get_cable_param('_under_op'))
+        return (op, tuple((w.widget_id, tuple(w.geometry().getRect()), getattr(w, '_zstamp', 0), bool(w.always_on_top),
+                           w.layer2_label.pixmap().cacheKey() if w.layer2_label.pixmap() is not None else 0)
+                          for w in self._veil_order()))
+
+    def _veil_poll_tick(self):
+        try:
+            s = self._veil_sig()
+            if s != getattr(self, '_veil_last', None):
+                self._veil_apply()
+        except Exception:
+            pass
+
+    def _veil_apply(self):
+        try:
+            op = int(self.get_cable_param('_under_op'))
+            order = self._veil_order()
+            self._veil_last = self._veil_sig()
+            for i, w in enumerate(order):
+                rects = []
+                if op < 100:
+                    wg = w.geometry()
+                    for u in order[i + 1:]:
+                        ug = u.geometry()
+                        if not ug.intersects(wg) or not u.paper_translucent():
+                            continue
+                        r = QRegion(u.paper_poly_global()).intersected(QRegion(wg))
+                        if not r.isEmpty():
+                            rects.append(r)
+                w.set_under_veil(rects, op)
+            for w in self.widgets.values():                  # los que ya no se ven: sin velo
+                if w not in order:
+                    w.set_under_veil([], 100)
+        except Exception as e_vl:
+            log_warn("Manager", "Velo bajo widgets transparentes: %s" % e_vl)
 
     def show_font_chooser(self, first_run=False):
         d = getattr(self, 'font_dialog', None)

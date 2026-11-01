@@ -1,10 +1,17 @@
+## Pack 136 · 2026-11-01
+- **Arreglo: el cable se seguía viendo a través de un widget muy transparente y se cortaba bajo el borde inferior.** El «cuerpo» de una nota para los cables se deducía de los píxeles de su imagen: con un papel casi invisible no contaba su interior y sí el halo de la sombra, que es mayor por abajo. Ahora es el **papel real** de la nota (con su giro), calculado por sus medidas. El cable sale justo del borde, arriba y abajo, y no se ve dentro del papel.
+- **Lo que queda bajo un widget transparente se atenúa**, para distinguir cuál está encima: la parte de un widget que queda bajo el papel translúcido de otro se ve mucho más tenue. El porcentaje es configurable en *Cables → Transparencias → Un widget bajo otro transparente* (por defecto 40 %; 100 % lo desactiva). Se pinta dentro de cada widget, así que funciona igual en Windows, macOS y Linux.
+- La pestaña *Widgets* de los ajustes de cables pasa a llamarse **Transparencias**.
+- El orden de apilamiento se aprende de los clics y de las veces que el programa sube un widget, porque Qt no dice qué ventana está encima de cuál. Si otra vía las reordena (otro programa, por ejemplo), puede equivocarse hasta que haces clic en el widget. En una capa 2 web el atenuado no se aplica.
+- **Web:** el texto de compartir dice ahora que los archivos se abren arrastrándolos a la ventana «Guardar y cargar» (menú del icono de la bandeja).
+
 ## Pack 135 · 2026-11-01
 - **Estudio rápido del equipo** (opcional): dibuja cables de prueba en cada nivel de calidad, mide la pantalla, el procesador, la animación de las cuerdas y el difuminado, y recomienda la **calidad de dibujo**, los **fotogramas por segundo** de las cuerdas y un **tope de difuminado**. Dura unos 3 segundos, no toca tus widgets y no cambia nada hasta que aceptes con *Aplicar la recomendación*.
 - **Cuándo sale:** una sola vez tras instalar el programa (si dices *Ahora no*, no vuelve a salir solo) y siempre que quieras desde *Cables → Punteados y rendimiento*, con el botón *Medir este equipo y recomendar la calidad...* junto a las opciones de rendimiento. Desde ahí rellena los controles, así que *Cancelar* los deja como estaban. El último estudio se ve junto al botón.
 - El resultado se guarda solo en este equipo (`rendimiento.json`): no va en las copias de seguridad ni en los sets. Una instalación existente que se actualiza no recibe el aviso.
 
 ## Pack 134 · 2026-10-31
-- **El cable nace del borde del widget**, no del centro: ya no se ve a través de un papel translúcido. Es lo normal desde ahora (en *Ajustes de cables → Widgets*, «Opacidad del cable dentro de esos widgets», 0 %).
+- **El cable nace del borde del widget**, no del centro: ya no se ve a través de un papel translúcido. Es lo normal desde ahora (en *Cables → Transparencias*, «Opacidad del cable dentro de esos widgets», 0 %).
 - **Efecto cristal:** con una opacidad intermedia el cable se ve dentro del widget como a través de un cristal, y «Difuminado» lo desenfoca. Funciona igual en Windows, macOS y Linux (se dibuja dentro de la propia aplicación, sin efectos del sistema).
 - **Recorte de la capa 2** para cualquier imagen o página web (menú del widget → *Capas* → *Capa 2* → *Recorte de la capa*): esquinas redondeadas, elipse o silueta de la capa 1. Con la silueta, lo que sobra de la imagen queda bajo el marco o fuera de él, sin ajustar medidas al milímetro. En una página web el recorte depende de lo que permita cada plataforma.
 - **Marcos ovalados y redondeados:** el editor de marcos tiene una lista *Forma* (rectángulo o elipse), con bisel de luz continua; nuevos puntos de partida «Redondeado» y «Óvalo dorado». Al ajustar la capa 2 a un marco, se recorta sola por su silueta.
