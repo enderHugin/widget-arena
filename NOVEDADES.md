@@ -1,3 +1,6 @@
+## Pack 141 · 2026-11-01
+- **Arreglo: Ctrl+Alt+Mayús+rueda no giraba en algunos equipos.** Con Mayús o Alt, muchos sistemas mandan la vuelta de rueda como desplazamiento *horizontal*; el programa solo miraba el vertical y la ignoraba. Ahora lee cualquiera de los dos. Además deja en el registro (nivel depuración) lo que recibe, para diagnosticar si aun así no gira.
+
 ## Pack 140 · 2026-11-01
 - **Ctrl+Alt+Mayús+rueda gira el widget de 5 en 5 grados** (rueda arriba, en sentido horario; abajo, antihorario), con el widget bajo el cursor. Gira las dos capas por igual, como el resto de giros. Con un panel táctil se acumulan los movimientos pequeños hasta completar cada paso. También está en *Aspecto → Girar widget*.
 

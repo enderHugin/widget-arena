@@ -4166,17 +4166,24 @@ class StickerWindow(QMainWindow):
         has_shift = (modifiers & Qt.ShiftModifier)
         has_alt = (modifiers & Qt.AltModifier)
         
-        if delta_y == 0:
-            event.ignore()
-            return
-
         if has_ctrl and has_alt and has_shift and not (modifiers & Qt.MetaModifier):        # [PACK140] Ctrl+Alt+Mayus+rueda: girar el widget de 5 en 5 grados
-            acc = getattr(self, '_rot_wheel_acc', 0) + delta_y                 # un toque de rueda = 120; un panel tactil manda trozos menores
+            ad = event.angleDelta()
+            dd = ad.y() or ad.x()                                              # [PACK141] con Mayus o Alt muchos sistemas mandan la rueda como desplazamiento horizontal
+ 
+            log_debug(self.widget_id, "Ctrl+Alt+Mayus+rueda: angleDelta=(%d, %d)" % (ad.x(), ad.y()))
+            if dd == 0:
+                event.ignore()
+                return
+            acc = getattr(self, '_rot_wheel_acc', 0) + dd                      # un toque de rueda = 120; un panel tactil manda trozos menores
             n = int(acc / 120)
             self._rot_wheel_acc = acc - n * 120
             if n:
                 self.act_rotate_note_by(5 * n)
             event.accept()
+            return
+
+        if delta_y == 0:
+            event.ignore()
             return
 
         if has_ctrl and not has_shift:
@@ -11911,7 +11918,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 140                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 141                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
