@@ -3,6 +3,7 @@
 - **Mis marcos**: biblioteca de marcos guardados (carpeta `marcos/` de los datos). En el editor de marcos hay una fila *Mis marcos* con la lista y los botones *Guardar aquí...*, *Exportar...*, *Importar...* y *Borrar*; al elegir uno se aplica conservando el tamaño actual. En el menú del widget, *Aspecto → Marco → Mis marcos* lo pone directamente en el widget (ajustando la capa 2 al hueco) y *Guardar este marco en Mis marcos...* lo añade.
 - Cargar un `.waframe` (o importarlo) lo guarda en Mis marcos; si ya había uno igual, no lo duplica.
 - **Arreglo: el atenuado bajo un widget transparente y el recorte de los cables seguían un rectángulo**, no el papel. Con una esquina doblada se oscurecía (y se ocultaba el cable) también en el hueco que el papel no tiene, y se pasaba un par de píxeles del borde. Ahora siguen la **silueta real del papel** (esquinas dobladas o levantadas incluidas) y coinciden con lo que se ve a ±2 px. Las notas que no son formas de papel del programa conservan el rectángulo.
+- **Arreglo de z-index con el atenuado:** si un widget opaco (PAGOS) queda bajo uno transparente (PRÉSTAMOS) y encima de otro (Miguel), el trozo de Miguel que queda bajo PAGOS ya **no se ve a través** del atenuado de PAGOS. Cada widget se ve atenuado solo donde lo cubre un transparente, y lo que tiene debajo sigue oculto por su papel.
 - **Web, README y `docs/FORMATOS-ARCHIVO.md`:** nombran los marcos entre lo que se puede guardar y compartir.
 
 ## Pack 136 · 2026-11-01

@@ -5717,11 +5717,11 @@ class StickerWindow(QMainWindow):
         except Exception:
             return fb
 
-    def set_under_veil(self, global_regions, op_pct):
-        """Resta opacidad (hasta dejar op_pct %) a lo que este widget dibuja bajo esas regiones globales."""
+    def set_under_veil(self, global_regions, op_pct, occlude=None):
+        """Resta opacidad (hasta dejar op_pct %) a lo que este widget dibuja bajo esas regiones globales; en 'occlude' (region global) lo oculta del todo."""
         v = getattr(self, '_under_veil', None)
         if v is None:
-            if not global_regions:
+            if not global_regions and (occlude is None or occlude.isEmpty()):
                 return
             v = self._under_veil = _UnderVeil(self.central_widget)
         origin = v.mapToGlobal(QPoint(0, 0))
@@ -5729,18 +5729,21 @@ class StickerWindow(QMainWindow):
         for r in global_regions:
             reg = reg.united(r)
         reg = reg.translated(-origin.x(), -origin.y())
+        occ = (occlude if occlude is not None else QRegion()).translated(-origin.x(), -origin.y())
         alpha = int(round(255 * (1.0 - max(0, min(100, op_pct)) / 100.0)))
-        if reg.isEmpty() or alpha <= 0:
+        if alpha <= 0:
+            reg = QRegion()
+        if reg.isEmpty() and occ.isEmpty():
             if v.isVisible():
-                v.region = QRegion()
+                v.region, v.occ = QRegion(), QRegion()
                 v.hide()
             return
 
-        if reg == v.region and alpha == v.alpha and v.isVisible():
+        if reg == v.region and occ == v.occ and alpha == v.alpha and v.isVisible():
             v.raise_()
             return
         v.setGeometry(self.central_widget.rect())
-        v.region, v.alpha = reg, alpha
+        v.region, v.occ, v.alpha = reg, occ, alpha
         v.show()
         v.raise_()
         v.update()
@@ -15983,15 +15986,20 @@ class _UnderVeil(QWidget):
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.region = QRegion()      # en coordenadas de la capa
         self.alpha = 0
+        self.occ = QRegion()       # [PACK137]
         self.hide()
 
     def paintEvent(self, event):
-        if self.region.isEmpty() or self.alpha <= 0:
+        if (self.region.isEmpty() or self.alpha <= 0) and self.occ.isEmpty():
             return
         p = QPainter(self)
         p.setCompositionMode(QPainter.CompositionMode_DestinationOut)
-        p.setClipRegion(self.region)
-        p.fillRect(self.rect(), QColor(0, 0, 0, int(self.alpha)))
+        if not self.region.isEmpty() and self.alpha > 0:
+            p.setClipRegion(self.region)
+            p.fillRect(self.rect(), QColor(0, 0, 0, int(self.alpha)))
+        if not self.occ.isEmpty():                 # [PACK137] bajo el papel de otro widget que esta encima: no se ve
+            p.setClipRegion(self.occ)
+            p.fillRect(self.rect(), QColor(0, 0, 0, 255))
         p.end()
 
 
@@ -24710,6 +24718,7 @@ class WidgetManager(QObject):
             op = int(self.get_cable_param('_under_op'))
             order = self._veil_order()
             self._veil_last = self._veil_sig()
+            vr = {}
             for i, w in enumerate(order):
                 rects = []
                 if op < 100:
@@ -24721,7 +24730,19 @@ class WidgetManager(QObject):
                         r = QRegion(u.paper_shape_global()).intersected(QRegion(wg))
                         if not r.isEmpty():
                             rects.append(r)
-                w.set_under_veil(rects, op)
+                vr[w] = rects
+            for i, w in enumerate(order):
+                occ = QRegion()
+                if op < 100:                        # [PACK137] un widget opaco velado por un cristal: lo que tiene debajo no se transparenta con el
+                    wg = w.geometry()
+                    for u in order[i + 1:]:
+                        if not vr.get(u) or not u.geometry().intersects(wg) or u.paper_translucent():
+                            continue
+                        uv = QRegion()
+                        for r in vr[u]:
+                            uv = uv.united(r)
+                        occ = occ.united(uv.intersected(u.body_region().translated(u.geometry().topLeft())).intersected(QRegion(wg)))
+                w.set_under_veil(vr[w], op, occ)
             for w in self.widgets.values():                  # los que ya no se ven: sin velo
                 if w not in order:
                     w.set_under_veil([], 100)
