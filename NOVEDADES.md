@@ -1,3 +1,9 @@
+## Pack 147 · 2026-11-01
+- **Arreglo: el color de los cables, de la corona y de los botones sale del color dominante del papel.** Antes se leía de un solo píxel del centro: si ahí caía el texto o un hueco transparente, salía negro, gris o un tono por defecto que no se parecía al widget (y había que ir a la corona y elegir «Dominante»). Ahora es la misma cuenta que «Dominante», así que cables y corona coinciden con lo que se ve.
+- **Arreglo: cambiar el ancho o el alto del papel ya no desplaza el widget.** Pasaba al editar el tamaño desde la configuración, con Ctrl+rueda o con «Editar geometría», sobre todo con la nota girada: la capa crecía desde su esquina y el centro del papel corría la mitad del cambio. Ahora el papel crece desde su centro. Mover X/Y sigue moviéndolo lo que se pida.
+- **Los hijos quedan siempre por debajo de su padre.** Tocar o editar un hijo ya no lo deja encima del padre (ni el nieto sobre el hijo). Hay un ajuste para quitar la regla: en el diálogo de cables, sección *Apilamiento de los widgets → Un hijo respecto a su padre*.
+- **Al editar el texto de un widget ya no se oscurece lo que queda bajo el recuadro de edición** (era el atenuado de «Un widget bajo otro transparente», que dejaba una mancha oscura).
+
 ## Pack 146 · 2026-11-01
 - **Arreglo: la nota saltaba de sitio al cambiar el color (u otro ajuste) en «Editar forma de papel» con «Ver los cambios en la nota real».** Cada cambio recolocaba la capa de papel en la esquina (0, 0) de la ventana, y el programa volvía a ajustar la ventana al contenido: la nota se corría hacia arriba y a la izquierda, y más cuanto más girada estaba (en una nota sin giro, unos 5 px; en una girada 30°, decenas). Ahora el papel nuevo se centra donde estaba el anterior: cambiar el color no la mueve; si cambia el tamaño, crece o se encoge por el centro. Lo mismo al aceptar y al cancelar el cuadro.
 

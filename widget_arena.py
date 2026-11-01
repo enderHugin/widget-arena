@@ -2709,11 +2709,66 @@ class StickerWindow(QMainWindow):
     def load_template_data(self, data):
         log_debug(self.widget_id, "Cargando datos del widget...")
         _ensure_generated_layer(data)          # [PACK112] la imagen de una nota base no viaja en los estilos: si falta, se dibuja de nuevo
+        try:
+            _keep = self._l2_keep_plan(data)           # [PACK147] cambiar el tamano del papel no lo desplaza: crece desde su centro
+        except Exception:
+            _keep = None
         self.current_template_data = data
         self.set_content(data) 
+        if _keep is not None:
+            try:
+                self._l2_keep_apply(_keep)
+            except Exception as e_keep:
+                log_warn(self.widget_id, "_l2_keep_apply: %s" % e_keep)
+        self._l2_remember(data)
         self._update_selection_borders() 
         self._update_fold_badge()
         self._update_bell_badge()
+
+    def _l2_remember(self, data):
+        """[PACK147] Anota geometria, giro y contenido de la capa 2 de esta carga (para la siguiente)."""
+        try:
+            l2 = data.get('layer2') or {}
+            g = l2.get('geometry') or {}
+            self._l2_prev = (float(g['x']), float(g['y']), float(g['w']), float(g['h']),
+                             round(float(l2.get('rotation', 0) or 0), 2), l2.get('content'))
+        except Exception:
+            self._l2_prev = None
+
+    def _l2_keep_plan(self, data):
+        """[PACK147] Si solo cambia el ANCHO/ALTO del papel (mismo contenido y giro, ventana sin mover), devuelve el punto de pantalla donde
+        debe seguir su centro: el actual, desplazado solo por lo que se haya movido la esquina (X/Y). None = no hay nada que compensar."""
+        prev = getattr(self, '_l2_prev', None)
+        if prev is None or not self.layer2_label.isVisible():
+            return None
+        l2 = data.get('layer2') or {}
+        g = l2.get('geometry') or {}
+        x, y, w, h = (float(g[k]) for k in ('x', 'y', 'w', 'h'))
+        px, py, pw, ph, prot, pcont = prev
+        if (w, h) == (pw, ph):
+            return None
+        if round(float(l2.get('rotation', 0) or 0), 2) != prot or l2.get('content') != pcont:
+            return None
+        wg = data.get('geometry') or {}
+        if int(wg.get('x', self.x())) != self.x() or int(wg.get('y', self.y())) != self.y():
+            return None
+        c = self.layer2_label.geometry().center()
+        return (self.x() + c.x() + (x - px), self.y() + c.y() + (y - py))
+
+    def _l2_keep_apply(self, target):
+        c = self.layer2_label.geometry().center()
+        dx = int(round(target[0] - (self.x() + c.x())))
+        dy = int(round(target[1] - (self.y() + c.y())))
+        if not dx and not dy:
+            return
+        self.move(self.x() + dx, self.y() + dy)
+        mg = self.current_template_data.setdefault('geometry', {})
+        mg['x'], mg['y'] = self.x(), self.y()
+        self.save_timer.start()
+        try:
+            self.manager.cable_overlay_poke()
+        except Exception:
+            pass
 
     def set_content(self, data):
         self._canon_buttons(data)
@@ -5858,6 +5913,14 @@ class StickerWindow(QMainWindow):
             return self._cached_btn_color
 
         if pixmap is not None and not pixmap.isNull():
+            try:                                  # [PACK147] color dominante de lo que se ve (la misma cuenta que la corona 'Dominante'), no un solo pixel
+                _dc = self._crown_dominant()
+                if _dc is not None and _dc.isValid():
+                    self._last_btn_color_key = current_key
+                    self._cached_btn_color = _dc.name()
+                    return self._cached_btn_color
+            except Exception:
+                pass
             image = pixmap.toImage()
             w, h = image.width(), image.height()
             if w > 0 and h > 0:
@@ -11967,7 +12030,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 146                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 147                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -15144,7 +15207,8 @@ CABLE_DIALOG_SPEC = [
             ('_under_op', "Opacidad de un widget transparente que queda bajo otro widget transparente (100 % = sin cambio)", 'i', " %", None)],
          "Ayuda a distinguir cu\u00e1l est\u00e1 encima cuando se superponen widgets transparentes: el de abajo se ve m\u00e1s tenue donde queda bajo el de arriba. Los widgets que no son transparentes no cambian: siguen opacos y tapan lo que tienen detr\u00e1s (el escritorio, otros widgets) tambi\u00e9n bajo un widget transparente. En Windows se lee el orden real de las ventanas; en otros sistemas se aprende de los clics y puede equivocarse si una ventana se sube por otra v\u00eda, hasta que haces clic en ella."),
         ("Apilamiento de los widgets", [
-            ('_tree_z', "Un widget y sus descendientes en la pila", 'c', ("Se apilan como un bloque", "Cada widget por su cuenta"), None)],
+            ('_tree_z', "Un widget y sus descendientes en la pila", 'c', ("Se apilan como un bloque", "Cada widget por su cuenta"), None),
+            ('_child_z', "Un hijo respecto a su padre", 'c', ("Siempre por debajo del padre", "Sin regla: el que se toca queda encima"), None)],
          "Con \u00abbloque\u00bb, al pasar al frente un widget (al hacerle clic) pasan con \u00e9l sus hijos, nietos y dem\u00e1s descendientes, manteniendo su orden entre ellos. Dos hermanos son dos grupos: al hacer clic en uno, \u00e9l y todo lo suyo quedan sobre el otro y todo lo suyo. Es lo que mantiene coherente el atenuado bajo los widgets transparentes.")]),
     ("Color y brillo", [
         ("Degradado de color entre padre e hijo", [
@@ -23506,6 +23570,7 @@ class WidgetManager(QObject):
         '_cable_wctr_pct': (40, 5, 100),        # grosor del CENTRO de un cable largo, % del grosor de un cable corto
         '_cable_ograd_start': (10, 0, 50),      # % del cable con opacidad plena en CADA extremo (padre e hijo)
         '_tree_z': (0, 0, 1),                   # [PACK138] 0 = un arbol se apila como un bloque; 1 = cada widget por su cuenta
+        '_child_z': (0, 0, 1),                  # [PACK147] 0 = un hijo queda siempre por debajo de su padre; 1 = sin esa regla (el que se toca queda encima)
         '_under_op': (40, 5, 100),              # [PACK136] % de opacidad de lo que queda bajo el papel translucido de otro widget (100 = sin cambio)
         '_cable_inside_op': (0, 0, 100),        # [PACK134] % de opacidad del cable DENTRO de los widgets que une (0 = no se ve: nace del borde)
         '_cable_inside_blur': (0, 0, 30),       # [PACK134] px de difuminado del cable dentro de esos widgets (0 = nitido)
@@ -24880,7 +24945,42 @@ class WidgetManager(QObject):
                 self._tree_raise(win)                       # [PACK138] el widget y sus descendientes pasan al frente como un bloque
             except Exception as e_tr:
                 log_warn("Manager", "Arbol como bloque: %s" % e_tr)
+        if not getattr(self, '_tree_raising', False):
+            try:
+                self._keep_children_below(win)              # [PACK147] un hijo nunca queda sobre su padre (tampoco tras tocarlo o editarlo)
+            except Exception as e_kb:
+                log_warn("Manager", "Hijos bajo el padre: %s" % e_kb)
         self.veil_schedule()
+
+    def _keep_children_below(self, win):
+        """[PACK147] Si 'win' pasa al frente, sus ancestros (padre, abuelo...) de su misma banda pasan sobre el: un hijo queda siempre por debajo de su padre."""
+        if int(self.get_cable_param('_child_z')) != 0:
+            return
+        band = bool(win.always_on_top)
+        anc = []
+        for i in self.get_ancestors(win.widget_id):
+            a = self.widgets.get(i)
+            if a is not None and a.isVisible() and not getattr(a, '_is_closing', False) and bool(a.always_on_top) == band:
+                anc.append(a)
+        if not anc:
+            return
+        pos = {id(w): k for k, w in enumerate(self._veil_order())}
+        prev = pos.get(id(win), -1)
+        need = False
+        for a in anc:
+            pa = pos.get(id(a), -1)
+            if pa < prev:
+                need = True
+                break
+            prev = pa
+        if not need:
+            return
+        self._tree_raising = True
+        try:
+            for a in anc:
+                a.raise_()
+        finally:
+            self._tree_raising = False
 
     def veil_schedule(self):
         t = getattr(self, '_veil_timer', None)
@@ -24932,6 +25032,8 @@ class WidgetManager(QObject):
                         ug = u.geometry()
                         if not ug.intersects(wg) or not u.paper_translucent():
                             continue
+                        if u.layer1_editor.isVisible():
+                            continue                     # [PACK147] mientras se edita el texto de un widget, no atenua los que quedan bajo su recuadro de edicion
                         r = QRegion(u.paper_shape_global()).intersected(QRegion(wg))
                         if not r.isEmpty():
                             rects.append(r)
