@@ -2180,6 +2180,7 @@ class StickerWindow(QMainWindow):
         self.layer2_anim.setDuration(50)
         self.layer2_anim.setEasingCurve(QEasingCurve.InOutQuad)
         self.layer2_anim.valueChanged.connect(self._on_layer2_rotation_changed)
+        self.layer2_anim.finished.connect(self._renormalize_window)      # [PACK148] al terminar de enderezar/girar el papel (editar texto) la ventana se ajusta a su nuevo tamano: antes recortaba por los lados
 
         self.setup_ui()
         
@@ -5341,6 +5342,10 @@ class StickerWindow(QMainWindow):
             else:
                 bounding_box = bounding_box.united(self.layer2_web.geometry())
         
+        if self.layer1_editor.isVisible():                  # [PACK148] el recuadro de edicion tambien cuenta
+            eg = self.layer1_editor.geometry()
+            bounding_box = eg if not bounding_box.isValid() else bounding_box.united(eg)
+
         if not bounding_box.isValid():
             bounding_box = QRect(0, 0, 1, 1) 
 
@@ -6082,6 +6087,7 @@ class StickerWindow(QMainWindow):
                 self.layer1_label.hide()
                 self.layer1_editor.show()
                 self.layer1_editor.setFocus()
+                self._renormalize_window()                      # [PACK148] el recuadro de edicion entra en la ventana
                 
             self.l1_edit_anim.valueChanged.connect(update_l1_anim)
             self.l1_edit_anim.finished.connect(finish_l1_anim)
@@ -6090,6 +6096,7 @@ class StickerWindow(QMainWindow):
             self.layer1_label.hide()
             self.layer1_editor.show()
             self.layer1_editor.setFocus()
+            self._renormalize_window()                          # [PACK148]
 
     @Slot(object)
     def _on_layer1_editing_finished(self, html_content):
@@ -12030,7 +12037,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 147                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 148                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -23856,7 +23863,12 @@ class WidgetManager(QObject):
         else:
             widget_id = widget_id_base
 
-        log_info("Manager", f"Agregando nuevo widget: {widget_id} (total: {len(self.widgets) + 1})")
+        try:                                                # [PACK148] diagnostico: quien pidio este widget (para encontrar notas que nadie ha pedido)
+            import traceback as _tb
+            _org = " <- ".join("%s:%d" % (f.name, f.lineno) for f in reversed(_tb.extract_stack(limit=7)[:-1]))
+        except Exception:
+            _org = "?"
+        log_info("Manager", f"Agregando nuevo widget: {widget_id} (total: {len(self.widgets) + 1}) [origen: {_org}]")
         self.global_state[widget_id] = state
         self._last_added_id = widget_id
         self._focus_pending = widget_id        # el navegador de widgets lo deja seleccionado al refrescarse

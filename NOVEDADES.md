@@ -1,3 +1,7 @@
+## Pack 148 · 2026-11-01
+- **Arreglo: al ir a escribir en un widget girado se recortaban sus lados.** Al editar el texto el papel se endereza para verlo en horizontal, pero la ventana conservaba el tamaño del widget girado: un 280×60 girado 90° quedaba en una ventana estrecha y desaparecían sus lados derecho e izquierdo. Ahora la ventana se ajusta al papel enderezado y al recuadro de edición (el centro del papel no se mueve) y al terminar vuelve a su tamaño y a su sitio.
+- **Diagnóstico:** cada widget nuevo deja en el registro quién lo ha pedido (`origen: …`), para localizar notas que aparecen sin haberlas pedido.
+
 ## Pack 147 · 2026-11-01
 - **Arreglo: el color de los cables, de la corona y de los botones sale del color dominante del papel.** Antes se leía de un solo píxel del centro: si ahí caía el texto o un hueco transparente, salía negro, gris o un tono por defecto que no se parecía al widget (y había que ir a la corona y elegir «Dominante»). Ahora es la misma cuenta que «Dominante», así que cables y corona coinciden con lo que se ve.
 - **Arreglo: cambiar el ancho o el alto del papel ya no desplaza el widget.** Pasaba al editar el tamaño desde la configuración, con Ctrl+rueda o con «Editar geometría», sobre todo con la nota girada: la capa crecía desde su esquina y el centro del papel corría la mitad del cambio. Ahora el papel crece desde su centro. Mover X/Y sigue moviéndolo lo que se pida.
