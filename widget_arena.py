@@ -5566,7 +5566,7 @@ class StickerWindow(QMainWindow):
         sombra) o el recuadro de la web. Se usa para que los cables no se vean dentro de los widgets que unen."""
         try:
             if _widget_kind({'template_data': self.current_template_data}) == 'nota':       # [PACK136] el papel, sin el halo de la sombra
-                return QRegion(self.paper_poly_global().translated(-self.geometry().topLeft()))
+                return QRegion(self.paper_shape_global().translated(-self.geometry().topLeft()))
             parts = []
             if self.layer2_label.isVisible() and not self.layer2_label.pixmap().isNull():
                 parts.append(('l2', self.layer2_label.pixmap(), self.layer2_label.geometry().topLeft()))
@@ -5681,6 +5681,41 @@ class StickerWindow(QMainWindow):
             return poly
         except Exception:
             return QPolygon(self.paper_rect_global())
+
+    def paper_shape_global(self):
+        """[PACK137] Silueta (poligono, coordenadas globales) del papel: como paper_poly_global pero sin el hueco de las esquinas doblada o levantadas
+        y sin el margen de 1,5 px. Para recortar los cables y el velo exactamente por donde acaba el papel."""
+        import math
+        from PySide6.QtGui import QPolygon
+        fb = self.paper_poly_global()
+        try:
+            bp = self.current_template_data.get('base_note')
+            c2 = os.path.basename(str((self.current_template_data.get('layer2') or {}).get('content', '')).replace('\\', '/'))
+            if not isinstance(bp, dict) or not c2.startswith('nota_base_') or fb.count() != 4:
+                return fb
+            pts = [(fb[i].x(), fb[i].y()) for i in range(4)]
+            key = (tuple(pts), json.dumps(bp, sort_keys=True, default=str))
+            c = getattr(self, '_pshape_cache', None)
+            if c is not None and c[0] == key:
+                return c[1]
+            (x0, y0), (x1, y1), _p2, (x3, y3) = pts
+            wl, hl = math.hypot(x1 - x0, y1 - y0), math.hypot(x3 - x0, y3 - y0)
+            if wl <= 4 or hl <= 4:
+                return fb
+            ex, ey = ((x1 - x0) / wl, (y1 - y0) / wl), ((x3 - x0) / hl, (y3 - y0) / hl)
+            Wf, Hf = wl - 3.0, hl - 3.0
+            body, W0, H0, mg = _bn_body_path(bp)
+            pw, ph = W0 - 2 * mg, H0 - 2 * mg
+            out = []
+            for pt in body.toFillPolygon():
+                s, t = (pt.x() - mg) / float(pw), (pt.y() - mg) / float(ph)
+                u, v = 1.5 + s * Wf, 1.5 + t * Hf
+                out.append(QPoint(int(round(x0 + ex[0] * u + ey[0] * v)), int(round(y0 + ex[1] * u + ey[1] * v))))
+            res = QPolygon(out) if len(out) >= 3 else fb
+            self._pshape_cache = (key, res)
+            return res
+        except Exception:
+            return fb
 
     def set_under_veil(self, global_regions, op_pct):
         """Resta opacidad (hasta dejar op_pct %) a lo que este widget dibuja bajo esas regiones globales."""
@@ -11855,7 +11890,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 136                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 137                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -13033,11 +13068,12 @@ def embed_images_b64(td):
 # [PACK130] Archivos propios de Widget Arena. Son un .zip con: wa.json (que es: tipo, version del programa), data.json (lo mismo que llevaba el .json de
 # siempre, pero sin imagenes dentro) y las imagenes en images/, sticky/ y frames/. Se reconocen por el contenido, no por la extension.
 WA_FILE_FORMAT = "widget-arena-file"
-WA_FILE_EXT = {'set': '.waset', 'widget': '.wawidget', 'paper': '.wapaper'}
+WA_FILE_EXT = {'set': '.waset', 'widget': '.wawidget', 'paper': '.wapaper', 'frame': '.waframe'}
 WA_FILTER = {'set': "Widgets de Widget Arena (*.waset);;JSON antiguo (*.json)",
              'widget': "Widget guardado (*.wawidget);;JSON antiguo (*.json)",
-             'paper': "Forma de papel (*.wapaper);;JSON antiguo (*.json)"}
-WA_OPEN_FILTER = "Archivos de Widget Arena (*.waset *.wawidget *.wapaper);;JSON (*.json);;Todos (*)"
+             'paper': "Forma de papel (*.wapaper);;JSON antiguo (*.json)",
+             'frame': "Marco (*.waframe);;JSON (*.json)"}
+WA_OPEN_FILTER = "Archivos de Widget Arena (*.waset *.wawidget *.wapaper *.waframe);;JSON (*.json);;Todos (*)"
 WA_MAX_JSON = 64 << 20
 
 
@@ -13118,7 +13154,10 @@ def wa_file_read(path):
 
 def read_file_any(path):
     """(tipo | None, dict) de un archivo para importar: un archivo propio (.waset / .wawidget / .wapaper) o un .json de los de siempre."""
-    if wa_file_kind(path):
+    _k = wa_file_kind(path)
+    if _k == 'frame':                                   # [PACK137] un marco no es un widget ni un set
+        raise ValueError("es un marco (.waframe): se abre desde \u00abGenerar marco\u00bb (Mis marcos), el men\u00fa Marco del widget o \u00abCargar un archivo\u00bb")
+    if _k:
         return wa_file_read(path)
     with open(path, 'r', encoding='utf-8') as f:
         return None, json.load(f)
@@ -14238,7 +14277,7 @@ class DataHubWindow(QDialog):
     def _sec_files(self):
         m = self.m
         return ("Para llevar tus widgets a otro PC o compartirlos: se exportan a un archivo .waset (comprimido, con sus im\u00e1genes dentro) y se importan agreg\u00e1ndolos o reemplazando todo. "
-                "Los widgets guardados van en .wawidget, las formas de papel en .wapaper y varios a la vez en un pack .wapack. Los .json de antes tambi\u00e9n se leen.",
+                "Los widgets guardados van en .wawidget, las formas de papel en .wapaper, los marcos en .waframe y varios a la vez en un pack .wapack. Los .json de antes tambi\u00e9n se leen.",
                 DATA_DIR, ["Archivo de trabajo actual: " + GLOBAL_STATE_FILE],
                 [("Exportar todos los widgets a un archivo...", m.export_state, "Puede incluir la configuraci\u00f3n", "Sacar de la aplicaci\u00f3n",
                   "Crea un archivo .waset con los widgets del set activo y sus im\u00e1genes dentro; puede incluir tambi\u00e9n la configuraci\u00f3n."),
@@ -15919,6 +15958,21 @@ def _bn_geom(bp):
     return pw, ph, mg
 
 
+def _bn_body_path(bp):
+    """[PACK137] Contorno del papel de una nota base en coordenadas de su imagen, con las esquinas dobladas o levantadas ya recortadas
+    (el hueco de una esquina doblada no es papel). Devuelve (contorno, ancho de la imagen, alto de la imagen, margen)."""
+    pw, ph, mg = _bn_geom(bp)
+    r = float(bp['radius'])
+    body = _rounded_rect_path(mg, mg, pw, ph, [r if c else 0.0 for c in bp['corners']])
+    if bp.get('fold'):
+        whole = _rounded_rect_path(0, 0, pw + 2 * mg, ph + 2 * mg, (0, 0, 0, 0))
+        for i, cc in enumerate(_norm_cx(bp)):
+            if cc['mode']:
+                shape_fn = _fold_shapes(_cx_shape(i, cc), pw, ph, mg)[0]
+                body = shape_fn(body).intersected(whole)
+    return body, pw + 2 * mg, ph + 2 * mg, mg
+
+
 class _UnderVeil(QWidget):
     """Capa transparente a los clics, encima de todo lo de un widget: resta opacidad (composicion DestinationOut) a lo que hay
     debajo, solo en las zonas que cubre un widget transparente de encima. Es pintura de Qt: igual en Windows, macOS y Linux."""
@@ -16371,6 +16425,117 @@ def _frame_sample_picture(w, h):
     return im
 
 
+# ---------------------------------------------------------------- [PACK137] .waframe y "Mis marcos"
+MARCOS_DIR = os.path.join(ROOT_DATA_DIR, "marcos")          # [PACK137] biblioteca "Mis marcos": un .waframe por marco
+
+
+def frame_clean_name(s):
+    """Nombre de marco apto para archivo ('' si no queda nada)."""
+    return re.sub(r'[\\/:*?"<>|\x00-\x1f]', '', str(s or '')).strip(' .')[:60]
+
+
+def frame_thumb_png(p, side=160):
+    """PNG pequeno (bytes) de un marco sobre fondo transparente, para ver el marco sin abrir el editor."""
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+    img = render_frame(p)
+    if max(img.width(), img.height()) > side:
+        img = img.scaled(side, side, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    ba = QByteArray()
+    buf = QBuffer(ba)
+    buf.open(QIODevice.WriteOnly)
+    img.save(buf, 'PNG')
+    return bytes(ba)
+
+
+def frame_file_write(path, p, name=''):
+    """Guarda un marco en un .waframe: sus parametros (el marco se dibuja de nuevo al abrirlo) y una miniatura."""
+    p = _fr_clean(p)
+    imgs = {}
+    try:
+        imgs['preview.png'] = frame_thumb_png(p)
+    except Exception as e:
+        log_warn('marco', "Sin miniatura en el .waframe: %s" % e)
+    wa_file_write(path, 'frame', {'name': str(name or '')[:80], 'frame_shape': p}, imgs)
+
+
+def frame_read_any(path):
+    """(nombre, parametros) de un .waframe o de un .json con un marco (el que copia el editor). ValueError si no es un marco."""
+    import zipfile
+    if zipfile.is_zipfile(path):
+        if wa_file_kind(path) != 'frame':
+            raise ValueError("no es un marco de Widget Arena (.waframe)")
+        with zipfile.ZipFile(path) as z:
+            if z.getinfo('data.json').file_size > (1 << 20):
+                raise ValueError("el archivo es demasiado grande para ser un marco")
+            d = json.loads(z.read('data.json').decode('utf-8'))
+    else:
+        if os.path.getsize(path) > (1 << 20):
+            raise ValueError("el archivo es demasiado grande para ser un marco")
+        with open(path, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+    fs = d.get('frame_shape') if isinstance(d, dict) else None
+    if fs is None and isinstance(d, dict) and any(k in d for k in FRAME_DEFAULTS):
+        fs = d
+
+    if not isinstance(fs, dict) or not any(k in fs for k in FRAME_DEFAULTS):
+        raise ValueError("el archivo no contiene un marco")
+    return frame_clean_name(d.get('name') if isinstance(d, dict) else '') or wa_stem(path), _fr_clean(fs)
+
+
+def frame_lib_path(name):
+    return os.path.join(MARCOS_DIR, frame_clean_name(name) + '.waframe')
+
+
+def frame_lib_list():
+    """[(nombre, ruta)] de los marcos de Mis marcos, por orden alfabetico."""
+    try:
+        names = os.listdir(MARCOS_DIR)
+    except OSError:
+        return []
+    return sorted([(f[:-8], os.path.join(MARCOS_DIR, f)) for f in names if f.lower().endswith('.waframe')], key=lambda t: t[0].lower())
+
+
+def frame_lib_get(name):
+    """Parametros del marco 'name' de Mis marcos (ValueError si no esta o no se lee)."""
+    path = frame_lib_path(name)
+    if not os.path.isfile(path):
+        raise ValueError("no hay ning\u00fan marco llamado \u00ab%s\u00bb" % name)
+    return frame_read_any(path)[1]
+
+
+def frame_lib_find(p):
+    """Nombre del marco de Mis marcos que tiene exactamente estos parametros (sin contar el tamano), o None."""
+    key = {k: v for k, v in _fr_clean(p).items() if k not in ('w', 'h')}
+    for n, path in frame_lib_list():
+        try:
+            q = frame_read_any(path)[1]
+        except Exception:
+            continue
+        if {k: v for k, v in q.items() if k not in ('w', 'h')} == key:
+            return n
+    return None
+
+
+def frame_lib_save(name, p, overwrite=False):
+    """Guarda p en Mis marcos y devuelve el nombre con el que quedo (si ya hay uno con ese nombre y no se pide reemplazar, 'nombre 2', 'nombre 3'...)."""
+    base = frame_clean_name(name) or "Marco"
+    os.makedirs(MARCOS_DIR, exist_ok=True)
+    cand, i = base, 2
+    while not overwrite and os.path.exists(frame_lib_path(cand)):
+        cand = "%s %d" % (base, i)
+        i += 1
+    frame_file_write(frame_lib_path(cand), p, cand)
+    return cand
+
+
+def frame_lib_delete(name):
+    try:
+        os.remove(frame_lib_path(name))
+        return True
+    except OSError:
+        return False
+
+
 class FrameDialog(QDialog):
     """[PACK131] Editor de marcos: grosor de cada lado, color o degradado, bisel, textura y sombras, con una vista previa sobre un paisaje de ejemplo."""
 
@@ -16405,6 +16570,25 @@ class FrameDialog(QDialog):
             xrow.addWidget(b)
         xrow.addStretch(1)
         left.addLayout(xrow)
+        lrow = QHBoxLayout()                                    # [PACK137] Mis marcos
+        lrow.addWidget(QLabel("Mis marcos:"))
+        self.cb_lib = QComboBox()
+        self.cb_lib.setMinimumWidth(150)
+        self.cb_lib.setToolTip("Marcos que guardaste. Al elegir uno se aplica aqu\u00ed (conserva el tama\u00f1o actual).")
+        lrow.addWidget(self.cb_lib)
+        self.btn_lib_del = QPushButton("Borrar")
+        for txt, fn, tip, attr in (("Guardar aqu\u00ed...", self._lib_save, "Guarda este marco en Mis marcos con un nombre", None),
+                                   ("Exportar...", self._lib_export, "Guarda este marco en un archivo .waframe para compartirlo", None),
+                                   ("Importar...", self._lib_import, "Trae un marco de un archivo .waframe (o .json), lo guarda en Mis marcos y lo aplica", None),
+                                   ("Borrar", self._lib_delete, "Quita de Mis marcos el marco elegido", 'btn_lib_del')):
+            b = self.btn_lib_del if attr else QPushButton(txt)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _c=False, f=fn: f())
+            lrow.addWidget(b)
+        lrow.addStretch(1)
+        left.addLayout(lrow)
+        self.cb_lib.activated.connect(self._lib_pick)
+        self._lib_fill()
         tabs = QTabWidget()
         left.addWidget(tabs, 1)
 
@@ -16531,6 +16715,83 @@ class FrameDialog(QDialog):
         self._building = False
         self.resize(900, 560)
         self._refresh(live=False)
+
+    # ---- [PACK137] Mis marcos y .waframe
+    def _lib_fill(self, select=None):
+        self.cb_lib.blockSignals(True)
+        self.cb_lib.clear()
+        self.cb_lib.addItem("(elige uno)" if frame_lib_list() else "(vac\u00edo: guarda uno)", None)
+        for n, _p in frame_lib_list():
+            self.cb_lib.addItem(n, n)
+        i = self.cb_lib.findData(select) if select else 0
+        self.cb_lib.setCurrentIndex(max(0, i))
+        self.cb_lib.blockSignals(False)
+        self.btn_lib_del.setEnabled(bool(self.cb_lib.currentData()))
+
+    def _lib_pick(self, i):
+        n = self.cb_lib.itemData(i)
+        self.btn_lib_del.setEnabled(bool(n))
+        if not n:
+            return
+        try:
+            p = frame_lib_get(n)
+        except Exception as e:
+            QMessageBox.warning(self, "Mis marcos", "No se pudo leer el marco:\n%s" % e)
+            return
+        self._apply(p)
+
+    def _lib_save(self):
+        name, ok = QInputDialog.getText(self, "Guardar en Mis marcos", "Nombre del marco:", text=self.cb_lib.currentData() or "")
+        name = frame_clean_name(name)
+        if not ok or not name:
+            return None
+        same = os.path.exists(frame_lib_path(name))
+        if same and QMessageBox.question(self, "Mis marcos", "Ya hay un marco llamado \u00ab%s\u00bb. \u00bfReemplazarlo?" % name,
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return None
+        saved = frame_lib_save(name, self.p, overwrite=same)
+        self._lib_fill(saved)
+        return saved
+
+    def _lib_export(self):
+        base = self.cb_lib.currentData() or "marco"
+        path, flt = QFileDialog.getSaveFileName(self, "Exportar marco", os.path.join(DATA_DIR, base + ".waframe"), WA_FILTER['frame'])
+        if not path:
+            return None
+        path, as_json = wa_out_path(path, 'frame', flt)
+        try:
+            if as_json:
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump({"frame_shape": self.p}, f, indent=2, ensure_ascii=False)
+            else:
+                frame_file_write(path, self.p, wa_stem(path))
+        except OSError as e:
+            QMessageBox.warning(self, "Exportar marco", "No se pudo guardar el archivo:\n%s" % e)
+            return None
+        return path
+
+    def _lib_import(self):
+        path, _f = QFileDialog.getOpenFileName(self, "Importar marco", DATA_DIR, "Marcos (*.waframe *.json);;Todos (*)")
+        if not path:
+            return None
+        try:
+            name, p = frame_read_any(path)
+        except Exception as e:
+            QMessageBox.warning(self, "Importar marco", "No se pudo leer el marco:\n%s" % e)
+            return None
+        saved = frame_lib_find(p) or frame_lib_save(name, p)
+        self._lib_fill(saved)
+        self._apply(p)
+        return saved
+
+    def _lib_delete(self):
+        n = self.cb_lib.currentData()
+        if not n:
+            return
+        if QMessageBox.question(self, "Mis marcos", "\u00bfQuitar \u00ab%s\u00bb de Mis marcos?" % n, QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        frame_lib_delete(n)
+        self._lib_fill()
 
     def _same_toggled(self, on):
         if on:
@@ -20923,6 +21184,20 @@ class WidgetManager(QObject):
             tip="Dibuja un marco (un PNG con el centro transparente) como capa 1: grosor de cada lado, color, bisel, textura y sombras")
         add(fr_menu, "Editar este marco...", lambda: self.edit_frame(widget_id), enabled=self._is_frame(state),
             tip="Reabre el editor de marcos con los par\u00e1metros de este widget y vuelve a dibujarlo")
+        add(fr_menu, "Guardar este marco en Mis marcos...", lambda: self.save_frame_to_lib(widget_id), enabled=self._is_frame(state),
+            tip="Guarda los par\u00e1metros de este marco con un nombre para ponerlo en otros widgets")
+        lib_menu = QMenu("Mis marcos", fr_menu)
+        lib_menu.setToolTipsVisible(True)
+        _lib = frame_lib_list()
+        for _n, _p in _lib:
+            add(lib_menu, _n, lambda _n=_n: self.apply_frame_from_lib(widget_id, _n), tip="Pone este marco en el widget (conserva su tama\u00f1o)")
+        if not _lib:
+            add(lib_menu, "(vac\u00edo: guarda un marco desde el editor)", lambda: None, enabled=False)
+        fr_menu.addMenu(lib_menu)
+        add(fr_menu, "Poner un marco desde un archivo...", lambda: self.apply_frame_from_file(widget_id),
+            tip="Aplica a este widget un marco guardado en un archivo (.waframe o .json), con el tama\u00f1o actual")
+        add(fr_menu, "Exportar este marco (.waframe)...", lambda: self.export_frame(widget_id), enabled=self._is_frame(state),
+            tip="Guarda este marco en un archivo .waframe para compartirlo")
         aspect_menu.addMenu(fr_menu)
         crown_menu = QMenu("Corona", aspect_menu)
         add(crown_menu, "Tono, saturaci\u00f3n, brillo y opacidad...", lambda: self.edit_crown_style(widget_id))
@@ -22559,6 +22834,92 @@ class WidgetManager(QObject):
             live(None)
             return None
         return dlg.get_params(), dlg.chk_fit.isChecked()
+
+    # ---- [PACK137] .waframe y Mis marcos desde el menu del widget
+    def _frame_text_ok(self, widget_id):
+        """False si la capa 1 es texto con contenido y la persona no quiere perderlo."""
+        st = self.global_state.get(widget_id)
+        td = st.get('template_data') if isinstance(st, dict) else None
+        l1 = td.get('layer1') if isinstance(td, dict) and isinstance(td.get('layer1'), dict) else {}
+        if l1.get('type') == 'text' and re.sub(r'<[^>]+>', '', str(l1.get('content') or '')).strip():
+            r = QMessageBox.question(self.dialog_parent, "Poner un marco",
+                                     "La capa 1 de este widget es texto (es una nota). Con un marco pasa a ser un marco para una imagen o una p\u00e1gina web y el texto se pierde.\n\n\u00bfContinuar?")
+            return r == QMessageBox.Yes
+        return True
+
+    def apply_frame_params(self, widget_id, p):
+        """Pone en este widget el marco p (de Mis marcos o de un archivo) con el tamano que tiene hoy, y ajusta la capa 2 al hueco."""
+        if self.widgets.get(widget_id) is None or not isinstance(self.global_state.get(widget_id), dict):
+            return False
+        if not self._frame_text_ok(widget_id):
+            return False
+        q = _fr_clean(p)
+        s = self._frame_start(widget_id)
+        q['w'], q['h'] = int(s.get('w', q['w'])), int(s.get('h', q['h']))
+        self.apply_frame(widget_id, q, fit=True)
+        return True
+
+    def apply_frame_from_lib(self, widget_id, name):
+        try:
+            p = frame_lib_get(name)
+        except Exception as e:
+            QMessageBox.warning(self.dialog_parent, "Mis marcos", "No se pudo leer el marco:\n%s" % e)
+            return False
+        return self.apply_frame_params(widget_id, p)
+
+    def apply_frame_from_file(self, widget_id):
+        path, _f = QFileDialog.getOpenFileName(self.widgets.get(widget_id) or self.dialog_parent, "Poner un marco desde un archivo", DATA_DIR,
+                                               "Marcos (*.waframe *.json);;Todos (*)")
+        if not path:
+            return False
+        try:
+            _nm, p = frame_read_any(path)
+        except Exception as e:
+            QMessageBox.warning(self.dialog_parent, "Poner un marco", "No se pudo leer el marco:\n%s" % e)
+            return False
+        return self.apply_frame_params(widget_id, p)
+
+    def export_frame(self, widget_id):
+        """Guarda el marco de este widget en un .waframe."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict) or not self._is_frame(st):
+            return None
+        parent = self.widgets.get(widget_id) or self.dialog_parent
+        base = wa_stem(self._tree_label(widget_id) if hasattr(self, '_tree_label') else 'marco') + ".waframe"
+        path, flt = QFileDialog.getSaveFileName(parent, "Exportar marco", os.path.join(DATA_DIR, HotkeyManager.safe_profile_name(base) or "marco.waframe"), WA_FILTER['frame'])
+        if not path:
+            return None
+        path, as_json = wa_out_path(path, 'frame', flt)
+        p = _fr_clean(st['template_data']['frame_shape'])
+        try:
+            if as_json:
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump({"frame_shape": p}, f, indent=2, ensure_ascii=False)
+            else:
+                frame_file_write(path, p, wa_stem(path))
+        except OSError as e:
+            QMessageBox.warning(parent, "Exportar marco", "No se pudo guardar el archivo:\n%s" % e)
+            return None
+
+        self._osd("Marco guardado: " + os.path.basename(path))
+        return path
+
+    def save_frame_to_lib(self, widget_id):
+        """Guarda el marco de este widget en Mis marcos (pide un nombre)."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict) or not self._is_frame(st):
+            return None
+        name, ok = QInputDialog.getText(self.dialog_parent, "Guardar en Mis marcos", "Nombre del marco:")
+        name = frame_clean_name(name)
+        if not ok or not name:
+            return None
+        same = os.path.exists(frame_lib_path(name))
+        if same and QMessageBox.question(self.dialog_parent, "Mis marcos", "Ya hay un marco llamado \u00ab%s\u00bb. \u00bfReemplazarlo?" % name,
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return None
+        saved = frame_lib_save(name, st['template_data']['frame_shape'], overwrite=same)
+        self._osd("Marco guardado en Mis marcos: " + saved)
+        return saved
 
     def edit_crown_style(self, widget_id):
         """Dialogo de la corona de un widget (apagar, tono, saturacion, brillo, opacidad); se guarda en su JSON."""
@@ -24357,7 +24718,7 @@ class WidgetManager(QObject):
                         ug = u.geometry()
                         if not ug.intersects(wg) or not u.paper_translucent():
                             continue
-                        r = QRegion(u.paper_poly_global()).intersected(QRegion(wg))
+                        r = QRegion(u.paper_shape_global()).intersected(QRegion(wg))
                         if not r.isEmpty():
                             rects.append(r)
                 w.set_under_veil(rects, op)
@@ -24532,7 +24893,7 @@ class WidgetManager(QObject):
 
     def load_anything_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self.dialog_parent, "Cargar un archivo", DATA_DIR,
-                                              "Todo lo que se puede cargar (*.waset *.wawidget *.wapaper *.wapack *.json *.zip);;Todos (*)")
+                                              "Todo lo que se puede cargar (*.waset *.wawidget *.wapaper *.waframe *.wapack *.json *.zip);;Todos (*)")
         if path:
             return self.load_anything(path)
         return None
@@ -24551,6 +24912,16 @@ class WidgetManager(QObject):
         if _pk is not None:
             self.show_packs(install=path)
             return 'pack'
+        if wa_file_kind(path) == 'frame':       # [PACK137] .waframe: va a Mis marcos
+            try:
+                _fn, _fp = frame_read_any(path)
+            except Exception as e:
+                QMessageBox.warning(parent, "Cargar archivo", f"No se pudo leer el marco:\n{e}")
+                return None
+            _had = frame_lib_find(_fp)
+            _saved = _had or frame_lib_save(_fn or name, _fp)
+            self._osd(("Ese marco ya estaba en Mis marcos: " if _had else "Marco guardado en Mis marcos: ") + _saved, 2200)
+            return 'frame'
         raw = None
         if wa_file_kind(path):                  # [PACK130] .waset / .wawidget / .wapaper
             try:

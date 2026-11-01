@@ -13,7 +13,7 @@ Funciona en Windows, macOS y Linux, con instalación de un clic.
 - **Jerarquizar**: padres, hijos, nietos… Los hijos pueden seguir al padre cuando lo arrastras, y puedes mover una rama entera.
 - **Plegar y desplegar**: oculta los hijos de una nota (o de todas) para ver solo lo que importa, y recupéralos cuando quieras.
 - **Sets de widgets**: guarda conjuntos completos de widgets y cambia entre ellos al instante con el teclado.
-- **Packs y archivos de widgets**: comparte o estrena widgets en un solo archivo: `.wapack` (varios widgets guardados y sets), `.waset` (un árbol o todos los widgets de un set), `.wawidget` (un widget guardado) y `.wapaper` (una forma de papel). Todos van comprimidos con sus imágenes.
+- **Packs y archivos de widgets**: comparte o estrena widgets en un solo archivo: `.wapack` (varios widgets guardados y sets), `.waset` (un árbol o todos los widgets de un set), `.wawidget` (un widget guardado) `.wapaper` (una forma de papel) y `.waframe` (un marco; el editor de marcos tiene una biblioteca, *Mis marcos*). Todos van comprimidos con sus imágenes.
 - **Configurable a fondo**: cables (grosor, opacidad, degradado, cuerda, calidad de dibujo; nacen del borde del widget y pueden verse como a través de un cristal), formas de papel, marcos rectangulares, redondeados u ovalados, recorte de imágenes, widgets guardados, atajos de teclado y gestos del icono de bandeja.
 - **Rápido y ligero**: la calidad de dibujo de los cables se adapta sola al ordenador, y un estudio opcional de unos 3 segundos (al instalar o desde *Cables → Punteados y rendimiento*) recomienda la calidad que va fluida en tu equipo.
 - **Tus datos son tuyos**: todo se guarda en archivos JSON en tu carpeta de usuario, con copias de seguridad.
@@ -152,7 +152,7 @@ compila un ejecutable o deja el programa en modo portable.
 - `herramientas.py`: instalar / desinstalar / compilar / librerías de cualquier `.py` de la carpeta.
 - `defaults/`: lo que se copia en el primer arranque (notas de bienvenida, perfil de ejemplo, estilo de nota y el pack de ejemplo en `defaults/packs/`).
 - `docs/FORMATO-WAPACK.md`: especificación del formato de los packs.
-- `docs/FORMATOS-ARCHIVO.md`: especificación de `.waset`, `.wawidget` y `.wapaper`.
+- `docs/FORMATOS-ARCHIVO.md`: especificación de `.waset`, `.wawidget`, `.wapaper` y `.waframe`.
 - `installers/`: `install-windows.cmd` (con PowerShell dentro) e `install-unix.sh` (Linux y macOS). Descargan `uv`, un Python 3.12 propio, y llaman a `herramientas.py install`.
 - `site/` y `tools/build_site.sh`: la página con el botón único y el montaje de lo que se publica.
 - `.github/workflows/pages.yml`: publica la página en GitHub Pages en cada cambio; calcula las URLs solo.
