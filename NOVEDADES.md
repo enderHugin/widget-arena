@@ -1,3 +1,7 @@
+## Pack 143 · 2026-11-01
+- **Arreglo: el ajuste fino de rotación (Ctrl+Alt+Mayús+rueda) ahora se reconoce también si el sistema no incluye Mayús en el evento de la rueda.** Antes, en ese caso el giro salía de 5° en lugar de 1°. Ahora se mira también la tecla Mayús física. En el registro (nivel depuración) se anota si se ha tomado como fino.
+- **La ayuda de gestos (el recuadro junto al cursor) nombra el giro con la rueda:** *Ctrl+Alt* → girar el widget 5°; *Ctrl+Alt+Mayús* → 1° (fino). Solo aparece sin capa seleccionada, que es cuando actúa.
+
 ## Pack 142 · 2026-11-01
 - **Girar con la rueda: Ctrl+Alt+rueda = 5°; con Mayús (Ctrl+Alt+Mayús+rueda) = 1° (fino).** Cambia lo de los Packs 140-141 (que usaban Ctrl+Alt+Mayús para 5°). El sentido es el inverso: **rueda arriba = antihorario, rueda abajo = horario**. Vale con el widget bajo el cursor y sin ninguna capa seleccionada (con una capa seleccionada, Ctrl+Alt+rueda sigue ajustando esa capa); sobre un botón de texto la rueda sigue siendo la del botón. Está en *Aspecto → Girar widget* con 5° y 1°.
 

@@ -4170,12 +4170,13 @@ class StickerWindow(QMainWindow):
             ad = event.angleDelta()                                            # [PACK142] Ctrl+Alt+rueda gira el widget 5 grados; con Mayus, 1 grado (fino)
             dd = ad.y() or ad.x()                                              # con Mayus o Alt muchos sistemas mandan la rueda como desplazamiento horizontal
             if dd != 0 and 'btn=1' not in (self._get_link_at(event.position().toPoint()) or ''):        # sobre un boton de texto la rueda sigue siendo la del boton
-                log_debug(self.widget_id, "Ctrl+Alt(+Mayus)+rueda: angleDelta=(%d, %d)" % (ad.x(), ad.y()))
+                fine = bool(has_shift) or bool(QApplication.queryKeyboardModifiers() & Qt.ShiftModifier)        # [PACK143] Mayus fisica pulsada aunque el sistema no la ponga en el evento
+                log_debug(self.widget_id, "Ctrl+Alt(+Mayus)+rueda: angleDelta=(%d, %d) mayus=%s" % (ad.x(), ad.y(), fine))
                 acc = getattr(self, '_rot_wheel_acc', 0) + dd                  # un toque de rueda = 120; un panel tactil manda trozos menores
                 n = int(acc / 120)
                 self._rot_wheel_acc = acc - n * 120
                 if n:
-                    self.act_rotate_note_by(-(1 if has_shift else 5) * n)      # rueda arriba = antihorario, abajo = horario
+                    self.act_rotate_note_by(-(1 if fine else 5) * n)      # rueda arriba = antihorario, abajo = horario
                 event.accept()
                 return
 
@@ -11915,7 +11916,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 142                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 143                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -17153,6 +17154,7 @@ GESTURE_TABLE = {
 
     "CA": [
         ("Click", "Seleccionar capa: L1 \u2192 L2 \u2192 ninguna", None),
+        ("Rueda", "Sin capa seleccionada: girar el widget 5\u00b0 (arriba = antihorario, abajo = horario)", 'nolayer'),
         ("Rueda", "Capa seleccionada (texto o imagen): ancho fino (\u00b11)", 'layer'),
         ("Teclas", "\u2191/\u2193: inclinar la capa (0,1 \u00b7 con May\u00fas 0,01) \u00b7 \u2190/\u2192: girar 5\u00b0", 'layer'),
     ],
@@ -17167,6 +17169,7 @@ GESTURE_TABLE = {
     ],
 
     "CAS": [
+        ("Rueda", "Sin capa seleccionada: girar el widget 1\u00b0 (ajuste fino; arriba = antihorario, abajo = horario)", 'nolayer'),
         ("Click izq.", "CLONAR el widget (hereda su jerarqu\u00eda)", None),
         ("Arrastrar", "CREAR UN HIJO (tipo: Ajustes > Tipo de hijo): aparece bajo el cursor y se coloca donde sueltes", None),
         ("Click central", "Rotaci\u00f3n aleatoria del widget (\u00b120\u00b0)", None),
