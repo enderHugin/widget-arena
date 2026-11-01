@@ -5604,7 +5604,7 @@ class StickerWindow(QMainWindow):
         super().changeEvent(event)
         try:
             if event.type() == QEvent.ActivationChange and self.isActiveWindow():
-                self.manager.veil_raised(self)
+                self.manager.veil_raised(self, True)
         except Exception:
             pass
 
@@ -11893,7 +11893,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 137                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 138                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -15068,7 +15068,10 @@ CABLE_DIALOG_SPEC = [
          "Con 0 % el cable se ve solo desde el borde del widget hacia fuera, aunque el papel sea transl\u00facido. Con un valor intermedio se ve a trav\u00e9s del papel como a trav\u00e9s de un cristal, y el difuminado lo desenfoca. Con 100 % y 0 px se ve entero, nazca donde nazca."),
         ("Un widget bajo otro transparente", [
             ('_under_op', "Opacidad de lo que queda bajo el papel transl\u00facido de otro widget (100 % = sin cambio)", 'i', " %", None)],
-         "Ayuda a distinguir cu\u00e1l est\u00e1 encima: la parte de un widget que queda bajo un widget de papel transl\u00facido se ve mucho m\u00e1s tenue. Solo afecta a notas con papel transl\u00facido. El orden se aprende de los clics: si una ventana se sube por otra v\u00eda (otro programa, por ejemplo), puede equivocarse hasta que haces clic en ella.")]),
+         "Ayuda a distinguir cu\u00e1l est\u00e1 encima: la parte de un widget que queda bajo un widget de papel transl\u00facido se ve mucho m\u00e1s tenue. Solo afecta a notas con papel transl\u00facido. En Windows se lee el orden real de las ventanas; en otros sistemas se aprende de los clics y puede equivocarse si una ventana se sube por otra v\u00eda, hasta que haces clic en ella."),
+        ("Apilamiento de los widgets", [
+            ('_tree_z', "Un widget y sus descendientes en la pila", 'c', ("Se apilan como un bloque", "Cada widget por su cuenta"), None)],
+         "Con \u00abbloque\u00bb, al pasar al frente un widget (al hacerle clic) pasan con \u00e9l sus hijos, nietos y dem\u00e1s descendientes, manteniendo su orden entre ellos. Dos hermanos son dos grupos: al hacer clic en uno, \u00e9l y todo lo suyo quedan sobre el otro y todo lo suyo. Es lo que mantiene coherente el atenuado bajo los widgets transparentes.")]),
     ("Color y brillo", [
         ("Degradado de color entre padre e hijo", [
             ('_cable_grad_start', "Color puro junto a cada widget (tramo por extremo, m\u00e1x. 50 %)", 'i', " %", 'grad')],
@@ -23366,6 +23369,7 @@ class WidgetManager(QObject):
         '_cable_width_min': (1.0, 0.3, 10.0),   # (antiguo, px) ahora derivado de _cable_wctr_pct
         '_cable_wctr_pct': (40, 5, 100),        # grosor del CENTRO de un cable largo, % del grosor de un cable corto
         '_cable_ograd_start': (10, 0, 50),      # % del cable con opacidad plena en CADA extremo (padre e hijo)
+        '_tree_z': (0, 0, 1),                   # [PACK138] 0 = un arbol se apila como un bloque; 1 = cada widget por su cuenta
         '_under_op': (40, 5, 100),              # [PACK136] % de opacidad de lo que queda bajo el papel translucido de otro widget (100 = sin cambio)
         '_cable_inside_op': (0, 0, 100),        # [PACK134] % de opacidad del cable DENTRO de los widgets que une (0 = no se ve: nace del borde)
         '_cable_inside_blur': (0, 0, 30),       # [PACK134] px de difuminado del cable dentro de esos widgets (0 = nitido)
@@ -24673,10 +24677,73 @@ class WidgetManager(QObject):
         d.exec()
 
     # ---------------------------------------------------------------- [PACK136] orden de apilamiento y velo
-    def veil_raised(self, win):
+    # ---------------------------------------------------------------- [PACK138] orden Z real y arbol como bloque
+    def _veil_win_order(self):
+        """Windows: el orden Z real de nuestras ventanas visibles, de abajo arriba (None si no se puede saber: entonces vale el orden aprendido)."""
+        if sys.platform != 'win32':
+            return None
+        try:
+            from ctypes import wintypes
+            u = _user32_cached()
+            u.GetTopWindow.argtypes = [wintypes.HWND]
+            u.GetTopWindow.restype = wintypes.HWND
+            u.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+            u.GetWindow.restype = wintypes.HWND
+            mine = {}
+            for w in self.widgets.values():
+                if w.isVisible() and not getattr(w, '_is_closing', False):
+                    mine[int(w.winId())] = w
+            seq, h, guard = [], u.GetTopWindow(None), 0
+            while h and guard < 20000:               # de arriba abajo, con las ventanas 'siempre encima' primero
+                w = mine.get(int(h))
+                if w is not None:
+                    seq.append(w)
+                h = u.GetWindow(h, 2)                # GW_HWNDNEXT
+                guard += 1
+            if len(seq) != len(mine):
+                return None
+            seq.reverse()
+            return seq
+        except Exception:
+            return None
+
+    def _tree_members(self, widget_id):
+        """Ids del grupo de un widget: el propio widget y todos sus descendientes (hijos, nietos...) que tienen ventana.
+        Dos hermanos son dos grupos: pasar uno al frente sube el suyo entero sobre el del otro."""
+        return [i for i in [widget_id] + self.get_descendants(widget_id) if i in self.widgets]
+
+    def _tree_raise(self, win):
+        """Un widget y sus descendientes se apilan como un bloque: al pasar uno al frente, pasan con el sus hijos, nietos... de su banda, en el mismo orden relativo."""
+        ids = self._tree_members(win.widget_id)
+        if len(ids) < 2:
+            return
+        band = bool(win.always_on_top)
+        mem = [self.widgets[i] for i in ids if self.widgets[i] is not win and self.widgets[i].isVisible() and bool(self.widgets[i].always_on_top) == band]
+        if not mem:
+            return
+        order = self._veil_order()
+        pos = {id(w): k for k, w in enumerate(order)}
+        mem.sort(key=lambda w: pos.get(id(w), -1))
+        idx = sorted(pos.get(id(w), -1) for w in mem + [win])
+        if idx[0] >= 0 and idx[-1] - idx[0] + 1 == len(idx) and pos.get(id(win)) == idx[-1]:
+            return                                    # ya forman un bloque con este arriba
+        self._tree_raising = True
+        try:
+            for m in mem:
+                m.raise_()
+            win.raise_()
+        finally:
+            self._tree_raising = False
+
+    def veil_raised(self, win, activated=False):
         """Un widget paso al frente (se activo o se subio): se anota su orden, porque Qt no dice cual esta encima de cual."""
         self._zseq = getattr(self, '_zseq', 0) + 1
         win._zstamp = self._zseq
+        if activated and not getattr(self, '_tree_raising', False) and int(self.get_cable_param('_tree_z')) == 0:
+            try:
+                self._tree_raise(win)                       # [PACK138] el widget y sus descendientes pasan al frente como un bloque
+            except Exception as e_tr:
+                log_warn("Manager", "Arbol como bloque: %s" % e_tr)
         self.veil_schedule()
 
     def veil_schedule(self):
@@ -24695,6 +24762,9 @@ class WidgetManager(QObject):
 
     def _veil_order(self):
         """Widgets visibles de abajo arriba: los 'siempre encima' van sobre los demas; despues, el orden en que pasaron al frente."""
+        real = self._veil_win_order()                       # [PACK138] en Windows se lee el orden real de las ventanas
+        if real is not None:
+            return real
         ws = [(i, w) for i, w in enumerate(self.widgets.values()) if w.isVisible() and not getattr(w, '_is_closing', False)]
         ws.sort(key=lambda t: (1 if t[1].always_on_top else 0, getattr(t[1], '_zstamp', 0), t[0]))
         return [w for _i, w in ws]
