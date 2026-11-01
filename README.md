@@ -46,6 +46,14 @@ crear y clonar hijas, gestos y ayuda con **F1**, cambiar el tono con **Ctrl + ru
 Además queda guardado un set de ejemplo de uso diario, «Ejemplo - semana», para que veas cómo se organiza un tablero real; cámbialo con **Ctrl + 2** (y vuelve con **Ctrl + 1**)
 o desde el menú del icono de bandeja → *Sets de widgets*. Puedes borrarlos cuando quieras: no vuelven a aparecer.
 
+## Modo usuario y modo creativo
+Widget Arena se puede usar de dos maneras, y el programa lo pregunta una sola vez al arrancar:
+
+- **Modo usuario:** menús reducidos a lo esencial. En la bandeja: ocultar o mostrar todos, plegar o desplegar hijos, nuevo widget, navegador, sets de widgets (cambiar con las teclas, siguiente y anterior, guardar el set activo), guardar y cargar, ajustes básicos y la guía de gestos. En el menú de un widget: renombrar, temporizador, ocultar, siempre encima, girar, cambiar a otro widget guardado, las relaciones, clonar y eliminar.
+- **Modo creativo:** todo lo demás: capas, formas de papel, marcos, corona, árboles (copiar, exportar, mover), tipos de hijo, integraciones y la consola.
+
+Se cambia cuando quieras con **Modo creativo** en el menú del icono de la bandeja (marcado = modo creativo). Los dos modos usan los mismos archivos y los mismos gestos; solo cambia lo que ves en los menús.
+
 ## Actualizaciones
 
 *Icono de bandeja → Buscar actualizaciones...* compara tu versión con la publicada en esta página (`dl/update.json`: número de pack, huellas sha256 y novedades).

@@ -1,3 +1,9 @@
+## Pack 145 · 2026-11-01
+- **Modo usuario y modo creativo.** Un interruptor, **Modo creativo**, en el menú del icono de la bandeja. En **modo usuario** los menús se reducen a lo esencial: en la bandeja desaparecen *Nueva nota & forma de papel*, *Nuevo con un aspecto en uso* y la consola, y *Ajustes* queda en apariencia básica, atajos e importar/exportar; *Sets de widgets* conserva guardar, siguiente, anterior, ranuras y la lista de sets. En el menú de un widget desaparecen *Capas*, *Formas de papel*, *Marco*, *Corona*, copiar/pegar/exportar/mover árbol y *Usar como predeterminado*; se mantienen renombrar, temporizador, ocultar, siempre encima, *Widget guardado*, *Girar widget*, **Relaciones completas**, clonar y eliminar. El **modo creativo** es todo lo de antes.
+- **Se pregunta una sola vez** al arrancar (también en lo ya instalado): «Solo usar widgets» o «Crear y personalizar». Cerrar la pregunta equivale a modo creativo. Hasta que se conteste, el programa se comporta como siempre.
+- Los gestos de ratón con teclas siguen igual en los dos modos. El modo es del programa, no de cada set: cambiar de set no lo cambia, y no se restaura desde copias.
+- El editor de atajos de teclado sigue viendo todas las acciones en cualquier modo.
+
 ## Pack 144 · 2026-11-01
 - **Arreglo: Ctrl+Alt+Mayús+rueda no giraba en Linux (VirtualBox).** La ayuda de gestos lee las teclas pulsadas de verdad, pero el giro leía las que trae el evento de la rueda, y en ese sistema no coinciden (la ayuda decía «girar 1°» y no pasaba nada). Ahora el giro hace caso también a las teclas realmente pulsadas (Ctrl, Alt y Mayús); con la tecla Win pulsada de verdad sigue sin girar.
 - **Diagnóstico:** las primeras 24 vueltas de rueda con Ctrl+Alt dejan una línea en el registro (nivel info, sin activar la depuración) con las teclas del evento, las físicas y el desplazamiento recibido.

@@ -8154,7 +8154,7 @@ _MENU_RULES_T = (
     ("Recargar", "pantalla"),
     ("Nuevo widget", "crear"), ("Nuevo con un aspecto", "crear"), ("Nueva nota", "crear"),
     ("Navegador", "explorar"), ("Widgets", "explorar"), ("Sets de widgets", "explorar"), ("Guardar y cargar", "explorar"), ("Edici", "explorar"),
-    ("Ajustes", "app"), ("Gu\u00eda", "app"), ("Mostrar u ocultar", "app"), ("Acerca", "app"), ("Salir", "app"),
+    ("Ajustes", "app"), ("Gu\u00eda", "app"), ("Mostrar u ocultar", "app"), ("Modo creativo", "app"), ("Acerca", "app"), ("Salir", "app"),
 )
 # Solo estas opciones (las mas usadas) llevan icono y negrita; sin colores ni franjas.
 _MENU_KEYS_W = ("Capas", "Relaciones", "Clonar", "Eliminar")
@@ -8279,6 +8279,44 @@ def _menu_item_look(a, group, titles, tints, key=False):
                     break
     except Exception:
         pass
+
+
+# ---- [PACK145] modo usuario / modo creativo: en modo usuario los menus se reducen a lo esencial (el modo creativo los muestra enteros)
+_UI_T_DROP = ("Nuevo con un aspecto", "Nueva nota", "Mostrar u ocultar la consola")
+_UI_T_SUB = {      # submenus: (lo que se conserva, lo que se quita), por el principio del texto
+    "Sets de widgets": (None, ("Duplicar el set", "Guardar el set activo al cambiar", "Precargar", "Elegir los sets", "Importar y exportar", "Eliminar todos")),
+    "Ajustes": (("Apariencia", "Atajos de teclado", "Importar y exportar"), None),
+    "Apariencia": (("Cables (opacidad", "Fuente predeterminada", "Mostrar ayuda de gestos"), None),
+}
+_UI_W_DROP = ("Capas", "Copiar \u00e1rbol", "Pegar \u00e1rbol", "Exportar \u00e1rbol", "Mover \u00e1rbol", "Usar como predeterminado")
+_UI_W_SUB = {"Aspecto": (("Widget guardado", "Girar widget"), None)}
+
+
+def _ui_prune(menu, drop=(), sub=None):
+    """[PACK145] Quita de un menu (y de sus submenus) las opciones del modo creativo. Lo que no se reconoce se deja."""
+    try:
+        for a in list(menu.actions()):
+            if a.isSeparator() or isinstance(a, QWidgetAction):
+                continue
+            lab = _hk_norm_label(a.text())
+            if any(lab.startswith(d) for d in drop):
+                menu.removeAction(a)
+                continue
+            sm = a.menu()
+            if sm is None or not sub:
+                continue
+            for k, (keep, dr) in sub.items():
+                if lab.startswith(k):
+                    for b in list(sm.actions()):
+                        if b.isSeparator() or isinstance(b, QWidgetAction):
+                            continue
+                        bl = _hk_norm_label(b.text())
+                        if (keep is not None and not any(bl.startswith(x) for x in keep)) or (dr is not None and any(bl.startswith(x) for x in dr)):
+                            sm.removeAction(b)
+                    break
+            _ui_prune(sm, (), sub)
+    except Exception as e_ui:
+        log_warn("Menu", "Modo usuario: no se pudo reducir un menu: %s" % e_ui)
 
 
 def _style_menu(menu, groups, rules, decorate=True):
@@ -10870,7 +10908,7 @@ def _previews_cli(argv):
     return 0 if not fail else 1
 
 
-CONFIG_NO_RESTORE = ('current_profile', 'profile_slots', 'gesture_hints')       # [PACK129] ajustes de la sesion: ni en copias ni en la configuracion inicial
+CONFIG_NO_RESTORE = ('current_profile', 'profile_slots', 'gesture_hints', 'ui_mode', 'ui_mode_asked')       # [PACK129] ajustes de la sesion: ni en copias ni en la configuracion inicial
 INSTALL_DEFAULTS_SKIP = CONFIG_NO_RESTORE
 
 
@@ -11924,11 +11962,12 @@ def font_boot(m):
     QTimer.singleShot(2000, lambda: m._font_fetcher.start())
     QTimer.singleShot(3500, m.font_first_run_prompt)
     QTimer.singleShot(7000, m.perf_first_run_prompt)       # [PACK135] despues de la fuente
+    QTimer.singleShot(11000, m.mode_first_run_prompt)       # [PACK145] y despues del estudio del equipo: modo usuario o creativo
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 144                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 145                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -19982,6 +20021,14 @@ class WidgetManager(QObject):
         
         if getattr(self, 'hotkeys', None) is not None:
             self.hotkeys.decorate(menu, "tray")
+        mode_act = QAction("Modo creativo (todas las opciones)", self)        # [PACK145]
+        mode_act.setCheckable(True)
+        mode_act.setChecked(not self.ui_simple())
+        mode_act.setToolTip("Activado: todas las opciones para crear y personalizar. Desactivado: modo usuario, con los men\u00fas reducidos a lo esencial.")
+        mode_act.toggled.connect(lambda on: self.set_ui_mode('creativo' if on else 'usuario'))
+        menu.addAction(mode_act)
+        if self.ui_simple():
+            _ui_prune(menu, _UI_T_DROP, _UI_T_SUB)
         _style_menu(menu, _MENU_GROUPS_T, _MENU_RULES_T, decorate=self._menu_style_on())       # [PACK78]
         self.tray_icon.setContextMenu(menu)
         self._update_tray_tooltip()          # [PACK122] el numero de ranura puede haber cambiado
@@ -20529,6 +20576,43 @@ class WidgetManager(QObject):
         self._hud_timer.setInterval(60)
         self._hud_timer.timeout.connect(self._gesture_poll)
         self._hud_timer.start()
+
+    # ---- [PACK145] modo usuario / modo creativo
+    def ui_mode(self):
+        return 'usuario' if self.global_state.get('ui_mode') == 'usuario' else 'creativo'
+
+    def ui_simple(self):
+        return self.ui_mode() == 'usuario'
+
+    def set_ui_mode(self, mode):
+        self.global_state['ui_mode'] = 'usuario' if mode == 'usuario' else 'creativo'
+        self.global_state['ui_mode_asked'] = True
+        self._pending_disk_write = True
+        log_info("Manager", "Modo de la interfaz: %s" % self.global_state['ui_mode'])
+        QTimer.singleShot(0, self.build_tray_menu)
+
+    def mode_first_run_prompt(self, tries=0):
+        """Una sola vez (tambien en lo ya instalado): pregunta si se quiere solo usar widgets o crear y personalizar."""
+        if os.environ.get('WA_NO_FONT_PROMPT') or os.environ.get('WA_NO_MODE_PROMPT') or self.global_state.get('ui_mode_asked'):
+            return
+        for dn in ('font_dialog', 'perf_dialog'):
+            d = getattr(self, dn, None)
+            if d is not None and d.isVisible() and tries < 40:
+                QTimer.singleShot(4000, lambda: self.mode_first_run_prompt(tries + 1))
+                return
+        box = QMessageBox(self.dialog_parent)
+        box.setWindowTitle("Widget Arena")
+        box.setIcon(QMessageBox.Question)
+        box.setText("\u00bfC\u00f3mo quieres usar Widget Arena?")
+        box.setInformativeText("Modo usuario: men\u00fas sencillos para a\u00f1adir widgets, cambiar de set y poco m\u00e1s.\n\n"
+                               "Modo creativo: todas las opciones para crear y personalizar (capas, formas de papel, marcos...).\n\n"
+                               "Puedes cambiarlo cuando quieras con \u00abModo creativo\u00bb en el men\u00fa del icono de la bandeja.")
+        b_user = box.addButton("Solo usar widgets", QMessageBox.AcceptRole)
+        b_creative = box.addButton("Crear y personalizar", QMessageBox.RejectRole)
+        box.setDefaultButton(b_user if FIRST_RUN else b_creative)
+        box.setEscapeButton(b_creative)
+        box.exec()
+        self.set_ui_mode('usuario' if box.clickedButton() is b_user else 'creativo')
 
     def _menu_style_on(self):
         return bool(self.global_state.get('menu_style', True))
@@ -21310,6 +21394,8 @@ class WidgetManager(QObject):
         menu.addMenu(rm_menu)
         if not from_tray and getattr(self, 'hotkeys', None) is not None:
             self.hotkeys.decorate(menu, "widget")
+        if not full and self.ui_simple():                      # [PACK145] en modo usuario, solo lo esencial (el editor de atajos usa full=True: todo)
+            _ui_prune(menu, _UI_W_DROP, _UI_W_SUB)
         _style_menu(menu, self._widget_menu_groups(widget_id, state), _MENU_RULES_W, decorate=self._menu_style_on())       # [PACK78]
         return menu
 
@@ -26358,7 +26444,7 @@ class WidgetManager(QObject):
 
     def _apply_profile_scalars(self, scalars):
         """[PACK130] Los ajustes (cables, jerarquia, tonos...) son de cada set. Lo que el set no trae se pone al valor inicial, no se queda con el del set anterior."""
-        skip = ('profile_slots', 'profile_autosave', 'profile_preload', 'current_profile', 'gesture_hints')
+        skip = ('profile_slots', 'profile_autosave', 'profile_preload', 'current_profile', 'gesture_hints', 'ui_mode', 'ui_mode_asked')
         target = dict(self._base_scalars())
         for k, v in scalars.items():
             if str(k).startswith('telegram') or k in skip or isinstance(v, dict):
