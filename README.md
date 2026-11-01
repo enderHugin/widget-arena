@@ -4,6 +4,8 @@
 Conecta las notas con cables, jerarquízalas en padres e hijos y pliega o despliega grupos enteros para ordenar la vista.
 Funciona en Windows, macOS y Linux, con instalación de un clic.
 
+![Widget Arena en acción: una nota padre con hijos colgando de cables que se mueven como cuerdas, giran, cambian de color y se cambian de set](docs/demo.gif)
+
 *Desktop notes and widgets, highly usable and configurable, built for daily use. Link notes with cables, organise them as parents and children, and collapse or expand whole groups. Windows, macOS and Linux, one-click install.*
 
 ## Qué puedes hacer
