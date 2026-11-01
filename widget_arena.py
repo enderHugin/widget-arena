@@ -11967,7 +11967,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 145                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 146                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -23226,9 +23226,11 @@ class WidgetManager(QObject):
         pad = (W - int(p['w'])) // 2
         td = copy.deepcopy(st['template_data'])
         sc = self._base_note_scale(st['template_data'])       # [PACK124] como al aplicar: el widget no cambia de tamano al abrir el editor
+        W2, H2 = int(round(W * sc)), int(round(img.height() * sc))
+        x2, y2 = self._base_note_keep_center(st['template_data'], W2, H2)          # [PACK146] la nota conserva su sitio al cambiar el color u otro ajuste
         td.setdefault('layer2', {}).update({"type": "png", "content": rel, "scaled_contents": True,
-                                            "geometry": {"x": 0, "y": 0, "w": int(round(W * sc)), "h": int(round(img.height() * sc))}})
-        td.setdefault('layer1', {})['geometry'] = {"x": int(round((pad + 10) * sc)), "y": int(round((pad + 10) * sc)),
+                                            "geometry": {"x": x2, "y": y2, "w": W2, "h": H2}})
+        td.setdefault('layer1', {})['geometry'] = {"x": x2 + int(round((pad + 10) * sc)), "y": y2 + int(round((pad + 10) * sc)),
                                                    "w": int(round((int(p['w']) - 20) * sc)), "h": int(round((int(p['h']) - 20) * sc))}
         win.load_template_data(td)
 
@@ -23252,17 +23254,31 @@ class WidgetManager(QObject):
         td = st['template_data']
         l2 = td.setdefault('layer2', {})
         sc = scale if scale else self._base_note_scale(td)               # [PACK121] se conserva el tamano que el widget ya tenia (no vuelve al nominal)
+        W2, H2 = int(round(W * sc)), int(round(H * sc))
+        x2, y2 = self._base_note_keep_center(td, W2, H2)                 # [PACK146] la nota conserva su sitio (antes volvia a 0,0 y saltaba)
         l2.update({"type": "png", "content": rel, "scaled_contents": True,
-                   "geometry": {"x": 0, "y": 0, "w": int(round(W * sc)), "h": int(round(H * sc))}})
+                   "geometry": {"x": x2, "y": y2, "w": W2, "h": H2}})
         l1 = td.setdefault('layer1', {})
 
-        l1['geometry'] = {"x": int(round((pad + 10) * sc)), "y": int(round((pad + 10) * sc)),
+        l1['geometry'] = {"x": x2 + int(round((pad + 10) * sc)), "y": y2 + int(round((pad + 10) * sc)),
                           "w": int(round((int(p['w']) - 20) * sc)), "h": int(round((int(p['h']) - 20) * sc))}
         td['base_note'] = dict(p)
         if widget_id in self.widgets:
             self.widgets[widget_id].load_template_data(td)
         self.save_global_state()
         self.build_tray_menu()
+
+    @staticmethod
+    def _base_note_keep_center(td, w2, h2):
+        """[PACK146] Posicion (x, y) de la capa 2 de una nota base de tamano w2 x h2 para que quede centrada donde estaba la actual (0, 0 si no hay)."""
+        try:
+            g = (td.get('layer2') or {}).get('geometry') or {}
+            ow, oh = float(g.get('w') or 0), float(g.get('h') or 0)
+            if ow > 0 and oh > 0:
+                return int(round(float(g.get('x', 0)) + ow / 2.0 - w2 / 2.0)), int(round(float(g.get('y', 0)) + oh / 2.0 - h2 / 2.0))
+        except Exception:
+            pass
+        return 0, 0
 
     @staticmethod
     def _base_note_scale(td):
