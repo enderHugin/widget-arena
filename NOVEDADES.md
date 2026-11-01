@@ -1,3 +1,6 @@
+## Pack 149 · 2026-11-01
+- **Arreglo (modo usuario): «Elegir los sets de la rotación…» vuelve a verse** en *Sets de widgets*. Los gestos Ctrl / Alt + doble clic en el icono recorren esa rotación en los dos modos, y la entrada se había ocultado por error.
+
 ## Pack 148 · 2026-11-01
 - **Arreglo: al ir a escribir en un widget girado se recortaban sus lados.** Al editar el texto el papel se endereza para verlo en horizontal, pero la ventana conservaba el tamaño del widget girado: un 280×60 girado 90° quedaba en una ventana estrecha y desaparecían sus lados derecho e izquierdo. Ahora la ventana se ajusta al papel enderezado y al recuadro de edición (el centro del papel no se mueve) y al terminar vuelve a su tamaño y a su sitio.
 - **Diagnóstico:** cada widget nuevo deja en el registro quién lo ha pedido (`origen: …`), para localizar notas que aparecen sin haberlas pedido.

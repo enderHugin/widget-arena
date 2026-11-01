@@ -8354,7 +8354,7 @@ def _menu_item_look(a, group, titles, tints, key=False):
 # ---- [PACK145] modo usuario / modo creativo: en modo usuario los menus se reducen a lo esencial (el modo creativo los muestra enteros)
 _UI_T_DROP = ("Nuevo con un aspecto", "Nueva nota", "Mostrar u ocultar la consola")
 _UI_T_SUB = {      # submenus: (lo que se conserva, lo que se quita), por el principio del texto
-    "Sets de widgets": (None, ("Duplicar el set", "Guardar el set activo al cambiar", "Precargar", "Elegir los sets", "Importar y exportar", "Eliminar todos")),
+    "Sets de widgets": (None, ("Duplicar el set", "Guardar el set activo al cambiar", "Precargar", "Importar y exportar", "Eliminar todos")),      # [PACK149] "Elegir los sets de la rotacion" se queda: los gestos de rotacion siguen en modo usuario
     "Ajustes": (("Apariencia", "Atajos de teclado", "Importar y exportar"), None),
     "Apariencia": (("Cables (opacidad", "Fuente predeterminada", "Mostrar ayuda de gestos"), None),
 }
@@ -12037,7 +12037,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 148                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 149                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
