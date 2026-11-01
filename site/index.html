@@ -107,8 +107,6 @@
 
   /* ---------- secciones claras ---------- */
   section.block { padding: 64px 0; }
-  .demo-video { display: block; width: 100%; max-width: 980px; margin: 22px auto 0; border-radius: 14px; border: 1px solid var(--line); background: #0b1020; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
-  .demo-note { text-align: center; margin: 14px auto 0; max-width: 760px; }
   section.block + section.block { border-top: 1px solid var(--line); }
   .two { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 44px; align-items: center; }
   .two.flip { grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); }
@@ -319,14 +317,6 @@
 </div>
 
 <div class="wrap">
-  <section class="block" id="demo">
-    <h2 data-i="h_demo">Míralo en acción</h2>
-    <video class="demo-video" controls muted loop playsinline preload="metadata" poster="img/demo-poster.jpg">
-      <source src="img/demo.mp4" type="video/mp4">
-    </video>
-    <p class="fine demo-note" data-i="demo_note">Una nota padre con hijos colgando de cables, que se mueven como cuerdas, giran, cambian de color y se cambian de set con una tecla. Es la propia aplicación.</p>
-  </section>
-
   <section class="block" id="layers">
     <div class="two">
       <div class="copy">
@@ -480,8 +470,6 @@
       w_week: "Semana", w_week2: "Entregar el informe el jueves", w_ideas: "Ideas para la portada", w_pan: "Pan de masa madre", w_home: "Estudio",
       b_panel: "Abrir panel", b_fav: "Guardar receta", b_light: "Luz del estudio", sent: "Enviado",
       w_exam: "Examen", w_exam2: "Temas 4 y 5, martes a las 9:00", w_trip: "Fin de semana", w_break: "Descanso a las 11", w_read: "Lecturas", w_read2: "Capítulo 7, resumen",
-      h_demo: "Míralo en acción",
-      demo_note: "Una nota padre con hijos colgando de cables, que se mueven como cuerdas, giran, cambian de color y se cambian de set con una tecla. Es la propia aplicación.",
       h_layers: "Cada widget tiene dos capas",
       p_layers: "Una nota lleva el texto en la capa 1 y su fondo, la forma de papel, en la capa 2. Una imagen enmarcada o una página web enmarcada lleva el marco en la capa 1 y, debajo, en la capa 2, la imagen o la página. Cada capa tiene su propio color, fuente, giro y tamaño.",
       l_type: "Tipo de widget", k_note: "Nota", k_img: "Marco con imagen", k_web: "Marco con página web", l_paper: "Fondo", l_frame: "Marco", l_btns: "Botones en la capa 1", l_split: "Separar las capas",
@@ -548,8 +536,6 @@
       w_week: "Week", w_week2: "Hand in the report on Thursday", w_ideas: "Ideas for the cover", w_pan: "Sourdough bread", w_home: "Studio",
       b_panel: "Open panel", b_fav: "Save recipe", b_light: "Studio light", sent: "Sent",
       w_exam: "Exam", w_exam2: "Units 4 and 5, Tuesday at 9:00", w_trip: "Weekend away", w_break: "Break at 11", w_read: "Reading", w_read2: "Chapter 7, summary",
-      h_demo: "See it in action",
-      demo_note: "A parent note with children hanging from cables that swing like ropes, rotate, change colour and switch sets with one key. This is the app itself.",
       h_layers: "Every widget has two layers",
       p_layers: "A note has its text on layer 1 and its background, the paper shape, on layer 2. A framed image or a framed web page has the frame on layer 1 and, underneath on layer 2, the image or the page. Each layer has its own colour, font, rotation and size.",
       l_type: "Widget type", k_note: "Note", k_img: "Frame with image", k_web: "Frame with web page", l_paper: "Background", l_frame: "Frame", l_btns: "Buttons on layer 1", l_split: "Pull the layers apart",
