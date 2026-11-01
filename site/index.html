@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Widget Arena</title>
-<meta name="description" content="Widgets sueltos por tu escritorio, unidos por cables: notas, imágenes, páginas web y botones, con formas de papel, sets y atajos. Instalación con un clic para Windows, macOS y Linux.">
+<meta name="description" content="Widgets para tu escritorio, unidos por cables: notas, imágenes, páginas web y botones, con formas de papel, sets y atajos. Instalación con un clic para Windows, macOS y Linux.">
 <link rel="icon" href="favicon.png">
 <style>
   @font-face { font-family: "WA Kalam"; src: url("dl/fonts/Kalam-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
@@ -108,6 +108,7 @@
   section.block + section.block { border-top: 1px solid var(--line); }
   .two { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 44px; align-items: center; }
   .two.flip { grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); }
+  .one { max-width: 46em; }
   .two.flip > :first-child { order: 2; }
   .copy p { max-width: 33em; }
   .ctrl { display: flex; flex-wrap: wrap; gap: 12px 22px; margin: 18px 0 0; align-items: center; }
@@ -187,11 +188,6 @@
   kbd { font: 600 .82em var(--ui); background: var(--panel); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 6px; white-space: nowrap; }
 
   /* formatos */
-  .formats { margin-top: 24px; border-top: 1px solid var(--line); }
-  .fm { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 4px 24px; padding: 16px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
-  .fm code { font: 700 17px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--teal); }
-  .fm p { margin: 0; color: var(--muted); }
-  .fm p b { color: var(--ink); font-weight: 600; }
   .mk { display: inline-block; margin-top: 18px; }
 
   /* comunidad */
@@ -232,7 +228,6 @@
     .steps { grid-template-columns: 1fr; }
     .steps li + li { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); }
     .tools { grid-template-columns: 1fr; }
-    .fm { grid-template-columns: 1fr; }
     .cta { width: 100%; justify-content: center; }
     section.block { padding: 46px 0; }
     body { font-size: 16.5px; }
@@ -261,7 +256,7 @@
     <main>
     <div class="hero">
       <div>
-        <h1 data-i="h1">Widgets sueltos por tu escritorio.</h1>
+        <h1 data-i="h1">Widgets para tu escritorio.</h1>
         <p class="sub" data-i="sub">Y si quieres, jerarquizables: enlázalos con cables como padres e hijos y contrae o expande las ramas.</p>
         <p class="lead" data-i="lead">Notas, imágenes, páginas web y botones que flotan sobre tus programas. Cambia de set con una tecla y déjalos a tu manera. Sin Python, sin administrador, un solo clic.</p>
         <a class="cta" id="cta" href="dl/install-windows.cmd" download>
@@ -324,7 +319,7 @@
     <div class="two">
       <div class="copy">
         <h2 data-i="h_layers">Cada widget tiene dos capas</h2>
-        <p data-i="p_layers">Una nota lleva el texto en la capa 1 y su fondo, la forma de papel, en la capa 2. Un marco lleva el marco en la capa 1 y, debajo, en la capa 2, una imagen enmarcada o una página web. Cada capa tiene su propio color, fuente, giro y tamaño.</p>
+        <p data-i="p_layers">Una nota lleva el texto en la capa 1 y su fondo, la forma de papel, en la capa 2. Una imagen enmarcada o una página web enmarcada lleva el marco en la capa 1 y, debajo, en la capa 2, la imagen o la página. Cada capa tiene su propio color, fuente, giro y tamaño.</p>
         <div class="ctrl">
           <div><span class="lbl" data-i="l_type">Tipo de widget</span>
             <span class="seg" id="seg-type" role="group" aria-label="Tipo de widget">
@@ -358,7 +353,7 @@
   <section class="block" id="ropes">
     <div class="two flip">
       <div class="copy">
-        <h2 data-i="h_ropes">Si quieres, se enlazan como un árbol</h2>
+        <h2 data-i="h_ropes">Árboles de widgets (¡colapsables!)</h2>
         <p data-i="p_ropes">Un widget puede ser hijo de otro. Los cables cuelgan como cuerdas y se balancean al moverlos, y los hijos pueden seguir al padre cuando lo arrastras. Para ordenar la vista, contrae las ramas: los hijos desaparecen y al expandir vuelven en el mismo sitio.</p>
         <p class="muted" data-ih="p_ropes2">Ctrl + arrastrar una nota sobre otra la hace hija suya; con Alt, madre. Con Ctrl + Alt + Mayús + arrastrar nace una hija donde sueltes.</p>
         <div class="ctrl">
@@ -404,17 +399,11 @@
   </section>
 
   <section class="block" id="share">
-    <div class="two">
+    <div class="one">
       <div class="copy">
         <h2 data-i="h_share">Llévatelo a otro equipo o compártelo</h2>
-        <p data-i="p_share">Todo lo que creas se guarda en un archivo comprimido con sus imágenes dentro. Se abre arrastrándolo a la ventana «Guardar y cargar» (menú del icono de la bandeja) o con «Cargar un archivo»: el programa averigua qué es. Nunca lleva datos de Telegram.</p>
+        <p data-i="p_share">Lo que creas (widgets, sets enlazados, formas de papel, packs) se guarda en un archivo comprimido con sus imágenes dentro. Se abre arrastrándolo a la ventana «Guardar y cargar» (menú del icono de la bandeja) o con «Cargar un archivo»: el programa averigua qué es.</p>
         <a class="btn2 mk" href="dl/notas-de-colores.wapack" download data-i="b_example">Descargar un pack de ejemplo</a>
-      </div>
-      <div class="formats">
-        <div class="fm"><code>.wapack</code><p data-ih="x_pack"><b>Un pack:</b> varios widgets guardados y sets, listos para estrenar.</p></div>
-        <div class="fm"><code>.waset</code><p data-ih="x_set"><b>Widgets enlazados:</b> un árbol, o todos los de tu set, con la configuración si quieres.</p></div>
-        <div class="fm"><code>.wawidget</code><p data-ih="x_widget"><b>Un widget guardado:</b> su aspecto y su contenido.</p></div>
-        <div class="fm"><code>.wapaper</code><p data-ih="x_paper"><b>Una forma de papel:</b> solo el aspecto, sin texto ni posición.</p></div>
       </div>
     </div>
   </section>
@@ -422,11 +411,11 @@
   <section class="block">
     <div class="comm">
       <h2 data-i="h_comm">Galería de escritorios: en preparación</h2>
-      <p data-i="p_comm">Sueño con un sitio donde enseñes tu escritorio y puedas bajarte los de otras personas: sets, widgets y formas de papel en los archivos de arriba.</p>
+      <p data-i="p_comm">Sueño con un sitio donde muestres a todos tu talento: comparte tus widgets, explora y puntúa los escritorios de otras personas y compite por el premio al mejor diseño semanal (participando por 1 €). Sets, widgets y formas de papel, en archivos que se abren en el programa.</p>
       <ul>
-        <li data-i="c1">Cada envío se revisa antes de publicarse, con un filtro de palabras y una mirada humana.</li>
+        <li data-i="c1">Cada envío se revisa antes de publicarse.</li>
         <li data-i="c2">Lo que se publica es un archivo que puedes abrir en el programa, no una captura suelta.</li>
-        <li data-ih="c3">Todavía no hay galería ni subida de archivos: esta página es estática. Si te interesa, <a href="https://ko-fi.com/jaimeluisolguinmesina" target="_blank" rel="noopener">hazlo posible apoyándome en Ko-fi</a> y escríbeme en los <a href="__REPO_URL__/issues" target="_blank" rel="noopener">Issues de GitHub</a>.</li>
+        <li data-ih="c3"><a href="https://ko-fi.com/jaimeluisolguinmesina" target="_blank" rel="noopener">Hazlo posible apoyándome en Ko-fi</a> y escríbeme en los <a href="__REPO_URL__/issues" target="_blank" rel="noopener">Issues de GitHub</a>.</li>
       </ul>
       <a class="btn2" href="__REPO_URL__/issues" target="_blank" rel="noopener" data-i="b_comm">Contar qué te gustaría ver</a>
     </div>
@@ -472,7 +461,7 @@
   var T = {
     es: {
       n_layers: "Widgets", n_ropes: "Jerarquías", n_paper: "Formas de papel", n_share: "Compartir", n_install: "Instalar",
-      h1: "Widgets sueltos por tu escritorio.",
+      h1: "Widgets para tu escritorio.",
       sub: "Y si quieres, jerarquizables: enlázalos con cables como padres e hijos y contrae o expande las ramas.",
       lead: "Notas, imágenes, páginas web y botones que flotan sobre tus programas. Cambia de set con una tecla y déjalos a tu manera. Sin Python, sin administrador, un solo clic.",
       hint: "Arrastra cualquier widget", sets_l: "Sets de widgets:", set1: "Semana", set2: "Estudio",
@@ -480,12 +469,12 @@
       b_panel: "Abrir panel", b_fav: "Guardar receta", b_light: "Luz del estudio", sent: "Enviado",
       w_exam: "Examen", w_exam2: "Temas 4 y 5, martes a las 9:00", w_trip: "Fin de semana", w_break: "Descanso a las 11", w_read: "Lecturas", w_read2: "Capítulo 7, resumen",
       h_layers: "Cada widget tiene dos capas",
-      p_layers: "Una nota lleva el texto en la capa 1 y su fondo, la forma de papel, en la capa 2. Un marco lleva el marco en la capa 1 y, debajo, en la capa 2, una imagen enmarcada o una página web. Cada capa tiene su propio color, fuente, giro y tamaño.",
+      p_layers: "Una nota lleva el texto en la capa 1 y su fondo, la forma de papel, en la capa 2. Una imagen enmarcada o una página web enmarcada lleva el marco en la capa 1 y, debajo, en la capa 2, la imagen o la página. Cada capa tiene su propio color, fuente, giro y tamaño.",
       l_type: "Tipo de widget", k_note: "Nota", k_img: "Marco con imagen", k_web: "Marco con página web", l_paper: "Fondo", l_frame: "Marco", l_btns: "Botones en la capa 1", l_split: "Separar las capas",
       rule_note: "Capa 1 es texto: el widget se trata como una nota, y es ahí donde funcionan los botones.",
-      rule_frame: "Capa 1 no es texto: el widget se trata como un marco, un PNG con el centro transparente sobre una imagen enmarcada o una página web. Sobre una web el marco deja pasar los clics: prueba el botón.",
+      rule_frame: "Si la capa 1 no es texto, el widget es una imagen enmarcada o una página web enmarcada: un PNG con el centro transparente (el marco) sobre la imagen o la página. Sobre una web el marco deja pasar los clics: prueba el botón.",
       tag1_note: "Capa 1: texto y botones", tag1_frame: "Capa 1: el marco", tag2_note: "Capa 2: el fondo (forma de papel)", tag2_img: "Capa 2: la imagen enmarcada", tag2_web: "Capa 2: la página web",
-      h_ropes: "Si quieres, se enlazan como un árbol",
+      h_ropes: "Árboles de widgets (¡colapsables!)",
       p_ropes: "Es opcional: cada widget puede vivir suelto. Pero uno puede ser hijo de otro. Los cables cuelgan como cuerdas y se balancean al moverlos, y los hijos pueden seguir al padre cuando lo arrastras. Para ordenar la vista, contrae las ramas: los hijos desaparecen y al expandir vuelven en el mismo sitio.",
       p_ropes2: "<kbd>Ctrl</kbd> + arrastrar una nota sobre otra la hace hija suya; con <kbd>Alt</kbd>, madre. Con <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Mayús</kbd> + arrastrar nace una hija donde sueltes.",
       b_fold: "Contraer hijos", b_unfold: "Expandir hijos", l_follow: "Los hijos siguen al padre",
@@ -499,15 +488,13 @@
       f5t: "Avisos en el móvil con Telegram", f5p: "Ponle un temporizador a un widget y, al cumplirse, te llega un mensaje a Telegram. Es opcional y usa tu propio bot: necesitas el token del bot (te lo da BotFather) y tu ID de usuario o de chat.",
       f6t: "Papel y marcos: tus imágenes o los que generas", f6p: "Usa cualquier imagen como papel de fondo o como marco, o genera los tuyos con los editores: el de papel (color y degradado con transparencia, borde, esquinas, doblez, sombra) y el de marcos (grosor de cada lado, color, bisel, textura y sombras, rectangulares, redondeados u ovalados, con puntos de partida como madera, oro, plata o paspartú). Cualquier imagen o página web se puede recortar con esquinas redondeadas, en elipse o con la silueta del marco, sin ajustar medidas al milímetro. Se guardan o se comparten como archivo y los marcos viajan con el widget.",
       h_share: "Llévatelo a otro equipo o compártelo",
-      p_share: "Todo lo que creas se guarda en un archivo comprimido con sus imágenes dentro. Se abre arrastrándolo a la ventana «Guardar y cargar» (menú del icono de la bandeja) o con «Cargar un archivo»: el programa averigua qué es. Nunca lleva datos de Telegram.",
+      p_share: "Lo que creas (widgets, sets enlazados, formas de papel, packs) se guarda en un archivo comprimido con sus imágenes dentro. Se abre arrastrándolo a la ventana «Guardar y cargar» (menú del icono de la bandeja) o con «Cargar un archivo»: el programa averigua qué es.",
       b_example: "Descargar un pack de ejemplo",
-      x_pack: "<b>Un pack:</b> varios widgets guardados y sets, listos para estrenar.", x_set: "<b>Widgets enlazados:</b> un árbol, o todos los de tu set, con la configuración si quieres.",
-      x_widget: "<b>Un widget guardado:</b> su aspecto y su contenido.", x_paper: "<b>Una forma de papel:</b> solo el aspecto, sin texto ni posición.",
       h_comm: "Galería de escritorios: en preparación",
-      p_comm: "Sueño con un sitio donde enseñes tu escritorio y puedas bajarte los de otras personas: sets, widgets y formas de papel en los archivos de arriba.",
-      c1: "Cada envío se revisa antes de publicarse, con un filtro de palabras y una mirada humana.",
+      p_comm: "Sueño con un sitio donde muestres a todos tu talento: comparte tus widgets, explora y puntúa los escritorios de otras personas y compite por el premio al mejor diseño semanal (participando por 1 €). Sets, widgets y formas de papel, en archivos que se abren en el programa.",
+      c1: "Cada envío se revisa antes de publicarse.",
       c2: "Lo que se publica es un archivo que puedes abrir en el programa, no una captura suelta.",
-      c3: "Todavía no hay galería ni subida de archivos: esta página es estática. Si te interesa, <a href=\"https://ko-fi.com/jaimeluisolguinmesina\" target=\"_blank\" rel=\"noopener\">hazlo posible apoyándome en Ko-fi</a> y escríbeme en los <a href=\"__REPO_URL__/issues\" target=\"_blank\" rel=\"noopener\">Issues de GitHub</a>.",
+      c3: "<a href=\"https://ko-fi.com/jaimeluisolguinmesina\" target=\"_blank\" rel=\"noopener\">Hazlo posible apoyándome en Ko-fi</a> y escríbeme en los <a href=\"__REPO_URL__/issues\" target=\"_blank\" rel=\"noopener\">Issues de GitHub</a>.",
       b_comm: "Contar qué te gustaría ver",
       cta_win: "Descargar para Windows", cta_mac: "Descargar para macOS", cta_linux: "Descargar para Linux", cta_any: "Elegir mi sistema",
       fine_win: "Se instala solo para tu usuario. Si Windows avisa, mira «¿Por qué mi sistema avisa?» más abajo.",
@@ -540,7 +527,7 @@
     },
     en: {
       n_layers: "Widgets", n_ropes: "Hierarchies", n_paper: "Paper shapes", n_share: "Share", n_install: "Install",
-      h1: "Widgets scattered across your desktop.",
+      h1: "Widgets for your desktop.",
       sub: "And if you want, hierarchical: link them with cables as parents and children, and collapse or expand the branches.",
       lead: "Notes, images, web pages and buttons that float over your programs. Switch sets with one key and arrange them your way. No Python, no admin rights, one click.",
       hint: "Drag any widget", sets_l: "Widget sets:", set1: "Week", set2: "Study",
@@ -548,12 +535,12 @@
       b_panel: "Open panel", b_fav: "Save recipe", b_light: "Studio light", sent: "Sent",
       w_exam: "Exam", w_exam2: "Units 4 and 5, Tuesday at 9:00", w_trip: "Weekend away", w_break: "Break at 11", w_read: "Reading", w_read2: "Chapter 7, summary",
       h_layers: "Every widget has two layers",
-      p_layers: "A note has its text on layer 1 and its background, the paper shape, on layer 2. A frame has the frame itself on layer 1 and, underneath on layer 2, a framed image or a web page. Each layer has its own colour, font, rotation and size.",
+      p_layers: "A note has its text on layer 1 and its background, the paper shape, on layer 2. A framed image or a framed web page has the frame on layer 1 and, underneath on layer 2, the image or the page. Each layer has its own colour, font, rotation and size.",
       l_type: "Widget type", k_note: "Note", k_img: "Frame with image", k_web: "Frame with web page", l_paper: "Background", l_frame: "Frame", l_btns: "Buttons on layer 1", l_split: "Pull the layers apart",
       rule_note: "Layer 1 is text: the widget is treated as a note, and that is where the buttons work.",
-      rule_frame: "Layer 1 is not text: the widget is treated as a frame, a PNG with a transparent centre over a framed image or a web page. Over a web page the frame lets clicks through: try the button.",
+      rule_frame: "If layer 1 is not text, the widget is a framed image or a framed web page: a PNG with a transparent centre (the frame) over the image or the page. Over a web page the frame lets clicks through: try the button.",
       tag1_note: "Layer 1: text and buttons", tag1_frame: "Layer 1: the frame", tag2_note: "Layer 2: the background (paper shape)", tag2_img: "Layer 2: the framed image", tag2_web: "Layer 2: the web page",
-      h_ropes: "If you want, they link up like a tree",
+      h_ropes: "Widget trees (collapsible!)",
       p_ropes: "It is optional: every widget can live on its own. But one can be the child of another. Cables hang like ropes and sway when you move them, and children can follow their parent when you drag it. To tidy the view, collapse the branches: children disappear and come back in the same place when you expand.",
       p_ropes2: "<kbd>Ctrl</kbd> + drag a note onto another to make it its child; with <kbd>Alt</kbd>, its parent. <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> + drag creates a child where you drop it.",
       b_fold: "Collapse children", b_unfold: "Expand children", l_follow: "Children follow their parent",
@@ -567,15 +554,13 @@
       f5t: "Phone alerts through Telegram", f5p: "Set a timer on a widget and, when it ends, a message arrives on Telegram. It is optional and uses your own bot: you need the bot token (from BotFather) and your user or chat ID.",
       f6t: "Paper and frames: your images or ones you generate", f6p: "Use any image as the background paper or as a frame, or generate your own with the editors: the paper one (colour and gradient with transparency, border, corners, fold, shadow) and the frame one (thickness of each side, colour, bevel, texture and shadows, rectangular, rounded or oval, with starting points such as wood, gold, silver or mat). Any image or web page can be clipped with rounded corners, as an ellipse or with the frame's own silhouette, with no need to fit measurements to the millimetre. They are saved or shared as a file and frames travel with the widget.",
       h_share: "Take it to another computer or share it",
-      p_share: "Everything you create is saved in a compressed file with its images inside. Open it by dragging it onto the “Save and load” window (tray icon menu) or with “Load a file”: the program works out what it is. It never carries Telegram data.",
+      p_share: "What you create (widgets, linked sets, paper shapes, packs) is saved in a compressed file with its images inside. Open it by dragging it onto the “Save and load” window (tray icon menu) or with “Load a file”: the program works out what it is.",
       b_example: "Download an example pack",
-      x_pack: "<b>A pack:</b> several saved widgets and sets, ready to use.", x_set: "<b>Linked widgets:</b> a tree, or all the widgets in your set, with the settings if you want.",
-      x_widget: "<b>A saved widget:</b> its look and its content.", x_paper: "<b>A paper shape:</b> just the look, without text or position.",
       h_comm: "Desktop gallery: coming soon",
-      p_comm: "I dream of a place where you can show your desktop and download other people's: sets, widgets and paper shapes in the files above.",
-      c1: "Every submission is reviewed before it is published, with a word filter and a human look.",
+      p_comm: "I dream of a place where you show everyone your talent: share your widgets, explore and rate other people's desktops, and compete for the best design of the week (entry for €1). Sets, widgets and paper shapes, in files that open in the program.",
+      c1: "Every submission is reviewed before it is published.",
       c2: "What gets published is a file you can open in the program, not just a screenshot.",
-      c3: "There is no gallery or file upload yet: this page is static. If you are interested, <a href=\"https://ko-fi.com/jaimeluisolguinmesina\" target=\"_blank\" rel=\"noopener\">make it possible by supporting me on Ko-fi</a> and write to me in the <a href=\"__REPO_URL__/issues\" target=\"_blank\" rel=\"noopener\">GitHub Issues</a>.",
+      c3: "<a href=\"https://ko-fi.com/jaimeluisolguinmesina\" target=\"_blank\" rel=\"noopener\">Make it possible by supporting me on Ko-fi</a> and write to me in the <a href=\"__REPO_URL__/issues\" target=\"_blank\" rel=\"noopener\">GitHub Issues</a>.",
       b_comm: "Tell me what you would like to see",
       cta_win: "Download for Windows", cta_mac: "Download for macOS", cta_linux: "Download for Linux", cta_any: "Choose my system",
       fine_win: "Installs for your user only. If Windows shows a warning, see “Why does my system warn me?” below.",
