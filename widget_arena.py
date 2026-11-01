@@ -5630,9 +5630,21 @@ class StickerWindow(QMainWindow):
             a = _image_alpha(pm.toImage())
             h, w = a.shape
             core = a[h // 4:max(h // 4 + 1, 3 * h // 4), w // 4:max(w // 4 + 1, 3 * w // 4)]
-            v = bool(core.size and float(core.mean()) < 245.0)
-            self._transl_cache = (key, v)
+            m = float(core.mean()) if core.size else 255.0
+            v = bool(core.size and m < 245.0)
+            self._transl_cache = (key, v, m)          # [PACK139] tambien cuanto cubre
             return v
+        except Exception:
+            return False
+
+    def paper_glassy(self):
+        """[PACK139] True si el papel es mas transparente que opaco (cubre menos de la mitad): el unico que se atenua bajo otro widget transparente.
+        Un papel al 90 % sigue siendo un papel: no se vuelve transparente ni deja ver lo que tiene detras."""
+        try:
+            if not self.paper_translucent():
+                return False
+            c = getattr(self, '_transl_cache', None)
+            return bool(c is not None and len(c) > 2 and c[2] < 128.0)
         except Exception:
             return False
 
@@ -5717,11 +5729,11 @@ class StickerWindow(QMainWindow):
         except Exception:
             return fb
 
-    def set_under_veil(self, global_regions, op_pct, occlude=None):
-        """Resta opacidad (hasta dejar op_pct %) a lo que este widget dibuja bajo esas regiones globales; en 'occlude' (region global) lo oculta del todo."""
+    def set_under_veil(self, global_regions, op_pct):
+        """Resta opacidad (hasta dejar op_pct %) a lo que este widget dibuja bajo esas regiones globales."""
         v = getattr(self, '_under_veil', None)
         if v is None:
-            if not global_regions and (occlude is None or occlude.isEmpty()):
+            if not global_regions:
                 return
             v = self._under_veil = _UnderVeil(self.central_widget)
         origin = v.mapToGlobal(QPoint(0, 0))
@@ -5729,21 +5741,18 @@ class StickerWindow(QMainWindow):
         for r in global_regions:
             reg = reg.united(r)
         reg = reg.translated(-origin.x(), -origin.y())
-        occ = (occlude if occlude is not None else QRegion()).translated(-origin.x(), -origin.y())
         alpha = int(round(255 * (1.0 - max(0, min(100, op_pct)) / 100.0)))
-        if alpha <= 0:
-            reg = QRegion()
-        if reg.isEmpty() and occ.isEmpty():
+        if reg.isEmpty() or alpha <= 0:
             if v.isVisible():
-                v.region, v.occ = QRegion(), QRegion()
+                v.region = QRegion()
                 v.hide()
             return
 
-        if reg == v.region and occ == v.occ and alpha == v.alpha and v.isVisible():
+        if reg == v.region and alpha == v.alpha and v.isVisible():
             v.raise_()
             return
         v.setGeometry(self.central_widget.rect())
-        v.region, v.occ, v.alpha = reg, occ, alpha
+        v.region, v.alpha = reg, alpha
         v.show()
         v.raise_()
         v.update()
@@ -11893,7 +11902,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 138                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 139                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -15067,8 +15076,8 @@ CABLE_DIALOG_SPEC = [
             ('_cable_inside_blur', "Difuminado del cable dentro de esos widgets (0 = n\u00edtido)", 'i', " px", None)],
          "Con 0 % el cable se ve solo desde el borde del widget hacia fuera, aunque el papel sea transl\u00facido. Con un valor intermedio se ve a trav\u00e9s del papel como a trav\u00e9s de un cristal, y el difuminado lo desenfoca. Con 100 % y 0 px se ve entero, nazca donde nazca."),
         ("Un widget bajo otro transparente", [
-            ('_under_op', "Opacidad de lo que queda bajo el papel transl\u00facido de otro widget (100 % = sin cambio)", 'i', " %", None)],
-         "Ayuda a distinguir cu\u00e1l est\u00e1 encima: la parte de un widget que queda bajo un widget de papel transl\u00facido se ve mucho m\u00e1s tenue. Solo afecta a notas con papel transl\u00facido. En Windows se lee el orden real de las ventanas; en otros sistemas se aprende de los clics y puede equivocarse si una ventana se sube por otra v\u00eda, hasta que haces clic en ella."),
+            ('_under_op', "Opacidad de un widget transparente que queda bajo otro widget transparente (100 % = sin cambio)", 'i', " %", None)],
+         "Ayuda a distinguir cu\u00e1l est\u00e1 encima cuando se superponen widgets transparentes: el de abajo se ve m\u00e1s tenue donde queda bajo el de arriba. Los widgets que no son transparentes no cambian: siguen opacos y tapan lo que tienen detr\u00e1s (el escritorio, otros widgets) tambi\u00e9n bajo un widget transparente. En Windows se lee el orden real de las ventanas; en otros sistemas se aprende de los clics y puede equivocarse si una ventana se sube por otra v\u00eda, hasta que haces clic en ella."),
         ("Apilamiento de los widgets", [
             ('_tree_z', "Un widget y sus descendientes en la pila", 'c', ("Se apilan como un bloque", "Cada widget por su cuenta"), None)],
          "Con \u00abbloque\u00bb, al pasar al frente un widget (al hacerle clic) pasan con \u00e9l sus hijos, nietos y dem\u00e1s descendientes, manteniendo su orden entre ellos. Dos hermanos son dos grupos: al hacer clic en uno, \u00e9l y todo lo suyo quedan sobre el otro y todo lo suyo. Es lo que mantiene coherente el atenuado bajo los widgets transparentes.")]),
@@ -15989,20 +15998,15 @@ class _UnderVeil(QWidget):
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.region = QRegion()      # en coordenadas de la capa
         self.alpha = 0
-        self.occ = QRegion()       # [PACK137]
         self.hide()
 
     def paintEvent(self, event):
-        if (self.region.isEmpty() or self.alpha <= 0) and self.occ.isEmpty():
+        if self.region.isEmpty() or self.alpha <= 0:
             return
         p = QPainter(self)
         p.setCompositionMode(QPainter.CompositionMode_DestinationOut)
-        if not self.region.isEmpty() and self.alpha > 0:
-            p.setClipRegion(self.region)
-            p.fillRect(self.rect(), QColor(0, 0, 0, int(self.alpha)))
-        if not self.occ.isEmpty():                 # [PACK137] bajo el papel de otro widget que esta encima: no se ve
-            p.setClipRegion(self.occ)
-            p.fillRect(self.rect(), QColor(0, 0, 0, 255))
+        p.setClipRegion(self.region)
+        p.fillRect(self.rect(), QColor(0, 0, 0, int(self.alpha)))
         p.end()
 
 
@@ -24788,10 +24792,9 @@ class WidgetManager(QObject):
             op = int(self.get_cable_param('_under_op'))
             order = self._veil_order()
             self._veil_last = self._veil_sig()
-            vr = {}
             for i, w in enumerate(order):
                 rects = []
-                if op < 100:
+                if op < 100 and w.paper_glassy():       # [PACK139] solo se atenua un papel transparente: los opacos siguen opacos
                     wg = w.geometry()
                     for u in order[i + 1:]:
                         ug = u.geometry()
@@ -24800,19 +24803,7 @@ class WidgetManager(QObject):
                         r = QRegion(u.paper_shape_global()).intersected(QRegion(wg))
                         if not r.isEmpty():
                             rects.append(r)
-                vr[w] = rects
-            for i, w in enumerate(order):
-                occ = QRegion()
-                if op < 100:                        # [PACK137] un widget opaco velado por un cristal: lo que tiene debajo no se transparenta con el
-                    wg = w.geometry()
-                    for u in order[i + 1:]:
-                        if not vr.get(u) or not u.geometry().intersects(wg) or u.paper_translucent():
-                            continue
-                        uv = QRegion()
-                        for r in vr[u]:
-                            uv = uv.united(r)
-                        occ = occ.united(uv.intersected(u.body_region().translated(u.geometry().topLeft())).intersected(QRegion(wg)))
-                w.set_under_veil(vr[w], op, occ)
+                w.set_under_veil(rects, op)
             for w in self.widgets.values():                  # los que ya no se ven: sin velo
                 if w not in order:
                     w.set_under_veil([], 100)
