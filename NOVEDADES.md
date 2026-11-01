@@ -1,3 +1,8 @@
+## Pack 144 · 2026-11-01
+- **Arreglo: Ctrl+Alt+Mayús+rueda no giraba en Linux (VirtualBox).** La ayuda de gestos lee las teclas pulsadas de verdad, pero el giro leía las que trae el evento de la rueda, y en ese sistema no coinciden (la ayuda decía «girar 1°» y no pasaba nada). Ahora el giro hace caso también a las teclas realmente pulsadas (Ctrl, Alt y Mayús); con la tecla Win pulsada de verdad sigue sin girar.
+- **Diagnóstico:** las primeras 24 vueltas de rueda con Ctrl+Alt dejan una línea en el registro (nivel info, sin activar la depuración) con las teclas del evento, las físicas y el desplazamiento recibido.
+- **El atenuado bajo un widget transparente se recalcula enseguida al girar o cambiar de tamaño un widget** (antes quedaba un recuadro oscuro del widget anterior hasta medio segundo después).
+
 ## Pack 143 · 2026-11-01
 - **Arreglo: el ajuste fino de rotación (Ctrl+Alt+Mayús+rueda) ahora se reconoce también si el sistema no incluye Mayús en el evento de la rueda.** Antes, en ese caso el giro salía de 5° en lugar de 1°. Ahora se mira también la tecla Mayús física. En el registro (nivel depuración) se anota si se ha tomado como fino.
 - **La ayuda de gestos (el recuadro junto al cursor) nombra el giro con la rueda:** *Ctrl+Alt* → girar el widget 5°; *Ctrl+Alt+Mayús* → 1° (fino). Solo aparece sin capa seleccionada, que es cuando actúa.

@@ -4166,17 +4166,25 @@ class StickerWindow(QMainWindow):
         has_shift = (modifiers & Qt.ShiftModifier)
         has_alt = (modifiers & Qt.AltModifier)
         
-        if has_ctrl and has_alt and not (modifiers & Qt.MetaModifier) and self._selected_layer_num == 0 and not getattr(self, '_wheel_from_menu', False):
+        qm = QApplication.queryKeyboardModifiers()                                 # [PACK144] teclas realmente pulsadas (lo que ensena la ayuda de gestos): algunos sistemas mandan la rueda con otros modificadores
+        r_ctrl = bool(has_ctrl) or bool(qm & Qt.ControlModifier)
+        r_alt = bool(has_alt) or bool(qm & Qt.AltModifier)
+        r_shift = bool(has_shift) or bool(qm & Qt.ShiftModifier)
+        r_meta = bool(modifiers & Qt.MetaModifier) and not (bool(qm & Qt.ControlModifier) and bool(qm & Qt.AltModifier) and not (qm & Qt.MetaModifier))
+        if r_ctrl and r_alt and not r_meta and self._selected_layer_num == 0 and not getattr(self, '_wheel_from_menu', False):
             ad = event.angleDelta()                                            # [PACK142] Ctrl+Alt+rueda gira el widget 5 grados; con Mayus, 1 grado (fino)
-            dd = ad.y() or ad.x()                                              # con Mayus o Alt muchos sistemas mandan la rueda como desplazamiento horizontal
+            pd = event.pixelDelta()
+            dd = ad.y() or ad.x() or (pd.y() or pd.x()) * 8                    # con Mayus o Alt muchos sistemas mandan la rueda como desplazamiento horizontal; sin angulo, el de pixeles
+            _k = type(self)
+            _k._rot_log_n = getattr(_k, '_rot_log_n', 0) + 1
+            if _k._rot_log_n <= 24:                                            # [PACK144] en el registro (nivel info) lo que llega, para diagnosticar otros sistemas
+                log_info(self.widget_id, "Ctrl+Alt+rueda: evento=%d fisicas=%d angleDelta=(%d, %d) pixelDelta=(%d, %d) mayus=%s" % (int(modifiers.value if hasattr(modifiers, 'value') else modifiers), int(qm.value if hasattr(qm, 'value') else qm), ad.x(), ad.y(), pd.x(), pd.y(), r_shift))
             if dd != 0 and 'btn=1' not in (self._get_link_at(event.position().toPoint()) or ''):        # sobre un boton de texto la rueda sigue siendo la del boton
-                fine = bool(has_shift) or bool(QApplication.queryKeyboardModifiers() & Qt.ShiftModifier)        # [PACK143] Mayus fisica pulsada aunque el sistema no la ponga en el evento
-                log_debug(self.widget_id, "Ctrl+Alt(+Mayus)+rueda: angleDelta=(%d, %d) mayus=%s" % (ad.x(), ad.y(), fine))
                 acc = getattr(self, '_rot_wheel_acc', 0) + dd                  # un toque de rueda = 120; un panel tactil manda trozos menores
                 n = int(acc / 120)
                 self._rot_wheel_acc = acc - n * 120
                 if n:
-                    self.act_rotate_note_by(-(1 if fine else 5) * n)      # rueda arriba = antihorario, abajo = horario
+                    self.act_rotate_note_by(-(1 if r_shift else 5) * n)        # rueda arriba = antihorario, abajo = horario
                 event.accept()
                 return
 
@@ -5217,7 +5225,11 @@ class StickerWindow(QMainWindow):
         self._update_bell_badge()
         self.update_window_mask()
         self._update_selection_borders()
-            
+        try:
+            self.manager.veil_schedule()          # [PACK144] tras girar o cambiar de tamano, el atenuado bajo un widget transparente se recalcula enseguida (no medio segundo despues)
+        except Exception:
+            pass
+
     def _apply_layer1_pixmap(self, base_pixmap):
         if base_pixmap.isNull(): return
         l1_data = self.current_template_data.get('layer1', {})
@@ -11916,7 +11928,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 143                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 144                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
