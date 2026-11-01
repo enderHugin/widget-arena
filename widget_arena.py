@@ -1964,7 +1964,17 @@ def replace_span_with_html(cursor, html):
     cursor.endEditBlock()
 
 
-def generate_button_images(clean_text, bg_color, font, images_dir):
+def _btn_frag_tc(frag):
+    """[PACK150] Color del texto de un boton guardado en el enlace ('tc=rrggbb'); '' = automatico."""
+    for part in (frag or '').split('&'):
+        if part.startswith('tc='):
+            v = part[3:].strip().lstrip('#')
+            if re.fullmatch(r'[0-9a-fA-F]{6}', v):
+                return '#' + v.lower()
+    return ''
+
+
+def generate_button_images(clean_text, bg_color, font, images_dir, text_color=None):
     """
     [NUEVO] Genera los PNG normal/hover/pressed de un boton estilizado y
     devuelve (url_normal, ancho, alto). Incluye sombra.
@@ -1995,7 +2005,10 @@ def generate_button_images(clean_text, bg_color, font, images_dir):
     
     hash_ff = font.family() if font.family() else 'default'
     hash_bold = 'b' if font.bold() else 'n'
-    hash_str = hashlib.md5((clean_text + bg_color + hash_ff + hash_bold + str(font.pointSize())).encode('utf-8')).hexdigest()
+    _tc = QColor(text_color) if text_color else None                  # [PACK150] color del texto (vacio = el de siempre)
+    if _tc is not None and not _tc.isValid():
+        _tc = None
+    hash_str = hashlib.md5((clean_text + bg_color + hash_ff + hash_bold + str(font.pointSize()) + (('|tc' + _tc.name()) if _tc is not None else '')).encode('utf-8')).hexdigest()
 
     def make_btn(state_name, top_col, bot_col, txt_y_offset):
         pix = QPixmap(w, h)
@@ -2024,7 +2037,7 @@ def generate_button_images(clean_text, bg_color, font, images_dir):
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(btn_rect, 8, 8)
         
-        p.setPen(QColor("#1f2737"))
+        p.setPen(_tc if _tc is not None else QColor("#1f2737"))
         p.setFont(font)
         p.drawText(btn_rect, Qt.AlignCenter, clean_text)
         p.end()
@@ -2614,6 +2627,7 @@ class StickerWindow(QMainWindow):
             label = ff_val = ''
             fs_val = 0
             frag = href.split('#', 1)[1] if '#' in href else ''
+            _tc = _btn_frag_tc(frag)
             for part in frag.split('&'):
                 if part.startswith('label='):
                     label = urllib.parse.unquote(part[len('label='):])
@@ -2629,11 +2643,11 @@ class StickerWindow(QMainWindow):
             try:
                 bf_ = QFont(ff_val or font_family or 'Arial', fs_val or font_size)
                 bf_.setBold(True)
-                r = generate_button_images(label, bg_color, bf_, IMAGES_DIR)
+                r = generate_button_images(label, bg_color, bf_, IMAGES_DIR, _tc)
             except Exception:
                 bf_ = QFont(font_family, font_size)
                 bf_.setBold(True)
-                r = generate_button_images(label, bg_color, bf_, IMAGES_DIR)
+                r = generate_button_images(label, bg_color, bf_, IMAGES_DIR, _tc)
             made[href] = r
             return r
 
@@ -6213,7 +6227,7 @@ StickerWindow.mouseReleaseEvent = _sticker_release_fwd
 
 
 class LinkEditDialog(QDialog):
-    def __init__(self, current_url="", current_mode="browser", current_is_button=False, current_label="", current_ff="", current_fs=0, parent=None):
+    def __init__(self, current_url="", current_mode="browser", current_is_button=False, current_label="", current_ff="", current_fs=0, parent=None, current_tc=""):
         super().__init__(parent)
         self.setWindowTitle("Configurar Hiperenlace")
         self.setMinimumWidth(380)
@@ -6244,12 +6258,50 @@ class LinkEditDialog(QDialog):
         self.size_spin.setRange(6, 200)
         self.size_spin.setValue(current_fs if current_fs else 16)
         layout.addRow("Tama\u00f1o:", self.size_spin)
+
+        # [PACK150] color del texto del boton
+        self._tc = QColor(current_tc) if current_tc and QColor(current_tc).isValid() else None
+        _tc_row = QHBoxLayout()
+        self.tc_btn = QPushButton()
+        self.tc_btn.setMinimumWidth(120)
+        self.tc_auto = QPushButton("Autom\u00e1tico")
+        self.tc_btn.clicked.connect(self._pick_tc)
+        self.tc_auto.clicked.connect(self._clear_tc)
+        _tc_row.addWidget(self.tc_btn)
+        _tc_row.addWidget(self.tc_auto)
+        _tc_row.addStretch(1)
+        layout.addRow("Color del texto:", _tc_row)
+        self._tc_refresh()
         
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
-        
+
+    def _tc_refresh(self):
+        if self._tc is None:
+            self.tc_btn.setText("Autom\u00e1tico (oscuro)")
+            self.tc_btn.setStyleSheet("")
+        else:
+            c = self._tc
+            fg = "#000000" if c.lightness() > 140 else "#ffffff"
+            self.tc_btn.setText(c.name())
+            self.tc_btn.setStyleSheet("background:%s;color:%s;" % (c.name(), fg))
+        self.tc_auto.setEnabled(self._tc is not None)
+
+    def _pick_tc(self):
+        c = QColorDialog.getColor(self._tc if self._tc is not None else QColor("#1f2737"), self, "Color del texto del bot\u00f3n")
+        if c.isValid():
+            self._tc = c
+            self._tc_refresh()
+
+    def _clear_tc(self):
+        self._tc = None
+        self._tc_refresh()
+
+    def get_text_color(self):
+        return self._tc.name() if self._tc is not None else ''
+
     def get_data(self):
         url = self.url_edit.text().strip()
         mode = "async" if self.async_check.isChecked() else "browser"
@@ -7089,6 +7141,7 @@ class InlineTextEditor(QTextEdit):
         current_label = ""
         current_ff = ""
         current_fs = 0
+        current_tc = _btn_frag_tc(frag)          # [PACK150]
         for part in frag.split('&'):
             if part.startswith('label='):
                 current_label = urllib.parse.unquote(part[len('label='):])
@@ -7104,9 +7157,10 @@ class InlineTextEditor(QTextEdit):
             if raw_selected:
                 current_label = raw_selected
         
-        dialog = LinkEditDialog(current_url, current_mode, current_is_button, current_label, current_ff, current_fs, self)
+        dialog = LinkEditDialog(current_url, current_mode, current_is_button, current_label, current_ff, current_fs, self, current_tc)
         if dialog.exec():
             url, mode, is_button, label_text, ff_val, fs_val = dialog.get_data()
+            tc_val = dialog.get_text_color()          # [PACK150]
             selected_text = cursor.selectedText()
             
             clear_fmt = QTextCharFormat()
@@ -7140,6 +7194,8 @@ class InlineTextEditor(QTextEdit):
                     frag_parts.append(f"label={urllib.parse.quote(clean_text)}")
                     frag_parts.append(f"ff={urllib.parse.quote(ff_val)}")
                     frag_parts.append(f"fs={fs_val}")
+                    if tc_val:
+                        frag_parts.append("tc=" + tc_val.lstrip('#'))          # [PACK150]
 
                 if frag_parts:
                     full_href += "#" + "&".join(frag_parts)
@@ -7158,7 +7214,7 @@ class InlineTextEditor(QTextEdit):
                     if fs_val:
                         font.setPointSize(fs_val)
 
-                    btn_normal, w, h = generate_button_images(clean_text, bg_color, font, IMAGES_DIR)
+                    btn_normal, w, h = generate_button_images(clean_text, bg_color, font, IMAGES_DIR, tc_val if is_button else None)
 
                     html = f'<a href="{full_href}" style="text-decoration: none;"><img src="{btn_normal}" width="{w}" height="{h}" alt="{clean_text}" border="0" style="vertical-align: middle;" /></a>'
                 else:
@@ -7424,7 +7480,7 @@ class InlineTextEditor(QTextEdit):
 
         font = QFont(ff_val, new_fs)
         font.setBold(True)
-        btn_normal, w, h = generate_button_images(label, bg_color, font, IMAGES_DIR)
+        btn_normal, w, h = generate_button_images(label, bg_color, font, IMAGES_DIR, _btn_frag_tc(frag))
         html = f'<a href="{new_href}" style="text-decoration: none;"><img src="{btn_normal}" width="{w}" height="{h}" alt="{label}" border="0" style="vertical-align: middle;" /></a>'
         replace_span_with_html(span, html)       # [PACK56] conserva la alineacion del parrafo
         QToolTip.showText(QCursor.pos(), f"{label}: {new_fs}pt", self)
@@ -7490,7 +7546,7 @@ class InlineTextEditor(QTextEdit):
 
         font = QFont(new_ff, fs_val)
         font.setBold(True)
-        btn_normal, w, h = generate_button_images(label, bg_color, font, IMAGES_DIR)
+        btn_normal, w, h = generate_button_images(label, bg_color, font, IMAGES_DIR, _btn_frag_tc(frag))
         html = f'<a href="{new_href}" style="text-decoration: none;"><img src="{btn_normal}" width="{w}" height="{h}" alt="{label}" border="0" style="vertical-align: middle;" /></a>'
         replace_span_with_html(span, html)       # [PACK56] conserva la alineacion del parrafo
         QToolTip.showText(QCursor.pos(), f"{label}: {new_ff}", self)
@@ -8121,9 +8177,12 @@ _MOVES_121 = tuple([
     ("widget/Aspecto/Template/Usar como predeterminado", "widget/Usar como predeterminado"),
     ("widget/Aspecto/Template/Cambiar el template...", "widget/Aspecto/Widget guardado/Cambiar por otro widget guardado..."),
     ("widget/Aspecto/Template/Guardar como template...", "widget/Aspecto/Widget guardado/Guardar este widget..."),
-    ("widget/Aspecto/Template/Exportar el template...", "widget/Aspecto/Widget guardado/Exportar el widget guardado..."),
-    ("widget/Aspecto/Template/Copiar template (json)", "widget/Aspecto/Widget guardado/Copiar widget guardado (json)"),
-    ("widget/Aspecto/Template/Pegar template (json)", "widget/Aspecto/Widget guardado/Pegar widget guardado (json)"),
+    ("widget/Aspecto/Template/Exportar el template...", "widget/Aspecto/Widget guardado/Exportar este widget a un archivo..."),
+    ("widget/Aspecto/Template/Copiar template (json)", "widget/Aspecto/Widget guardado/Copiar este widget (json)"),
+    ("widget/Aspecto/Template/Pegar template (json)", "widget/Aspecto/Widget guardado/Pegar un widget copiado (json)"),
+    ("widget/Aspecto/Widget guardado/Exportar el widget guardado...", "widget/Aspecto/Widget guardado/Exportar este widget a un archivo..."),          # [PACK150] nombres de [PACK121]
+    ("widget/Aspecto/Widget guardado/Copiar widget guardado (json)", "widget/Aspecto/Widget guardado/Copiar este widget (json)"),
+    ("widget/Aspecto/Widget guardado/Pegar widget guardado (json)", "widget/Aspecto/Widget guardado/Pegar un widget copiado (json)"),
     ("widget/Aspecto/Template", "widget/Aspecto/Widget guardado"),
     ("widget/Aspecto/Estilo/Generar estilo...", "widget/Aspecto/Forma de papel/Generar forma de papel..."),
     ("widget/Aspecto/Estilo/Editar este estilo...", "widget/Aspecto/Forma de papel/Editar esta forma de papel..."),
@@ -12037,7 +12096,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 149                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 150                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -16291,8 +16350,18 @@ FRAME_DEFAULTS = {'w': 300, 'h': 300, 'bt': 26, 'br': 26, 'bb': 26, 'bl': 26, 'r
                   'color': '#8a5a2b', 'grad': True, 'color2': '#5e3b1a', 'grad_angle': 90,
                   'bevel': 5, 'bevel_light': 45, 'bevel_dark': 40, 'tex': 1, 'tex_amt': 35, 'shape': 0,
                   'ishadow': 10, 'ishadow_op': 45, 'line': 2, 'line_op': 55,
-                  'shadow': 14, 'shadow_op': 40, 'shadow_dx': 0, 'shadow_dy': 6, 'shadow_color': '#000000'}
-FRAME_RANGES = {'w': (40, 1600), 'h': (40, 1600), 'bt': (1, 500), 'br': (1, 500), 'bb': (1, 500), 'bl': (1, 500), 'radius': (0, 300), 'iradius': (0, 300), 'shape': (0, 1),
+                  'shadow': 14, 'shadow_op': 40, 'shadow_dx': 0, 'shadow_dy': 6, 'shadow_color': '#000000',
+                  # [PACK150] opacidad del relleno y dos bordes (exterior = canto de fuera, interior = canto del hueco), cada uno con su degradado
+                  'color_a': 100, 'color2_a': 100,
+                  'bo': 0, 'bo_color': '#ffffff', 'bo_color2': '#ffffff', 'bo_a': 85, 'bo_a2': 15, 'bo_grad': True, 'bo_angle': 90, 'bo_bias': 50,
+                  'bi': 0, 'bi_color': '#ffffff', 'bi_color2': '#ffffff', 'bi_a': 55, 'bi_a2': 0, 'bi_grad': True, 'bi_angle': 90, 'bi_bias': 50}
+_FRAME_NEW = ('color_a', 'color2_a') + tuple(pre + s for pre in ('bo', 'bi') for s in ('', '_color', '_color2', '_a', '_a2', '_grad', '_angle', '_bias'))
+FRAME_EDGE_O = ('bo_color', 'bo_color2', 'bo_a', 'bo_a2', 'bo_grad', 'bo_angle', 'bo_bias')
+FRAME_EDGE_I = ('bi_color', 'bi_color2', 'bi_a', 'bi_a2', 'bi_grad', 'bi_angle', 'bi_bias')
+FRAME_RANGES = {'color_a': (0, 100), 'color2_a': (0, 100),
+                'bo': (0, 100), 'bo_a': (0, 100), 'bo_a2': (0, 100), 'bo_angle': (0, 359), 'bo_bias': (5, 95),
+                'bi': (0, 100), 'bi_a': (0, 100), 'bi_a2': (0, 100), 'bi_angle': (0, 359), 'bi_bias': (5, 95),
+'w': (40, 1600), 'h': (40, 1600), 'bt': (1, 500), 'br': (1, 500), 'bb': (1, 500), 'bl': (1, 500), 'radius': (0, 300), 'iradius': (0, 300), 'shape': (0, 1),
                 'grad_angle': (0, 359), 'bevel': (0, 60), 'bevel_light': (0, 100), 'bevel_dark': (0, 100), 'tex': (0, 3), 'tex_amt': (0, 100),
                 'ishadow': (0, 80), 'ishadow_op': (0, 100), 'line': (0, 20), 'line_op': (0, 100),
                 'shadow': (0, 80), 'shadow_op': (0, 100), 'shadow_dx': (-80, 80), 'shadow_dy': (-80, 80)}
@@ -16307,6 +16376,11 @@ FRAME_PRESETS = [
     ("Fino negro", {'color': '#16181d', 'grad': False, 'bt': 10, 'br': 10, 'bb': 10, 'bl': 10, 'bevel': 2, 'tex': 0, 'radius': 0, 'ishadow': 6}),
     ("Paspart\u00fa", {'color': '#f6f3ea', 'grad': False, 'bt': 54, 'br': 54, 'bb': 54, 'bl': 54, 'bevel': 0, 'tex': 0, 'ishadow': 18, 'line': 2, 'radius': 1, 'shadow': 8}),
     ("Redondeado", {'radius': 70, 'iradius': 42, 'bt': 30, 'br': 30, 'bb': 30, 'bl': 30}),
+    ("Cristal esmerilado", {'color': '#ffffff', 'color2': '#cfe0ff', 'grad': True, 'grad_angle': 90, 'color_a': 22, 'color2_a': 8,
+                            'bt': 20, 'br': 20, 'bb': 20, 'bl': 20, 'radius': 22, 'iradius': 12, 'bevel': 0, 'bevel_light': 0, 'bevel_dark': 0, 'tex': 0, 'ishadow': 0, 'line': 0,
+                            'shadow': 18, 'shadow_op': 22, 'shadow_dy': 8,
+                            'bo': 2, 'bo_color': '#ffffff', 'bo_color2': '#ffffff', 'bo_a': 90, 'bo_a2': 14, 'bo_grad': True, 'bo_angle': 70, 'bo_bias': 50,
+                            'bi': 3, 'bi_color': '#ffffff', 'bi_color2': '#ffffff', 'bi_a': 50, 'bi_a2': 0, 'bi_grad': True, 'bi_angle': 90, 'bi_bias': 40}),
     ("\u00d3valo dorado", {'shape': 1, 'color': '#d6b13a', 'color2': '#8d6b0c', 'grad': True, 'grad_angle': 135, 'bevel': 7, 'tex': 2, 'tex_amt': 30,
                       'bt': 24, 'br': 24, 'bb': 24, 'bl': 24}),
 ]
@@ -16393,11 +16467,12 @@ def render_frame(p):
         half = (abs(dx_) * ow + abs(dy_) * oh) / 2.0
         cx_, cy_ = ox + ow / 2.0, oy + oh / 2.0
         g = QLinearGradient(cx_ - dx_ * half, cy_ - dy_ * half, cx_ + dx_ * half, cy_ + dy_ * half)
-        g.setColorAt(0.0, QColor(p['color']))
-        g.setColorAt(1.0, QColor(p['color2']))
+        _c1, _c2 = _paper_colors(p)                      # [PACK150] cada color con su opacidad
+        g.setColorAt(0.0, _c1)
+        g.setColorAt(1.0, _c2)
         brush = QBrush(g)
     else:
-        brush = QBrush(QColor(p['color']))
+        brush = QBrush(_paper_colors(p)[0])
     q.setBrush(brush)
 
     q.drawPath(ring)
@@ -16509,6 +16584,13 @@ def render_frame(p):
         q.setBrush(Qt.NoBrush)
         q.setPen(QPen(QColor(0, 0, 0, int(255 * p['line_op'] / 100.0)), p['line'] * 2.0))
         q.drawPath(hole)
+    for _wd, _pth, _ks in ((p['bo'], outer, FRAME_EDGE_O), (p['bi'], hole, FRAME_EDGE_I)):      # [PACK150] borde exterior e interior, cada uno con su degradado
+        if _wd <= 0:
+            continue
+        _st = QPainterPathStroker()
+        _st.setWidth(2.0 * _wd)
+        _band = _st.createStroke(_pth).intersected(ring)
+        _paint_ring(q, _band, _edge_brush(p, _ks, _pth.boundingRect()), _edge_translucent(p, _ks))
     q.restore()
     q.setCompositionMode(QPainter.CompositionMode_Clear)
     q.setPen(Qt.NoPen)
@@ -16527,7 +16609,8 @@ def render_frame(p):
 def _gen_frame_image(p):
     """Ruta guardable de la imagen de un marco con los parametros p (la dibuja si hace falta; el nombre sale de los parametros)."""
     p = _fr_clean(p)
-    tag = hashlib.md5(json.dumps({k: v for k, v in p.items() if not (k == 'shape' and not v)}, sort_keys=True).encode('utf-8')).hexdigest()[:16]
+    tag = hashlib.md5(json.dumps({k: v for k, v in p.items() if not (k == 'shape' and not v) and not (k in _FRAME_NEW and v == FRAME_DEFAULTS[k])},
+                                 sort_keys=True).encode('utf-8')).hexdigest()[:16]          # [PACK150] los marcos de antes conservan su nombre de archivo
     path = os.path.join(FRAMES_DIR, "marco_%s.png" % tag)
     if not os.path.exists(path):
         os.makedirs(FRAMES_DIR, exist_ok=True)
@@ -16806,6 +16889,7 @@ class FrameDialog(QDialog):
         f1.addRow("Esquina del hueco", self.sp_irad)
         f2 = page("Color y relieve")
         f2.addRow("Color", color_btn('color'))
+        f2.addRow("Opacidad del color", spin('color_a', " %"))
         self.chk_grad = QCheckBox("Degradado hacia otro color")
 
         self.chk_grad.setChecked(bool(self.p['grad']))
@@ -16813,6 +16897,7 @@ class FrameDialog(QDialog):
         self._sync.append(lambda: self.chk_grad.setChecked(bool(self.p['grad'])))
         f2.addRow(self.chk_grad)
         f2.addRow("Segundo color", color_btn('color2'))
+        f2.addRow("Opacidad del segundo color", spin('color2_a', " %"))
         f2.addRow("Direcci\u00f3n del degradado", spin('grad_angle', " \u00b0"))
         f2.addRow("Bisel (ancho)", spin('bevel'))
         f2.addRow("Luz del bisel", spin('bevel_light', " %"))
@@ -16824,6 +16909,24 @@ class FrameDialog(QDialog):
         self._sync.append(lambda: self.cb_tex.setCurrentIndex(int(self.p['tex'])))
         f2.addRow("Textura", self.cb_tex)
         f2.addRow("Intensidad de la textura", spin('tex_amt', " %"))
+        def chk(key, text):                                  # [PACK150]
+            c_ = QCheckBox(text)
+            c_.setChecked(bool(self.p[key]))
+            c_.toggled.connect(lambda on, k=key: self._set(k, bool(on)))
+            self._sync.append(lambda c_=c_, k=key: c_.setChecked(bool(self.p[k])))
+            return c_
+        fb = page("Bordes")
+        for pre, titulo in (('bo', "Borde exterior (el canto de fuera del marco)"), ('bi', "Borde interior (el canto del hueco)")):
+            _lb = QLabel("<b>%s</b>" % titulo)
+            fb.addRow(_lb)
+            fb.addRow("Grosor (0 = sin borde)", spin(pre))
+            fb.addRow("Color", color_btn(pre + '_color'))
+            fb.addRow("Opacidad", spin(pre + '_a', " %"))
+            fb.addRow(chk(pre + '_grad', "Degradado hacia otro color"))
+            fb.addRow("Segundo color", color_btn(pre + '_color2'))
+            fb.addRow("Opacidad del segundo color", spin(pre + '_a2', " %"))
+            fb.addRow("Direcci\u00f3n del degradado", spin(pre + '_angle', " \u00b0"))
+            fb.addRow("Balance entre los dos colores", spin(pre + '_bias', " %"))
         f3 = page("Sombras y filo")
         f3.addRow("Sombra sobre la imagen (tama\u00f1o)", spin('ishadow'))
 
@@ -18393,8 +18496,8 @@ class BaseNoteDialog(QDialog):
         left.addLayout(srow_)
         xrow_ = QHBoxLayout()                # [PACK97] copiar / pegar el template o el estilo (JSON) y exportar el template
         xrow_.addWidget(QLabel("JSON:"))
-        for txt, fn, tip in (("Copiar widget guardado", self._tpl_copy, "Copia al portapapeles el widget guardado completo de esta nota (JSON): forma, colores, texto e imagen"),
-                             ("Pegar widget guardado", self._tpl_paste, "Aplica aqu\u00ed un widget guardado copiado (tambi\u00e9n vale el JSON copiado en la ventana de widgets guardados), con su texto"),
+        for txt, fn, tip in (("Copiar widget", self._tpl_copy, "Copia al portapapeles el widget completo de esta nota (JSON): forma, colores, texto e imagen"),
+                             ("Pegar widget", self._tpl_paste, "Aplica aqu\u00ed un widget copiado (tambi\u00e9n vale el JSON copiado en la ventana de widgets guardados), con su texto"),
                              ("Copiar forma de papel", self._style_copy, "Copia al portapapeles solo la forma de papel (JSON): forma, colores y esquinas, sin el texto"),
                              ("Pegar forma de papel", self._style_paste, "Aplica una forma de papel copiada a esta nota, manteniendo su texto"),
                              ("Exportar...", self._tpl_export, "Guarda esta forma de papel en un archivo .wapaper (comprimido); tambi\u00e9n se puede guardar como .json")):
@@ -21349,13 +21452,15 @@ class WidgetManager(QObject):
         aspect_menu = QMenu("Aspecto", menu)
         tpl_menu = QMenu("Widget guardado", aspect_menu)
         add(tpl_menu, "Cambiar por otro widget guardado...", lambda: self._change_widget_template(widget_id))
-        add(tpl_menu, "Guardar este widget...", lambda: self.save_widget_as_template(widget_id))
-        add(tpl_menu, "Exportar el widget guardado...", lambda: self._export_widget_template(widget_id),
-            tip="Guarda este widget en un archivo .wawidget (comprimido, con sus im\u00e1genes)")
+        add(tpl_menu, "Guardar este widget...", lambda: self.save_widget_as_template(widget_id),
+            tip="Lo a\u00f1ade a tus widgets guardados, para crear m\u00e1s widgets iguales")          # [PACK150] nombres: 'guardar' = a tu lista; 'exportar' = a un archivo
+        add(tpl_menu, "Exportar este widget a un archivo...", lambda: self._export_widget_template(widget_id),
+            tip="Guarda este widget en un archivo .wawidget (comprimido, con sus im\u00e1genes) para llevarlo a otro equipo o compartirlo")
         tpl_menu.addSeparator()
-        add(tpl_menu, "Copiar widget guardado (json)", lambda: self._copy_widget_template(widget_id))       # [PACK96]
-        add(tpl_menu, "Pegar widget guardado (json)", lambda: self._paste_widget_data(widget_id, True),         # [PACK98]
-            tip="Sustituye el aspecto y el contenido de este widget por un widget guardado copiado (JSON)",
+        add(tpl_menu, "Copiar este widget (json)", lambda: self._copy_widget_template(widget_id),       # [PACK96]
+            tip="Copia al portapapeles el JSON de este widget: forma, colores, texto e imagen")
+        add(tpl_menu, "Pegar un widget copiado (json)", lambda: self._paste_widget_data(widget_id, True),         # [PACK98]
+            tip="Sustituye el aspecto y el contenido de este widget por el widget copiado (JSON)",
             enabled=self._clip_widget_data() is not None)
         aspect_menu.addMenu(tpl_menu)
         sty_menu = QMenu("Forma de papel", aspect_menu)                  # [PACK107] antes "Estilo" y "Nota base" eran dos submenus: es lo mismo

@@ -1,3 +1,8 @@
+## Pack 150 · 2026-11-01
+- **Color del texto de un botón.** En *Editar este botón/enlace…* hay un nuevo campo *Color del texto*: eliges un color o lo dejas en *Automático* (el oscuro de siempre). Se guarda en el propio enlace (`tc=`), así que los botones ya creados no cambian y la rueda del ratón (tamaño y fuente) y el cambio de color del papel lo respetan.
+- **Marcos translúcidos con dos bordes.** El editor de marcos tiene opacidad en los dos colores del relleno y una pestaña nueva, *Bordes*: un **borde exterior** (el canto de fuera del marco) y un **borde interior** (el canto del hueco), cada uno con su grosor, color, opacidad, segundo color, dirección y balance del degradado, independientes entre sí. Hay un punto de partida nuevo, *Cristal esmerilado*. Los marcos de antes se dibujan igual.
+- **Submenú *Widget guardado* con nombres que dicen sobre qué actúan:** *Guardar este widget…* (lo añade a tus widgets guardados), *Exportar este widget a un archivo…* (un `.wawidget`), *Copiar este widget (json)* y *Pegar un widget copiado (json)*. Los atajos que ya tuvieras con los nombres de antes se traducen solos.
+
 ## Pack 149 · 2026-11-01
 - **Arreglo (modo usuario): «Elegir los sets de la rotación…» vuelve a verse** en *Sets de widgets*. Los gestos Ctrl / Alt + doble clic en el icono recorren esa rotación en los dos modos, y la entrada se había ocultado por error.
 
