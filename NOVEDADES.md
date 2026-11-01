@@ -1,3 +1,6 @@
+## Pack 142 · 2026-11-01
+- **Girar con la rueda: Ctrl+Alt+rueda = 5°; con Mayús (Ctrl+Alt+Mayús+rueda) = 1° (fino).** Cambia lo de los Packs 140-141 (que usaban Ctrl+Alt+Mayús para 5°). El sentido es el inverso: **rueda arriba = antihorario, rueda abajo = horario**. Vale con el widget bajo el cursor y sin ninguna capa seleccionada (con una capa seleccionada, Ctrl+Alt+rueda sigue ajustando esa capa); sobre un botón de texto la rueda sigue siendo la del botón. Está en *Aspecto → Girar widget* con 5° y 1°.
+
 ## Pack 141 · 2026-11-01
 - **Arreglo: Ctrl+Alt+Mayús+rueda no giraba en algunos equipos.** Con Mayús o Alt, muchos sistemas mandan la vuelta de rueda como desplazamiento *horizontal*; el programa solo miraba el vertical y la ignoraba. Ahora lee cualquiera de los dos. Además deja en el registro (nivel depuración) lo que recibe, para diagnosticar si aun así no gira.
 
