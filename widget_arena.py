@@ -10101,6 +10101,95 @@ _TPL_LAYER_FIELDS = (
     ("scaled_contents", "Escalar el contenido al marco", "bool"),
 )
 
+class SimpleAddDialog(QDialog):
+    """[PACK153] Modo usuario: UNA galeria para anadir un widget (o cambiar el aspecto de uno que ya esta): miniaturas grandes y dos botones."""
+    ICON = QSize(168, 112)
+
+    def __init__(self, manager, apply_to=None):
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        super().__init__(manager.dialog_parent)
+        self.m = manager
+        self.target = apply_to if isinstance(apply_to, str) and apply_to else None
+        self.setWindowTitle("Cambiar el aspecto de este widget" if self.target else "A\u00f1adir un widget")
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        lay = QVBoxLayout(self)
+        lbl = QLabel("Elige el que quieras y pulsa \u00ab%s\u00bb (o haz doble clic)." % ("Cambiar" if self.target else "A\u00f1adir"))
+        lbl.setWordWrap(True)
+        lay.addWidget(lbl)
+        self.list = QListWidget()
+        self.list.setViewMode(QListWidget.IconMode)
+        self.list.setIconSize(self.ICON)
+        self.list.setGridSize(QSize(self.ICON.width() + 24, self.ICON.height() + 44))
+        self.list.setResizeMode(QListWidget.Adjust)
+        self.list.setMovement(QListWidget.Static)
+        self.list.setWordWrap(True)
+
+        self.list.setSpacing(6)
+        self.list.setUniformItemSizes(True)
+        ph = QPixmap(self.ICON)
+        ph.fill(QColor('#c4c9d1'))
+        blank = QIcon(ph)
+        try:
+            names = list(manager.template_files())
+        except Exception as e:
+            log_warn("Manager", "No se pudo listar los widgets guardados: %s" % e)
+            names = []
+        dflt = manager.default_template_name()
+        sel = None
+        for n in names:
+            it = QListWidgetItem(blank, os.path.splitext(n)[0].replace('_', ' '))
+            it.setData(Qt.UserRole, n)
+            it.setToolTip(os.path.splitext(n)[0])
+            self.list.addItem(it)
+            if n == dflt:
+                sel = it
+
+        if self.list.count():
+            self.list.setCurrentItem(sel or self.list.item(0))
+        lay.addWidget(self.list, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.btn_ok = bb.button(QDialogButtonBox.Ok)
+        self.btn_ok.setText("Cambiar" if self.target else "A\u00f1adir")
+        bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
+        bb.accepted.connect(self._go)
+        bb.rejected.connect(self.reject)
+        self.list.itemDoubleClicked.connect(lambda _i: self._go())
+        lay.addWidget(bb)
+        self._todo = list(range(self.list.count()))
+        self.resize(640, 480)
+        QTimer.singleShot(0, self._fill_icons)
+
+    def _fill_icons(self):
+        """Dibuja las miniaturas de una en una (la ventana no se espera)."""
+        if not self.isVisible() and not self._todo:
+            return
+        if not self._todo:
+            return
+        i = self._todo.pop(0)
+        it = self.list.item(i)
+        if it is not None:
+            try:
+                it.setIcon(self.m.template_icon(it.data(Qt.UserRole), self.ICON))
+            except Exception as e:
+                log_warn("Manager", "Miniatura de %s: %s" % (it.data(Qt.UserRole), e))
+        if self._todo:
+            QTimer.singleShot(0, self._fill_icons)
+
+    def _go(self):
+        it = self.list.currentItem()
+        if it is None:
+            return
+        name = it.data(Qt.UserRole)
+        try:
+            if self.target:
+                self.m.apply_template_to_widget(self.target, name)
+            else:
+                self.m.add_new_widget(template_name=name)
+        except Exception as e:
+            log_error("Manager", "No se pudo usar el widget guardado %s: %s" % (name, e))
+        self.accept()
+
+
 class TemplateBrowser(QWidget):
     """Elegir el template con el que crear un widget y crear / editar / duplicar / importar templates."""
     THUMB = QSize(120, 90)
@@ -12285,7 +12374,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 152                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 153                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -20282,6 +20371,15 @@ class WidgetManager(QObject):
         menu = _HMenu()
         menu.setToolTipsVisible(True)
 
+        if self.ui_simple():                      # [PACK153] modo usuario: otra bandeja, mucho mas corta
+            self._build_simple_tray(menu)
+            self._tray_menu_ref = menu
+            self.tray_icon.setContextMenu(menu)
+            self._update_tray_tooltip()
+            if getattr(self, 'browser', None) is not None:
+                self.browser.schedule_refresh()
+            return
+
         toggle_all_text = "Ocultar todos los widgets" if self.all_visible else "Mostrar todos los widgets"
         toggle_all_action = QAction(toggle_all_text, self)
         toggle_all_action.triggered.connect(self.toggle_all_visibility)
@@ -20947,6 +21045,94 @@ class WidgetManager(QObject):
             self.widgets[widget_id].load_template_data(data)
         self.save_global_state()
         self.build_tray_menu()
+
+    def show_simple_add(self, *_a, apply_to=None):
+        """[PACK153] Modo usuario: la galeria unica para anadir un widget, o para cambiar el aspecto del widget apply_to."""
+        d = getattr(self, '_simple_add', None)
+        if d is not None:
+            try:
+                d.close()
+            except RuntimeError:
+                pass
+        d = self._simple_add = SimpleAddDialog(self, apply_to if isinstance(apply_to, str) else None)
+        d.show()
+        d.raise_()
+        d.activateWindow()
+        return d
+
+    def _build_simple_tray(self, menu):
+        """[PACK153] Bandeja del modo usuario: solo lo imprescindible."""
+        def add(text, fn, m=None):
+            a = QAction(text, self)
+            a.triggered.connect(lambda _c=False, f=fn: f())
+            (m or menu).addAction(a)
+            return a
+        add("A\u00f1adir un widget...", self.show_simple_add)
+        wm = QMenu("Mis widgets", menu)
+        _ids, _depth = self._menu_widget_rows()
+        if not _ids:
+            n_ = QAction("No hay widgets activos", self)
+            n_.setEnabled(False)
+            wm.addAction(n_)
+        self._row_depth = 0
+        for wid in _ids:
+            wm.addAction(self._build_widget_row_action(wid, self.global_state[wid], wm))
+        menu.addMenu(wm)
+
+        sm = QMenu("Cambiar de set", menu)
+        cur = self.current_profile_name
+        names = [os.path.splitext(os.path.basename(p))[0] for p in self._list_profiles()]
+        for name in names:
+            a = QAction(name, self)
+            a.setCheckable(True)
+            a.setChecked(name == cur)
+            a.triggered.connect(lambda _c=False, n=name: self._load_profile_dialog(n))
+            sm.addAction(a)
+        if not names:
+            n_ = QAction("(no hay sets guardados)", self)
+            n_.setEnabled(False)
+            sm.addAction(n_)
+        sm.addSeparator()
+        add("Guardar el set actual...", self._save_profile_dialog, sm)
+        menu.addMenu(sm)
+        add("Ocultar todos los widgets" if self.all_visible else "Mostrar todos los widgets", self.toggle_all_visibility)
+        menu.addSeparator()
+
+        add("Deshacer", self.undo_global)
+        add("Rehacer", self.redo_global)
+        menu.addSeparator()
+        add("Ayuda", self.show_gesture_guide)
+        add("Buscar actualizaciones...", lambda: self.show_updates())
+        mode_act = QAction("Modo creativo (todas las opciones)", self)
+        mode_act.setCheckable(True)
+        mode_act.setChecked(not self.ui_simple())
+        mode_act.setToolTip("Activado: todas las opciones para crear y personalizar. Desactivado: modo usuario, con los men\u00fas reducidos a lo esencial.")
+        mode_act.toggled.connect(lambda on: self.set_ui_mode('creativo' if on else 'usuario'))
+        menu.addAction(mode_act)
+        menu.addSeparator()
+        add("Salir de WidgetArena", self.safe_quit)
+
+    def _simplify_widget_menu(self, menu, widget_id, state):
+        """[PACK153] Menu del widget en modo usuario: renombrar, ocultar, siempre encima, cambiar aspecto, duplicar, eliminar."""
+        menu.clear()
+        on = state.get('enabled', True)
+
+        def add(text, fn, checked=None):
+            a = QAction(text, self)
+            if checked is not None:
+                a.setCheckable(True)
+                a.setChecked(bool(checked))
+                a.triggered.connect(lambda c=False, f=fn: f(c))
+            else:
+                a.triggered.connect(lambda c=False, f=fn: f())
+            menu.addAction(a)
+        add("Renombrar...", lambda: self._rename_widget(widget_id))
+        add("Ocultar" if on else "Mostrar", lambda: self.toggle_widget_enabled(widget_id, force_state=not on))
+        add("Siempre encima", lambda c: self._toggle_widget_always_on_top(widget_id, c), checked=state.get('always_on_top', False))
+        add("Cambiar aspecto...", lambda: self.show_simple_add(apply_to=widget_id))
+        add("Duplicar", lambda: self.clone_widget(widget_id))
+        menu.addSeparator()
+        add("Eliminar este widget...", lambda: self._confirm_remove_widget(widget_id))
 
     def show_template_chooser(self, *_a, apply_to=None, select=None):
         """Pestana 'Templates' del navegador: crear un widget con un template o, con apply_to, cambiar el de un widget."""
@@ -21834,7 +22020,8 @@ class WidgetManager(QObject):
         if not from_tray and getattr(self, 'hotkeys', None) is not None:
             self.hotkeys.decorate(menu, "widget")
         if not full and self.ui_simple():                      # [PACK145] en modo usuario, solo lo esencial (el editor de atajos usa full=True: todo)
-            _ui_prune(menu, _UI_W_DROP, _UI_W_SUB)
+            self._simplify_widget_menu(menu, widget_id, state)          # [PACK153]
+            return menu
         _style_menu(menu, self._widget_menu_groups(widget_id, state), _MENU_RULES_W, decorate=self._menu_style_on())       # [PACK78]
         return menu
 
@@ -22719,7 +22906,7 @@ class WidgetManager(QObject):
         """Los widgets nuevos nacen en la banda Z (siempre encima / normal) que usa la mayoria de los existentes:
         mezclar bandas hace que los cables, que solo pueden ir por debajo de una banda, queden sobre las notas de la otra."""
         vals = [bool(s.get('always_on_top', True)) for s in self.global_state.values() if isinstance(s, dict)]
-        return (sum(vals) * 2 >= len(vals)) if vals else True
+        return (sum(vals) * 2 >= len(vals)) if vals else False          # [PACK153] la primera nota nace en la banda normal, no siempre encima
 
     def _flash_widget(self, widget_id):
         window = self.widgets.get(widget_id)

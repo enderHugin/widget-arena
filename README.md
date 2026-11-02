@@ -49,7 +49,7 @@ o desde el menú del icono de bandeja → *Sets de widgets*. Puedes borrarlos cu
 ## Modo usuario y modo creativo
 Widget Arena se puede usar de dos maneras, y el programa lo pregunta una sola vez al arrancar:
 
-- **Modo usuario:** menús reducidos a lo esencial. En la bandeja: ocultar o mostrar todos, plegar o desplegar hijos, nuevo widget, navegador, sets de widgets (cambiar con las teclas, siguiente y anterior, guardar el set activo), guardar y cargar, ajustes básicos y la guía de gestos. En el menú de un widget: renombrar, temporizador, ocultar, siempre encima, girar, cambiar a otro widget guardado, las relaciones, clonar y eliminar.
+- **Modo usuario:** lo mínimo. En la bandeja: *Añadir un widget* (una única galería con miniaturas), *Mis widgets* (mostrar u ocultar cada uno), *Cambiar de set* (y guardar el set actual), ocultar o mostrar todos, deshacer y rehacer, ayuda, buscar actualizaciones, *Modo creativo* y salir. En el menú de un widget (clic derecho): renombrar, ocultar, siempre encima, *Cambiar aspecto* (la misma galería), duplicar y eliminar.
 - **Modo creativo:** todo lo demás: capas, formas de papel, marcos, corona, árboles (copiar, exportar, mover), tipos de hijo, integraciones y la consola.
 
 Se cambia cuando quieras con **Modo creativo** en el menú del icono de la bandeja (marcado = modo creativo). Los dos modos usan los mismos archivos y los mismos gestos; solo cambia lo que ves en los menús.
