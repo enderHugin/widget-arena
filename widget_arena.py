@@ -5737,9 +5737,37 @@ class StickerWindow(QMainWindow):
         key = p1.cacheKey()
         c = getattr(self, '_sil_cache', None)
         if c is None or c[0] != key:
-            c = (key, _silhouette_image(p1.toImage()))
+            c = (key, self._frame_silhouette(p1) or _silhouette_image(p1.toImage()))
             self._sil_cache = c
         return c[1]
+
+    def _frame_silhouette(self, p1):
+        """[PACK155] Silueta exacta de un marco dibujado por el programa (sin giro): su contorno exterior relleno, calculado con sus parametros.
+        La silueta por transparencia de la imagen no sirve con marcos translucidos (Cristal esmerilado...): su aro no llega a ser \u00absolido\u00bb
+        y la capa 2 se recortaba hasta desaparecer. None si la capa 1 no es un marco o esta girada (entonces se usa la imagen)."""
+        try:
+            td = self.current_template_data
+            l1 = td.get('layer1') or {}
+            fp = td.get('frame_shape')
+            if not isinstance(fp, dict) or not os.path.basename(str(l1.get('content') or '').replace('\\', '/')).startswith('marco_'):
+                return None
+            if abs(float(l1.get('rotation') or 0)) % 360 > 0.01:
+                return None
+            fp = _fr_clean(fp)
+            L = _frame_layout(fp)
+            im = QImage(p1.size(), QImage.Format_ARGB32_Premultiplied)
+            im.fill(Qt.transparent)
+            q = QPainter(im)
+            q.setRenderHint(QPainter.Antialiasing)
+            q.scale(p1.width() / float(L['W']), p1.height() / float(L['H']))
+            q.setPen(Qt.NoPen)
+            q.setBrush(QColor(255, 255, 255))
+            q.drawPath(_frame_paths(fp, L)[0])
+            q.end()
+            return im
+        except Exception as e155:
+            log_warn(self.widget_id, "Silueta del marco: %s" % e155)
+            return None
 
     def _clip_l2_silhouette(self, pm, topleft):
         """Recorta la imagen de la capa 2 (colocada en topleft) a la silueta de la capa 1: asi no hace falta ajustar las medidas
@@ -12479,7 +12507,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 154                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 155                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
