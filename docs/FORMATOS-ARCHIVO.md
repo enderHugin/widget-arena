@@ -5,7 +5,7 @@ Cuatro tipos de archivo para llevar tu trabajo de un equipo a otro o compartirlo
 | Extensión | Qué lleva | Qué hace al cargarlo |
 |---|---|---|
 | `.waset` | Widgets con su jerarquía y cables: un árbol, o todos los del set activo; opcionalmente la configuración y los atajos | Agregarlos, guardarlos como un set nuevo o reemplazar el set activo |
-| `.wawidget` | Un widget guardado (aspecto y contenido) | Se añade a tus widgets guardados, o sustituye el aspecto de un widget |
+| `.wawidget` | Un modelo (aspecto y contenido) | Se añade a tus modelos, o sustituye el aspecto de un widget |
 | `.wapaper` | Una forma de papel (forma, colores, borde, sombra), sin texto ni posición | Se añade a tus formas de papel, o se aplica a un widget conservando su texto |
 | `.waframe` | Un marco: sus parámetros (grosor de cada lado, color o degradado, bisel, textura, sombras, forma) y una miniatura `preview.png` | Se guarda en *Mis marcos* (carpeta `marcos/` de los datos); desde el editor de marcos o el menú *Aspecto → Marco* del widget se pone en un widget conservando su tamaño |
 

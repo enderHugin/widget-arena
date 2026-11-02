@@ -485,6 +485,7 @@ def _loc_dir(env_name, key, default):
 
 
 ROOT_DATA_DIR = _loc_dir("WIDGET_ARENA_DATA", "data_dir", os.path.join(APP_DIR, DATA_DIRNAME))
+_WA_CLOCK_HTML_B64_1 = "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"          # [PACK154] reloj LED, primera mitad
 
 
 def _store_path(path):
@@ -514,6 +515,7 @@ def _resolve_stored(p):
 
 # --- Definicion de Directorios ---
 DATA_DIR = os.path.join(ROOT_DATA_DIR, "data")
+_WA_CLOCK_HTML_B64_2 = "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"          # [PACK154] reloj LED, segunda mitad
 BACKUP_DIR = os.path.join(ROOT_DATA_DIR, "backups")
 CACHE_DIR = _loc_dir("WIDGET_ARENA_CACHE_DIR", "cache_dir", os.path.join(ROOT_DATA_DIR, "cache"))
 os.environ["WIDGET_ARENA_DATA"] = ROOT_DATA_DIR            # [PACK88] los procesos que lanza (vistas previas) heredan la ubicacion
@@ -530,12 +532,14 @@ STICKY_DIR = os.path.join(ROOT_DATA_DIR, "sticky")
 TEMPLATES_DIR = os.path.join(ROOT_DATA_DIR, "templates")
 PROFILES_DIR = os.path.join(ROOT_DATA_DIR, "profiles")
 PACKS_DIR = os.path.join(ROOT_DATA_DIR, "packs")          # [PACK112] packs de estilos (.wapack) instalados
+HTML_DIR = os.path.join(ROOT_DATA_DIR, "html")            # [PACK154] paginas HTML de los widgets web (el reloj LED y las que a\u00f1adas)
+_WA_GLASS_PNG_B64 = "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"          # [PACK154] reflejo de cristal del reloj LED (PNG comprimido en base64)
 
 # Crear carpetas
 for d in (
     DATA_DIR, BACKUP_DIR, CACHE_DIR, LOG_DIR, BUTTONS_DIR, LAYERS_CACHE_DIR, WEB_DATA_DIR,
     FRAMES_DIR, IMAGES_DIR, STICKY_DIR, TEMPLATES_DIR,
-    PROFILES_DIR, PACKS_DIR
+    PROFILES_DIR, PACKS_DIR, HTML_DIR
 ):
     os.makedirs(d, exist_ok=True)
 
@@ -603,6 +607,45 @@ def _seed_example_packs():
 
 
 _seed_example_packs()
+
+# [PACK154] El reloj LED (pagina HTML con su reflejo de cristal): viaja dentro del programa y se deja en html/ una sola vez, tambien a quien ya lo usaba.
+_WA_CLOCK_HTML_B64 = _WA_CLOCK_HTML_B64_1 + _WA_CLOCK_HTML_B64_2          # (las dos mitades est\u00e1n arriba, junto a las rutas de datos)
+_WA_HTML_REL = "reloj_led.html"
+
+
+def _html_tdata(rel, w=380, h=165, bg="#000000"):
+    """[PACK154] Datos de un widget cuya capa 2 es una pagina HTML local (rel = ruta guardada, p. ej. widget_arena_data/html/reloj_led.html);
+    la capa 1 queda vacia y deja pasar los clics a la pagina."""
+    g = {"x": 0, "y": 0, "w": int(w), "h": int(h)}
+    return {"geometry": {"x": 100, "y": 100},
+            "layer1": {"type": "text", "content": "", "background": "transparent", "font_family": "Inter", "font_size": 14,
+                       "color": "#ffffff", "rotation": 0, "image_effects": {}, "geometry": dict(g), "scaled_contents": False},
+            "layer2": {"type": "web", "content": rel, "background": bg, "rotation": 0, "image_effects": {}, "geometry": dict(g), "scaled_contents": True}}
+
+
+def _seed_html_clock():
+    """[PACK154] Deja en html/ el reloj LED y su cristal, y el modelo \u00abReloj LED\u00bb entre tus modelos. Nunca sobrescribe y, si luego lo borras, no vuelve."""
+    marker = os.path.join(DATA_DIR, ".html_seed_done")
+    if os.path.exists(marker):
+        return
+    try:
+        import base64, zlib
+        for fn, data in ((_WA_HTML_REL, zlib.decompress(base64.b64decode(_WA_CLOCK_HTML_B64))), ("glass.png", base64.b64decode(_WA_GLASS_PNG_B64))):
+            p = os.path.join(HTML_DIR, fn)
+            if not os.path.exists(p):
+                with open(p, 'wb') as f:
+                    f.write(data)
+        tp = os.path.join(TEMPLATES_DIR, "Reloj LED.json")
+        if not os.path.exists(tp):
+            with open(tp, 'w', encoding='utf-8') as f:
+                json.dump(_html_tdata(_store_path(os.path.join(HTML_DIR, _WA_HTML_REL))), f, indent=4)
+        with open(marker, 'w', encoding='utf-8') as f:
+            f.write("ok\n")
+    except OSError:
+        pass
+
+
+_seed_html_clock()
 
 
 def _migrate_data_layout():
@@ -2294,12 +2337,25 @@ class StickerWindow(QMainWindow):
         if not self.is_enabled:
             self.hide()
         
+    def _web_local_url(self, s):
+        """[PACK154] Una ruta a una pagina .html / .htm (guardada relativa a la carpeta de datos o absoluta) pasa a ser su direccion file:///.
+        Lo demas (http, https, file, about) se deja como esta. Si el archivo no existe, about:blank."""
+        s = str(s or 'about:blank').strip()
+        if s.lower().startswith(('http://', 'https://', 'file:///', 'about:', 'data:')) or not s.lower().endswith(('.html', '.htm')):
+            return s
+        real = _find_stored_file(s, 2)
+        if real:
+            return QUrl.fromLocalFile(real).toString()
+        log_warn(self.widget_id, "No encuentro la p\u00e1gina HTML del widget: %s" % s)
+        return 'about:blank'
+
     def _ensure_web_view(self):
         """Sustituye el marcador por un QWebEngineView real (solo cuando hace falta)."""
         if self._web_is_real:
             return self.layer2_web
         placeholder = self.layer2_web
         view = QWebEngineView(self.manager.web_profile, self.central_widget)
+        view.loadFinished.connect(lambda _ok: self._web_clip_js(getattr(self, '_web_shape', None)))          # [PACK154] el recorte se vuelve a poner en cada pagina que carga
         view.setGeometry(placeholder.geometry())
         view.hide()
         view.stackUnder(self.layer1_label)   # mismo orden Z que antes: sobre L2 label, bajo L1
@@ -2988,7 +3044,7 @@ class StickerWindow(QMainWindow):
 
         elif l2_content_type == 'web':
             log_debug(f"{self.widget_id}", "set_content: L2 es Web. Cargando URL...")
-            url_str = l2_data.get('content', 'about:blank')
+            url_str = self._web_local_url(l2_data.get('content', 'about:blank'))          # [PACK154] pagina HTML guardada en la carpeta de datos
             if not url_str.startswith(('http://', 'https://', 'file:///', 'about:')):
                 url_str = 'http://' + url_str
             self._ensure_web_view()
@@ -3107,8 +3163,9 @@ class StickerWindow(QMainWindow):
         self.layer1_label.raise_()
         self.layer1_editor.raise_()
 
-        if l2_content_type == 'web' and l1_content_type == 'png':
-            log_debug(self.widget_id, "L1 (PNG) sobre L2 (Web). Haciendo L1 click-through.")
+        _l1_vacia = l1_content_type == 'text' and not re.sub(r'<[^>]+>', '', str(l1_data.get('content') or '')).strip()          # [PACK154] capa 1 sin texto sobre una web
+        if l2_content_type == 'web' and (l1_content_type == 'png' or _l1_vacia):
+            log_debug(self.widget_id, "L1 (PNG o vacia) sobre L2 (Web). Haciendo L1 click-through.")
             self.layer1_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         else:
             log_debug(self.widget_id, "Comportamiento de clic estandar. L1 no es click-through.")
@@ -5717,25 +5774,67 @@ class StickerWindow(QMainWindow):
             self._l2_clip_busy = False
 
     def _web_clip_apply(self):
-        """Recorte de una capa 2 web: mascara del propio visor (mejor esfuerzo: depende de que la plataforma la respete)."""
+        """Recorte de una capa 2 web. [PACK154] Se hace DENTRO de la pagina (mascara CSS con la forma): vale en cualquier plataforma, porque la
+        mascara del visor (setMask) no la respeta todo sistema. La mascara del visor se mantiene como ayuda."""
         w = self.layer2_web
         mode, rad = self._l2_clip()
         g = w.geometry()
+        shape = None
         try:
             if mode in (1, 2) and g.width() > 0 and g.height() > 0:
-                w.setMask(_bool_to_region(_image_alpha(_clip_shape_image(mode, g.width(), g.height(), rad)) >= 128))
+                shape = _clip_shape_image(mode, g.width(), g.height(), rad)
             elif mode == 3 and self._l1_png_ready() and g.width() > 0 and g.height() > 0:
                 g1 = self.layer1_label.geometry()
-                canvas = QImage(g.size(), QImage.Format_ARGB32_Premultiplied)
-                canvas.fill(Qt.transparent)
-                q = QPainter(canvas)
+                shape = QImage(g.size(), QImage.Format_ARGB32_Premultiplied)
+                shape.fill(Qt.transparent)
+                q = QPainter(shape)
                 q.drawImage(g1.x() - g.x(), g1.y() - g.y(), self._silhouette_of_l1())
                 q.end()
-                w.setMask(_bool_to_region(_image_alpha(canvas) >= 128))
+            if shape is not None:
+                w.setMask(_bool_to_region(_image_alpha(shape) >= 128))
             else:
                 w.clearMask()
         except Exception as e_wc:
             log_warn(self.widget_id, "Recorte de la capa web: %s" % e_wc)
+            shape = None
+        self._web_clip_js(shape)
+
+    @staticmethod
+    def _web_clip_script(shape):
+        """[PACK154] JavaScript que pone (o quita, si shape es None) en la pagina la mascara CSS con la forma del recorte. El cuerpo ocupa
+        exactamente el visor y se desplaza dentro, asi la mascara cae siempre sobre lo que se ve y no sobre todo el documento."""
+        if shape is None:
+            return "(function(){var s=document.getElementById('__wa_clip');if(s)s.remove();window.__wa_bg='';})();"
+        from PySide6.QtCore import QBuffer, QIODevice, QByteArray
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.WriteOnly)
+        shape.save(buf, 'PNG')
+        buf.close()
+        url = "url(data:image/png;base64," + bytes(ba.toBase64()).decode('ascii') + ")"
+        css = ("html{background:rgba(0,0,0,0.004)!important;height:100vh!important;overflow:hidden!important;}"
+               "body{position:fixed!important;top:0;left:0;right:0;bottom:0;margin:0!important;overflow:auto!important;"
+               "-webkit-mask-image:%s;mask-image:%s;-webkit-mask-size:100%% 100%%;mask-size:100%% 100%%;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;}") % (url, url)
+        # Chromium no recorta con una mascara el fondo del elemento raiz (se pinta en todo el visor): el fondo pasa del html al cuerpo, que si se recorta
+        return ("(function(){if(!document.body)return;var s=document.getElementById('__wa_clip');if(!s){"
+                "var tr=function(c){return !c||c==='transparent'||/^rgba\\(.*,\\s*0\\)$/.test(c);};"
+                "var hb=getComputedStyle(document.documentElement).backgroundColor,bb=getComputedStyle(document.body).backgroundColor;"
+                "window.__wa_bg=tr(bb)?(tr(hb)?'#ffffff':hb):'';"
+                "s=document.createElement('style');s.id='__wa_clip';(document.head||document.documentElement).appendChild(s);}"
+                "s.textContent=" + json.dumps(css) + "+(window.__wa_bg?'body{background-color:'+window.__wa_bg+'!important;}':'');})();")
+
+    def _web_clip_js(self, shape):
+        """[PACK154] Aplica el recorte (imagen de forma o None) a la pagina del visor y deja el fondo de la pagina transparente mientras recorta."""
+        self._web_shape = shape
+        w = self.layer2_web
+        if not getattr(self, '_web_is_real', False) or not hasattr(w, 'page'):
+            return
+        try:
+            pg = w.page()
+            pg.setBackgroundColor(QColor(0, 0, 0, 0) if shape is not None else QColor('#ffffff'))
+            pg.runJavaScript(self._web_clip_script(shape))
+        except Exception as e_js:
+            log_warn(self.widget_id, "Recorte de la capa web (pagina): %s" % e_js)
 
     def body_region(self):
         """Region (coordenadas de la ventana) que ocupa de verdad el widget: lo opaco de sus capas de imagen (sin el halo de la
@@ -8131,7 +8230,7 @@ HOTKEY_PROFILES_DIR = os.path.join(DATA_DIR, "hotkey_profiles")
 HOTKEY_COMMANDS = [
     ("open_browser", "Abrir el navegador de widgets", "Ctrl+Alt+B", True, False),
     ("toggle_all", "Mostrar / ocultar todos los widgets", "", False, False),
-    ("add_widget", "Agregar nuevo widget (elegir widget guardado)", "", False, False),
+    ("add_widget", "Agregar nuevo widget (elegir un modelo)", "", False, False),
     ("new_default", "Nuevo widget con el predeterminado", "", False, False),
     ("toggle_collapse_all", "Plegar / desplegar todos los hijos", "", False, False),
     ("reload_all", "Recargar todos los widgets", "", False, False),
@@ -8251,15 +8350,19 @@ _WIDGET_PATH_MOVES = tuple(_WIDGET_PATH_MOVES_A + [mv for n in (1, 2) for mv in 
 # lo especifico antes). Los atajos y teclas de menu que el usuario ya tenia asignados se traducen solos.
 _MOVES_121 = tuple([
     ("widget/Aspecto/Template/Usar como predeterminado", "widget/Usar como predeterminado"),
-    ("widget/Aspecto/Template/Cambiar el template...", "widget/Aspecto/Widget guardado/Cambiar por otro widget guardado..."),
-    ("widget/Aspecto/Template/Guardar como template...", "widget/Aspecto/Widget guardado/Guardar este widget..."),
-    ("widget/Aspecto/Template/Exportar el template...", "widget/Aspecto/Widget guardado/Exportar este widget a un archivo..."),
-    ("widget/Aspecto/Template/Copiar template (json)", "widget/Aspecto/Widget guardado/Copiar este widget (json)"),
-    ("widget/Aspecto/Template/Pegar template (json)", "widget/Aspecto/Widget guardado/Pegar un widget copiado (json)"),
-    ("widget/Aspecto/Widget guardado/Exportar el widget guardado...", "widget/Aspecto/Widget guardado/Exportar este widget a un archivo..."),          # [PACK150] nombres de [PACK121]
-    ("widget/Aspecto/Widget guardado/Copiar widget guardado (json)", "widget/Aspecto/Widget guardado/Copiar este widget (json)"),
-    ("widget/Aspecto/Widget guardado/Pegar widget guardado (json)", "widget/Aspecto/Widget guardado/Pegar un widget copiado (json)"),
-    ("widget/Aspecto/Template", "widget/Aspecto/Widget guardado"),
+    ("widget/Aspecto/Template/Cambiar el template...", "widget/Aspecto/Modelo/Cambiar el modelo de este widget..."),
+    ("widget/Aspecto/Template/Guardar como template...", "widget/Aspecto/Modelo/Guardar este widget como modelo..."),
+    ("widget/Aspecto/Template/Exportar el template...", "widget/Aspecto/Modelo/Exportar este widget a un archivo..."),
+    ("widget/Aspecto/Template/Copiar template (json)", "widget/Aspecto/Modelo/Copiar este widget (json)"),
+    ("widget/Aspecto/Template/Pegar template (json)", "widget/Aspecto/Modelo/Pegar un widget copiado (json)"),
+    ("widget/Aspecto/Widget guardado/Exportar el widget guardado...", "widget/Aspecto/Modelo/Exportar este widget a un archivo..."),          # [PACK150] nombres de [PACK121]
+    ("widget/Aspecto/Widget guardado/Copiar widget guardado (json)", "widget/Aspecto/Modelo/Copiar este widget (json)"),
+    ("widget/Aspecto/Widget guardado/Pegar widget guardado (json)", "widget/Aspecto/Modelo/Pegar un widget copiado (json)"),
+    ("widget/Aspecto/Widget guardado/Cambiar por otro widget guardado...", "widget/Aspecto/Modelo/Cambiar el modelo de este widget..."),          # [PACK154] "widget guardado" pasa a "modelo"
+    ("widget/Aspecto/Widget guardado/Guardar este widget...", "widget/Aspecto/Modelo/Guardar este widget como modelo..."),
+    ("widget/Aspecto/Widget guardado", "widget/Aspecto/Modelo"),
+    ("widget/Aspecto/Template", "widget/Aspecto/Modelo"),
+    ("tray/Ajustes/Importar y exportar/Exportar todos mis widgets guardados a un archivo...", "tray/Ajustes/Importar y exportar/Exportar todos mis modelos a un archivo..."),
     ("widget/Aspecto/Estilo/Generar estilo...", "widget/Aspecto/Forma de papel/Generar forma de papel..."),
     ("widget/Aspecto/Estilo/Editar este estilo...", "widget/Aspecto/Forma de papel/Editar esta forma de papel..."),
     ("widget/Aspecto/Estilo/Copiar estilo (json)", "widget/Aspecto/Forma de papel/Copiar forma de papel (json)"),
@@ -8309,7 +8412,9 @@ def _hk_norm_label(text):
 #                     e imagen/web (su fondo es una imagen o una pagina web).
 #   set de widgets  = conjunto con nombre de widgets ya colocados ("set activo" = el que esta en pantalla; antes "perfil" / "conjunto").
 #                     "Esquema de atajos" es otra cosa: los atajos de teclado guardados con un nombre.
-#   widget guardado = aspecto guardado de un widget para crear mas iguales (antes "template" / "plantilla");
+#   modelo          = aspecto guardado de un widget (capas, fondo, tamano; las notas, con texto de ejemplo) para crear mas widgets iguales
+#                     (antes "widget guardado" / "template" / "plantilla"). Se guarda ("Guardar este widget como modelo"), se cambia
+#                     ("Cambiar el modelo de este widget") y se usa para crear ("Crear un widget desde un modelo"). Un pack trae modelos y sets.
 #                     "aspecto" = grupo de widgets con el mismo look.
 #   forma de papel  = el papel que genera el editor (forma, color, borde, sombra); antes "nota base" / "estilo": se genera, se edita,
 #                     se guarda ("Mis formas de papel"), se copia y se pega. Todo eso vive bajo "Forma de papel".
@@ -8494,7 +8599,7 @@ _UI_T_SUB = {      # submenus: (lo que se conserva, lo que se quita), por el pri
     "Apariencia": (("Cables (opacidad", "Fuente predeterminada", "Mostrar ayuda de gestos"), None),
 }
 _UI_W_DROP = ("Capas", "Copiar \u00e1rbol", "Pegar \u00e1rbol", "Exportar \u00e1rbol", "Mover \u00e1rbol", "Usar como predeterminado")
-_UI_W_SUB = {"Aspecto": (("Widget guardado", "Girar widget"), None)}
+_UI_W_SUB = {"Aspecto": (("Modelo", "Girar widget"), None)}
 
 
 def _ui_prune(menu, drop=(), sub=None):
@@ -9276,11 +9381,11 @@ class WidgetBrowserWindow(QMainWindow):
         self.templates = TemplateBrowser(manager)
         self.templates.on_done = lambda: self.tabs.setCurrentIndex(0)
         manager.template_browser = self.templates
-        self.tabs.addTab(self.templates, "Widgets guardados")
+        self.tabs.addTab(self.templates, "Modelos")
         self.glob = self._scroll_tab("Ajustes globales")
         self.keys_tab = QWidget()
         self.tabs.addTab(self.keys_tab, "Atajos y teclas de men\u00fa")
-        for _i, _t in enumerate(("Widget elegido", "Crear desde un widget guardado", "Ajustes y acciones", "Atajos de teclado")):     # [PACK66]
+        for _i, _t in enumerate(("Widget elegido", "Crear desde un modelo", "Ajustes y acciones", "Atajos de teclado")):     # [PACK66]
             self.tabs.setTabText(_i, _t)
         for _i in (2, 3):
             self.tabs.tabBar().setTabTextColor(_i, QColor("#9aa0aa"))       # las pestanas de configuracion, mas discretas
@@ -9524,16 +9629,16 @@ class WidgetBrowserWindow(QMainWindow):
         v.addLayout(head)
 
         # ---- template
-        lay = self._gbox(v, "Widget guardado")
+        lay = self._gbox(v, "Modelo")
         row = QHBoxLayout()
         cur = QLabel("Actual: " + str(st.get('template_name') or "-"))
         f = cur.font()
         f.setBold(True)
         cur.setFont(f)
         row.addWidget(cur, 1)
-        button(row, "Cambiar por otro widget guardado...", lambda: m.show_template_chooser(apply_to=wid))
+        button(row, "Cambiar el modelo de este widget...", lambda: m.show_template_chooser(apply_to=wid))
         button(row, "Guardar este widget...", lambda: m.save_widget_as_template(wid))
-        button(row, "Editar widgets guardados...", lambda: m.show_template_chooser(select=st.get('template_name')))
+        button(row, "Editar modelos...", lambda: m.show_template_chooser(select=st.get('template_name')))
         lay.addLayout(row)
 
         # ---- visibilidad
@@ -9886,7 +9991,7 @@ class SetRotationDialog(QDialog):
 
 
 _TPL_PREVIEW_CACHE = {}
-TPL_SAMPLE_TEXT = "Lorem ipsum dolor sit amet, consectetur adipiscing elit."          # [PACK151] texto de las notas en un widget guardado
+TPL_SAMPLE_TEXT = "Lorem ipsum dolor sit amet, consectetur adipiscing elit."          # [PACK151] texto de las notas en un modelo
 
 
 def _tpl_missing_pixmap(size):
@@ -9918,7 +10023,7 @@ def _tpl_layer_pixmap(ld, num, size):
         _c151 = str(ld.get("content", "") or "")
         if _c151 and not _find_stored_file(_c151, num):          # [PACK151] sin archivo: un hueco discreto, nunca el texto rojo de error
             return _tpl_missing_pixmap(size)
-        pm = StickerWindow._load_image(None, str(ld.get("content", "")), 0, f"widget guardado L{num}", num)
+        pm = StickerWindow._load_image(None, str(ld.get("content", "")), 0, f"modelo L{num}", num)
         if pm is None or pm.isNull():
             return None
         eff = ld.get("image_effects")
@@ -9971,7 +10076,7 @@ def _tpl_preview(data, size):
         data = copy.deepcopy(data)
         _ensure_generated_layer(data)          # [PACK151] la imagen de una forma de papel que falta se dibuja de nuevo desde sus parametros
     except Exception as e151:
-        log_warn("Widgets guardados", "No se pudo reparar la imagen de la vista previa: %s" % e151)
+        log_warn("Modelos", "No se pudo reparar la imagen de la vista previa: %s" % e151)
     try:
         def geom(ld):
             g = ld.get("geometry") or {}
@@ -10013,7 +10118,7 @@ def _tpl_preview(data, size):
         finally:
             p.end()
     except Exception as e:
-        log_warn("Widgets guardados", f"No se pudo dibujar la vista previa: {e}")
+        log_warn("Modelos", f"No se pudo dibujar la vista previa: {e}")
     if len(_TPL_PREVIEW_CACHE) > 200:
         _TPL_PREVIEW_CACHE.clear()
     _TPL_PREVIEW_CACHE[key] = pm
@@ -10132,7 +10237,7 @@ class SimpleAddDialog(QDialog):
         try:
             names = list(manager.template_files())
         except Exception as e:
-            log_warn("Manager", "No se pudo listar los widgets guardados: %s" % e)
+            log_warn("Manager", "No se pudo listar los modelos: %s" % e)
             names = []
         dflt = manager.default_template_name()
         sel = None
@@ -10186,7 +10291,7 @@ class SimpleAddDialog(QDialog):
             else:
                 self.m.add_new_widget(template_name=name)
         except Exception as e:
-            log_error("Manager", "No se pudo usar el widget guardado %s: %s" % (name, e))
+            log_error("Manager", "No se pudo usar el modelo %s: %s" % (name, e))
         self.accept()
 
 
@@ -10200,7 +10305,7 @@ class TemplateBrowser(QWidget):
         self.m = manager
         self._loading, self._data, self._name, self._f = False, {}, None, {}
         self._target, self.on_done = None, None
-        self.setWindowTitle("Widgets guardados")
+        self.setWindowTitle("Modelos")
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self.resize(940, 620)
         left = QWidget()
@@ -10210,11 +10315,11 @@ class TemplateBrowser(QWidget):
         self.banner.setStyleSheet("background:#3b4f7a;color:white;padding:6px;border-radius:4px;")
         self.banner.hide()
         ll.addWidget(self.banner)
-        self.hint = QLabel("Elige un widget guardado (doble clic = crear el widget):")
+        self.hint = QLabel("Elige un modelo (doble clic = crear el widget):")
         ll.addWidget(self.hint)
         self.chk_keep = QCheckBox("Al aplicarlo a un widget existente, conservar su contenido")       # [PACK71]
         self.chk_keep.setChecked(self.m.keep_content_on_apply())
-        self.chk_keep.setToolTip("Cambiar el widget guardado solo cambia el aspecto: el texto (con su formato) del widget se mantiene.")
+        self.chk_keep.setToolTip("Cambiar el modelo solo cambia el aspecto: el texto (con su formato) del widget se mantiene.")
         self.chk_keep.toggled.connect(lambda on: self.m.set_keep_content_on_apply(on))
         ll.addWidget(self.chk_keep)
         self.list = QListWidget()
@@ -10231,9 +10336,9 @@ class TemplateBrowser(QWidget):
             row.addWidget(b)
             if text.startswith("Editar"):
                 self.btn_edit_base = b
-                b.setToolTip("Abre el editor de forma de papel con la de este widget guardado y lo guarda con el mismo nombre")
+                b.setToolTip("Abre el editor de forma de papel con la de este modelo y lo guarda con el mismo nombre")
         for text, items in (("Gestionar \u25be", (("Renombrar", self._rename), ("Eliminar", self._delete), None,
-                                                              ("Importar...", self._import), ("Exportar...", self._export), ("Exportar todos los widgets guardados...", self._export_all), None,
+                                                              ("Importar...", self._import), ("Exportar...", self._export), ("Exportar todos los modelos...", self._export_all), None,
                                                               ("Criterio de aspectos en uso...", self.m.edit_type_criteria))),
                             ("Con un widget \u25be", (("Guardar un widget de la pantalla...", self._from_widget),
                                                       ("Aplicar a un widget...", self._to_widget)))):
@@ -10255,7 +10360,7 @@ class TemplateBrowser(QWidget):
         self.preview.setMinimumHeight(170)
         self.preview.setStyleSheet("background:#2b2b2f;border-radius:6px;")
         rl.addWidget(self.preview)
-        self.chk_default = QCheckBox("Este widget guardado ser\u00e1 el predeterminado (May\u00fas + doble clic en el icono de bandeja)")
+        self.chk_default = QCheckBox("Este modelo ser\u00e1 el predeterminado (May\u00fas + doble clic en el icono de bandeja)")
         rl.addWidget(self.chk_default)
         self.tabs = QTabWidget()
         self.form_host = QWidget()
@@ -10265,16 +10370,16 @@ class TemplateBrowser(QWidget):
         self.tabs.addTab(self.json_edit, "JSON")
         rl.addWidget(self.tabs, 1)
         brow = QHBoxLayout()
-        self.btn_save = QPushButton("Guardar cambios del widget guardado")
+        self.btn_save = QPushButton("Guardar cambios del modelo")
         self.btn_revert = QPushButton("Descartar cambios")
         brow.addWidget(self.btn_save)
         brow.addWidget(self.btn_revert)
         rl.addLayout(brow)
         xrow = QHBoxLayout()                 # [PACK96] exportar / copiar el JSON del template seleccionado
         self.btn_export_json = QPushButton("Exportar a JSON...")
-        self.btn_export_json.setToolTip("Guarda el widget guardado seleccionado (tal como est\u00e1 guardado) en un archivo .json")
+        self.btn_export_json.setToolTip("Guarda el modelo seleccionado (tal como est\u00e1 guardado) en un archivo .json")
         self.btn_copy_json = QPushButton("Copiar JSON")
-        self.btn_copy_json.setToolTip("Copia al portapapeles el JSON del widget guardado seleccionado (tal como est\u00e1 guardado)")
+        self.btn_copy_json.setToolTip("Copia al portapapeles el JSON del modelo seleccionado (tal como est\u00e1 guardado)")
         xrow.addWidget(self.btn_export_json)
         xrow.addWidget(self.btn_copy_json)
         rl.addLayout(xrow)
@@ -10541,7 +10646,7 @@ class TemplateBrowser(QWidget):
         rest_names = [n for n in order if n not in bn]
         if rest_names:
             if show_hdr:
-                self.list.addItem(self._hdr_item("WIDGETS GUARDADOS  (%d)" % len(rest_names), "#8a8a90"))
+                self.list.addItem(self._hdr_item("MODELOS  (%d)" % len(rest_names), "#8a8a90"))
             add_names(rest_names)
         self.list.blockSignals(False)
         self._loading = False
@@ -10590,7 +10695,7 @@ class TemplateBrowser(QWidget):
         elif self._name != "default.json":
             self.m.set_default_template("default.json")
         else:
-            self.status.setText("default.json es el predeterminado de reserva: marca otro widget guardado para cambiarlo.")
+            self.status.setText("default.json es el predeterminado de reserva: marca otro modelo para cambiarlo.")
         self.reload(self._name)
 
     # ---- acciones -------------------------------------------------------
@@ -10637,14 +10742,14 @@ class TemplateBrowser(QWidget):
         self._target = wid if (wid and wid in self.m.global_state) else None
         if self._target:
             nm = self.m._get_widget_display_name(self._target)
-            self.banner.setText(f"Cambiando el widget guardado de <b>{nm}</b>: elige uno y pulsa Aplicar "
+            self.banner.setText(f"Cambiando el modelo de <b>{nm}</b>: elige uno y pulsa Aplicar "
                                 "(se conservan su posici\u00f3n y su jerarqu\u00eda).")
             self.banner.show()
-            self.hint.setText("Elige el widget guardado (doble clic = aplicar):")
+            self.hint.setText("Elige el modelo (doble clic = aplicar):")
             self.btn_create.setText(f"Aplicar a \u00ab{nm}\u00bb")
         else:
             self.banner.hide()
-            self.hint.setText("Elige un widget guardado (doble clic = crear el widget):")
+            self.hint.setText("Elige un modelo (doble clic = crear el widget):")
             self.btn_create.setText("Crear widget a partir de este")
 
     def hide(self):
@@ -10655,7 +10760,7 @@ class TemplateBrowser(QWidget):
             self.on_done()
 
     def _ask_name(self, title, text=""):
-        name, ok = QInputDialog.getText(self, title, "Nombre del widget guardado:", text=text)
+        name, ok = QInputDialog.getText(self, title, "Nombre del modelo:", text=text)
         n = self.m._tpl_safe_name(name) if ok else None
         if ok and not n:
             self.status.setText("Nombre no v\u00e1lido.")
@@ -10670,7 +10775,7 @@ class TemplateBrowser(QWidget):
         return cand
 
     def _new(self):
-        n = self._ask_name("Nuevo widget guardado")
+        n = self._ask_name("Nuevo modelo")
         if n:
             n = self._unique(n)
             self.m.save_template(n, self.m.get_default_template_data())
@@ -10679,7 +10784,7 @@ class TemplateBrowser(QWidget):
     def _duplicate(self):
         ty = self._cur_type()
         if ty:        # [PACK67] un tipo en uso: se guarda como template
-            n = self._ask_name("Guardar este aspecto como widget guardado", ty['name'])
+            n = self._ask_name("Guardar este aspecto como modelo", ty['name'])
             if n:
                 n = self._unique(n)
                 self.m.save_template(n, self.m._sample_td(self.m.state_for_type(ty)['template_data']))          # [PACK151]
@@ -10697,11 +10802,11 @@ class TemplateBrowser(QWidget):
         if old == "default.json":
             self.status.setText("default.json no se puede renombrar.")
             return
-        n = self._ask_name("Renombrar widget guardado", old[:-5])
+        n = self._ask_name("Renombrar modelo", old[:-5])
         if not n or n == old:
             return
         if os.path.exists(os.path.join(TEMPLATES_DIR, n)):
-            self.status.setText("Ya existe un widget guardado con ese nombre.")
+            self.status.setText("Ya existe un modelo con ese nombre.")
             return
         try:
             os.rename(os.path.join(TEMPLATES_DIR, old), os.path.join(TEMPLATES_DIR, n))
@@ -10722,9 +10827,9 @@ class TemplateBrowser(QWidget):
         if not name:
             return
         if name == "default.json" or name == self.m.default_template_name():
-            self.status.setText("No se puede eliminar el widget guardado predeterminado (marca otro como predeterminado antes).")
+            self.status.setText("No se puede eliminar el modelo predeterminado (marca otro como predeterminado antes).")
             return
-        if QMessageBox.question(self, "Eliminar widget guardado", f"Eliminar '{name}'? Los widgets ya creados no se ven afectados.",
+        if QMessageBox.question(self, "Eliminar modelo", f"Eliminar '{name}'? Los widgets ya creados no se ven afectados.",
                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         try:
@@ -10736,14 +10841,14 @@ class TemplateBrowser(QWidget):
         self.reload()
 
     def _import(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Importar widget guardado", DATA_DIR,
+        path, _ = QFileDialog.getOpenFileName(self, "Importar modelo", DATA_DIR,
                                               "Widgets y formas de papel (*.wawidget *.wapaper *.json);;Todos (*)")
         if not path:
             return
         try:
             _k, d = read_file_any(path)
             if not isinstance(d, dict):
-                raise ValueError("no es un widget guardado (la ra\u00edz debe ser un objeto)")
+                raise ValueError("no es un modelo (la ra\u00edz debe ser un objeto)")
         except Exception as e:
             self.status.setText(f"No se pudo importar: {e}")
             return
@@ -10756,7 +10861,7 @@ class TemplateBrowser(QWidget):
         if not self._data:
             return
         base = wa_stem(self._name or "aspecto_en_uso") + ".wawidget"
-        path, _flt = QFileDialog.getSaveFileName(self, "Exportar widget guardado", os.path.join(DATA_DIR, base), WA_FILTER['widget'])
+        path, _flt = QFileDialog.getSaveFileName(self, "Exportar modelo", os.path.join(DATA_DIR, base), WA_FILTER['widget'])
         if path:
             try:
                 path, n_img, _sk = wa_export_template(path, self._data, 'widget', _flt)          # [PACK130] .wawidget: comprimido, con sus imagenes
@@ -10766,10 +10871,10 @@ class TemplateBrowser(QWidget):
             self.status.setText(f"Exportado a {path}" + (f" (con {n_img} im\u00e1genes)" if n_img else ""))
 
     def _export_all(self):
-        """[PACK151] Todos los widgets guardados a un archivo."""
+        """[PACK151] Todos los modelos a un archivo."""
         p = self.m.export_all_templates(self)
         if p:
-            self.status.setText("Exportados todos los widgets guardados a %s" % p)
+            self.status.setText("Exportados todos los modelos a %s" % p)
 
     def _copy_json(self):
         """[PACK96] Copia al portapapeles el JSON del template seleccionado."""
@@ -10784,7 +10889,7 @@ class TemplateBrowser(QWidget):
         QApplication.clipboard().setText(txt)
         self.status.setText(f"JSON copiado al portapapeles ({len(txt)} caracteres{', %d im\u00e1genes' % n_img if n_img else ''}).")
         try:
-            self.m._osd("JSON del widget guardado copiado")
+            self.m._osd("JSON del modelo copiado")
         except Exception:
             pass
 
@@ -10810,7 +10915,7 @@ class TemplateBrowser(QWidget):
     def _to_widget(self):
         if not self._name:
             return
-        wid = self._pick_widget("Aplicar el widget guardado a un widget")
+        wid = self._pick_widget("Aplicar el modelo a un widget")
         if wid:
             self.m.apply_template_to_widget(wid, self._name)
             self.status.setText(f"'{self._name}' aplicado a {self.m._get_widget_display_name(wid)}.")
@@ -11699,7 +11804,7 @@ class BackupRestoreDialog(QDialog):
             self.lst_prof.addItem(it)
 
         miss = [t for t in d['templates'] if not os.path.exists(os.path.join(TEMPLATES_DIR, t))]
-        self.chk_tpl.setText("Widgets guardados que faltan (%d)" % len(miss))
+        self.chk_tpl.setText("Modelos que faltan (%d)" % len(miss))
         self.chk_tpl.setEnabled(bool(miss))
         self.chk_tpl.setChecked(bool(miss))
         media = d.get('media') or []                      # [PACK125] imagenes que lleva la copia y no estan en esta instalacion
@@ -12374,7 +12479,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 153                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 154                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -12642,7 +12747,7 @@ def _find_stored_file(path, layer_num=2):
     cands = [p if (os.path.isabs(p) or re.match(r'^[A-Za-z]:/', p)) else _resolve_stored(p)]
     fn = os.path.basename(p)
     if fn:
-        cands += [os.path.join(d, fn) for d in (STICKY_DIR, IMAGES_DIR, FRAMES_DIR)]
+        cands += [os.path.join(d, fn) for d in (STICKY_DIR, IMAGES_DIR, FRAMES_DIR, HTML_DIR)]
     for c in cands:
         try:
             c = os.path.normpath(c)
@@ -12927,8 +13032,8 @@ class PacksDialog(QDialog):
         tl = QVBoxLayout()
         t1 = QLabel("Packs de widgets")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        t2 = QLabel("Un pack es un archivo .wapack con widgets guardados y sets de widgets listos para usar. "
-                    "Arrastra aqu\u00ed un .wapack para instalarlo. Al agregar un widget guardado o un set se copia a los tuyos y el pack no se toca.")
+        t2 = QLabel("Un pack es un archivo .wapack con modelos y sets de widgets listos para usar. "
+                    "Arrastra aqu\u00ed un .wapack para instalarlo. Al agregar un modelo o un set se copia a los tuyos y el pack no se toca.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
 
@@ -12957,7 +13062,7 @@ class PacksDialog(QDialog):
         self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.info.setStyleSheet("background:#2b2b2f;border-radius:6px;padding:8px;")
         panel.addWidget(self.info)
-        panel.addWidget(QLabel("Widgets guardados (elige uno o varios)"))
+        panel.addWidget(QLabel("Modelos (elige uno o varios)"))
         self.styles = QListWidget()
         self.styles.setViewMode(QListView.IconMode)
         self.styles.setResizeMode(QListView.Adjust)
@@ -12974,12 +13079,12 @@ class PacksDialog(QDialog):
         panel.addWidget(self.sets, 1)
         row = QHBoxLayout()
         self.b_style, self.b_note, self.b_set, self.b_open, self.b_del = (QPushButton(t) for t in (
-            "Agregar a mis widgets guardados", "Crear una nota con este widget guardado", "Agregar a mis sets", "Abrir el set ahora", "Quitar este pack"))
-        self.b_style.setToolTip("Guarda los widgets guardados elegidos entre los tuyos (los ves en Widgets guardados y en 'Nuevo con un aspecto')")
-        self.b_note.setToolTip("Crea una nota nueva con el primer widget guardado elegido")
+            "Agregar a mis modelos", "Crear una nota con este modelo", "Agregar a mis sets", "Abrir el set ahora", "Quitar este pack"))
+        self.b_style.setToolTip("Guarda los modelos elegidos entre los tuyos (los ves en Modelos y en 'Nuevo con un aspecto')")
+        self.b_note.setToolTip("Crea una nota nueva con el primer modelo elegido")
         self.b_set.setToolTip("Guarda el set elegido en tu lista de sets, sin cambiar los widgets que tienes ahora")
         self.b_open.setToolTip("Lo agrega a tus sets y lo abre; tu set actual se guarda antes")
-        self.b_del.setToolTip("Elimina el archivo del pack. Lo que ya agregaste a tus widgets guardados y sets se queda")
+        self.b_del.setToolTip("Elimina el archivo del pack. Lo que ya agregaste a tus modelos y sets se queda")
         self.b_style.clicked.connect(lambda: self.add_styles(False))
         self.b_note.clicked.connect(lambda: self.add_styles(True))
         self.b_set.clicked.connect(lambda: self.add_set(False))
@@ -13007,7 +13112,7 @@ class PacksDialog(QDialog):
         from PySide6.QtWidgets import QListWidgetItem
         row = 0
         for i, pk in enumerate(self.packs):
-            sub = " \u00b7 ".join(x for x in (pk.author, "v" + pk.version, "%d widgets guardados" % len(pk.styles) + (", %d sets" % len(pk.sets) if pk.sets else "")) if x)
+            sub = " \u00b7 ".join(x for x in (pk.author, "v" + pk.version, "%d modelos" % len(pk.styles) + (", %d sets" % len(pk.sets) if pk.sets else "")) if x)
             it = QListWidgetItem(pk.name + "\n" + sub)
             it.setSizeHint(QSize(250, 48))
             self.nav.addItem(it)
@@ -13100,7 +13205,7 @@ class PacksDialog(QDialog):
                         continue
                 new = pack_install(p)
                 last = new.id
-                self.status.setText("Instalado: \u00ab%s\u00bb v%s (%d widgets guardados, %d sets)." % (new.name, new.version, len(new.styles), len(new.sets)))
+                self.status.setText("Instalado: \u00ab%s\u00bb v%s (%d modelos, %d sets)." % (new.name, new.version, len(new.styles), len(new.sets)))
             except PackError as e:
                 QMessageBox.warning(self, "Instalar pack", "%s\n\n%s" % (os.path.basename(p), e))
             except Exception as e:
@@ -13114,7 +13219,7 @@ class PacksDialog(QDialog):
         pk = self._cur()
         sel = [i.data(Qt.UserRole) for i in self.styles.selectedItems()]
         if pk is None or not sel:
-            self.status.setText("Elige uno o varios widgets guardados.")
+            self.status.setText("Elige uno o varios modelos.")
             return
         names = []
         try:
@@ -13126,11 +13231,11 @@ class PacksDialog(QDialog):
             QMessageBox.warning(self, "Packs de widgets", str(e))
             return
         except Exception as e:
-            log_error("Packs", "No se pudo agregar el widget guardado: %s" % e)
-            QMessageBox.warning(self, "Packs de widgets", "No se pudo agregar el widget guardado:\n%s" % e)
+            log_error("Packs", "No se pudo agregar el modelo: %s" % e)
+            QMessageBox.warning(self, "Packs de widgets", "No se pudo agregar el modelo:\n%s" % e)
             return
 
-        self.status.setText(("Nota creada. " if create_note else "") + "Agregado a tus widgets guardados: " + ", ".join(n[:-5] for n in names))
+        self.status.setText(("Nota creada. " if create_note else "") + "Agregado a tus modelos: " + ", ".join(n[:-5] for n in names))
 
     def add_set(self, open_now):
         pk = self._cur()
@@ -13155,7 +13260,7 @@ class PacksDialog(QDialog):
         pk = self._cur()
         if pk is None:
             return
-        if QMessageBox.question(self, "Quitar pack", "\u00bfQuitar el pack \u00ab%s\u00bb?\n\nLos widgets guardados y sets que ya agregaste a los tuyos "
+        if QMessageBox.question(self, "Quitar pack", "\u00bfQuitar el pack \u00ab%s\u00bb?\n\nLos modelos y sets que ya agregaste a los tuyos "
                                 "se quedan y siguen funcionando." % pk.name) != QMessageBox.Yes:
             return
         try:
@@ -13410,7 +13515,7 @@ _BACKUP_STORED = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.apng')          # 
 
 
 def backup_media_from_texts(texts):
-    """Imagenes que nombran estos textos JSON (set activo, sets, widgets guardados). Devuelve
+    """Imagenes que nombran estos textos JSON (set activo, sets, modelos). Devuelve
     ({'sticky/x.png': ruta_real}, [las que estan fuera de la carpeta de datos], [las que no se encuentran])."""
     found, outside, missing = {}, set(), set()
     seen = set()
@@ -13540,7 +13645,7 @@ def clip_take_images(zpath, objs):
 
 
 def embed_images_b64(td):
-    """[PACK126] Mete en el dict de un widget guardado ('__imagenes__': {'images/x.png': base64}) las imagenes que usa y deja sus rutas portables
+    """[PACK126] Mete en el dict de un modelo ('__imagenes__': {'images/x.png': base64}) las imagenes que usa y deja sus rutas portables
     (se llama sobre una copia). Devuelve (cuantas, [las que no se pudieron incluir])."""
     import base64
     imgs, skipped = tree_collect_images({'x': {'template_data': td}})
@@ -13554,7 +13659,7 @@ def embed_images_b64(td):
 WA_FILE_FORMAT = "widget-arena-file"
 WA_FILE_EXT = {'set': '.waset', 'widget': '.wawidget', 'paper': '.wapaper', 'frame': '.waframe'}
 WA_FILTER = {'set': "Widgets de Widget Arena (*.waset);;JSON antiguo (*.json)",
-             'widget': "Widget guardado (*.wawidget);;JSON antiguo (*.json)",
+             'widget': "Modelo de widget (*.wawidget);;JSON antiguo (*.json)",
              'paper': "Forma de papel (*.wapaper);;JSON antiguo (*.json)",
              'frame': "Marco (*.waframe);;JSON (*.json)"}
 WA_OPEN_FILTER = "Archivos de Widget Arena (*.waset *.wawidget *.wapaper *.waframe);;JSON (*.json);;Todos (*)"
@@ -13614,7 +13719,7 @@ def wa_file_write(path, kind, data, imgs=None):
 
 def wa_file_read(path):
     """(tipo, datos) de un archivo propio. Los datos llevan, como si vinieran del portapapeles, el marcador de imagenes apuntando al propio archivo
-    ('__config__.imagenes_zip' en un set, '__imagenes_zip__' en un widget guardado): al importar se traen sin pisar nada."""
+    ('__config__.imagenes_zip' en un set, '__imagenes_zip__' en un modelo): al importar se traen sin pisar nada."""
     import zipfile
     kind = wa_file_kind(path)
     if kind is None:
@@ -13640,7 +13745,7 @@ def read_file_any(path):
     """(tipo | None, dict) de un archivo para importar: un archivo propio (.waset / .wawidget / .wapaper) o un .json de los de siempre."""
     _k = wa_file_kind(path)
     if _k == 'frame':                                   # [PACK137] un marco no es un widget ni un set
-        raise ValueError("es un marco (.waframe): se abre desde \u00abGenerar marco\u00bb (Mis marcos), el men\u00fa Marco del widget o \u00abCargar un archivo\u00bb")
+        raise ValueError("es un marco (.waframe): se abre desde \u00abCrear un marco\u00bb (Mis marcos), el men\u00fa Marco del widget o \u00abCargar un archivo\u00bb")
     if _k:
         return wa_file_read(path)
     with open(path, 'r', encoding='utf-8') as f:
@@ -13648,7 +13753,7 @@ def read_file_any(path):
 
 
 def wa_export_template(path, td, kind='widget', flt=''):
-    """Guarda un widget guardado o una forma de papel: .wawidget / .wapaper (comprimido, con las imagenes que use) o .json (con ellas en base64).
+    """Guarda un modelo o una forma de papel: .wawidget / .wapaper (comprimido, con las imagenes que use) o .json (con ellas en base64).
     Devuelve (ruta, cuantas imagenes, [las que no se pudieron incluir])."""
     path, as_json = wa_out_path(path, kind, flt)
     td = copy.deepcopy(td)
@@ -13663,7 +13768,7 @@ def wa_export_template(path, td, kind='widget', flt=''):
 
 
 def import_template_images(td):
-    """[PACK126] Inversa: quita de un widget guardado '__imagenes__' / '__imagenes_zip__', deja las imagenes en la carpeta de datos (sin pisar) y reapunta
+    """[PACK126] Inversa: quita de un modelo '__imagenes__' / '__imagenes_zip__', deja las imagenes en la carpeta de datos (sin pisar) y reapunta
     las rutas. Devuelve cuantas imagenes se trajeron."""
     if not isinstance(td, dict):
         return 0
@@ -13788,7 +13893,7 @@ class ImportDataDialog(QDialog):
         lay = QVBoxLayout(self)
         t1 = QLabel("Importar datos de otra instalaci\u00f3n")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        t2 = QLabel("Trae tus widgets, sets, widgets guardados, im\u00e1genes y ajustes de una versi\u00f3n anterior o de otro equipo. Elige la carpeta "
+        t2 = QLabel("Trae tus widgets, sets, modelos, im\u00e1genes y ajustes de una versi\u00f3n anterior o de otro equipo. Elige la carpeta "
                     "\u00abwidget_arena_data\u00bb que usaba esa versi\u00f3n (suele estar junto al programa), la carpeta que la contiene, o una copia completa .zip.\n"
                     "Antes de tocar nada se guarda una copia completa de lo que tienes, y nunca se pisa un archivo que ya exista con otro contenido: "
                     "entra con otro nombre.")
@@ -13889,7 +13994,7 @@ class ImportDataDialog(QDialog):
                 raise ValueError("No existe esa carpeta.")
             root = import_find_root(src)
             if not root:
-                raise ValueError("No encuentro datos de Widget Arena ah\u00ed (busco data/widget_set.json, profiles, widgets guardados, sticky...).")
+                raise ValueError("No encuentro datos de Widget Arena ah\u00ed (busco data/widget_set.json, profiles, modelos, sticky...).")
             if os.path.abspath(root) == os.path.abspath(ROOT_DATA_DIR):
                 raise ValueError("Esa es la carpeta de datos de esta misma instalaci\u00f3n.")
             self.root, self.info = root, import_scan(root)
@@ -13912,7 +14017,7 @@ class ImportDataDialog(QDialog):
         nm = sum(i["media"].values()) if i else 0
         rows = {"notes": ("Mis widgets (%d)" % i["notes"] if i else "Mis widgets", bool(i and i["notes"])),
                 "profiles": ("Sets (%d)" % (len(i["profiles"]) + len(i["resident"])) if i else "Sets", bool(i and (i["profiles"] or i["resident"]))),
-                "templates": ("Widgets guardados (%d)" % len(i["templates"]) if i else "Widgets guardados", bool(i and i["templates"])),
+                "templates": ("Modelos (%d)" % len(i["templates"]) if i else "Modelos", bool(i and i["templates"])),
                 "media": ("Im\u00e1genes, marcos y formas de papel (%d archivos)" % nm if i else "Im\u00e1genes, marcos y formas de papel", nm > 0),
                 "settings": ("Ajustes generales (%d)" % i["settings"] if i else "Ajustes generales", bool(i and i["settings"])),
                 "hotkeys": ("Atajos de teclado", bool(i and i["hotkeys"])),
@@ -14129,7 +14234,7 @@ class FontExportDialog(QDialog):
         root = QVBoxLayout(self)
         t1 = QLabel("\u00bfExportar fuentes?")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        t2 = QLabel("Estas son las fuentes que usan los widgets guardados y sets elegidos. Las que se incluyen van dentro del pack y funcionan en "
+        t2 = QLabel("Estas son las fuentes que usan los modelos y sets elegidos. Las que se incluyen van dentro del pack y funcionan en "
                     "Windows, macOS y Linux. Las dem\u00e1s no se pueden o no hace falta incluirlas: si faltan, se ver\u00e1 una fuente parecida.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
@@ -14374,13 +14479,13 @@ class PackExportDialog(QDialog):
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self.resize(760, 700)
         root = QVBoxLayout(self)
-        intro = QLabel("Crea un archivo .wapack con lo que elijas. Las im\u00e1genes que usan tus widgets guardados y sets se incluyen solas; "
+        intro = QLabel("Crea un archivo .wapack con lo que elijas. Las im\u00e1genes que usan tus modelos y sets se incluyen solas; "
                        "la imagen de las formas de papel no hace falta (se vuelve a dibujar y se pueden seguir editando).")
         intro.setWordWrap(True)
         intro.setStyleSheet("color:#9aa0aa;")
         root.addWidget(intro)
         form = QFormLayout()
-        self.f_name = QLineEdit("Mis widgets guardados")
+        self.f_name = QLineEdit("Mis modelos")
         self.f_author = QLineEdit(os.environ.get('USERNAME') or os.environ.get('USER') or "")
         self.f_ver = QLineEdit("1.0.0")
 
@@ -14394,7 +14499,7 @@ class PackExportDialog(QDialog):
                        ("Descripci\u00f3n", self.f_desc)):
             form.addRow(lab, w)
         root.addLayout(form)
-        root.addWidget(QLabel("Widgets guardados"))
+        root.addWidget(QLabel("Modelos"))
         self.l_styles = QListWidget()
         root.addWidget(self.l_styles, 2)
         dflt = os.path.basename(DEFAULT_TEMPLATE_FILE)
@@ -14432,9 +14537,9 @@ class PackExportDialog(QDialog):
 
         frow = QHBoxLayout()
         bf = QPushButton("Agregar otras fuentes (.ttf / .otf)...")
-        bf.setToolTip("Las fuentes que usan tus widgets guardados se te preguntan al exportar; esto es para agregar alguna m\u00e1s. Solo si su licencia permite redistribuirlas.")
+        bf.setToolTip("Las fuentes que usan tus modelos se te preguntan al exportar; esto es para agregar alguna m\u00e1s. Solo si su licencia permite redistribuirlas.")
         bf.clicked.connect(self._add_fonts)
-        self.l_fonts = QLabel("Al exportar se te preguntar\u00e1 por las fuentes que usan tus widgets guardados.")
+        self.l_fonts = QLabel("Al exportar se te preguntar\u00e1 por las fuentes que usan tus modelos.")
         self.l_fonts.setStyleSheet("color:#9aa0aa;")
         frow.addWidget(bf)
         frow.addWidget(self.l_fonts, 1)
@@ -14492,7 +14597,7 @@ class PackExportDialog(QDialog):
                 sets.append((nm, notes))
 
         if not styles and not sets:
-            QMessageBox.information(self, "Exportar pack", "Marca al menos un widget guardado o un set.")
+            QMessageBox.information(self, "Exportar pack", "Marca al menos un modelo o un set.")
             return
         used = set()
         for _n, _td in styles:
@@ -14518,7 +14623,7 @@ class PackExportDialog(QDialog):
             if fdlg.exec() != QDialog.Accepted:
                 return
             font_files, fscope = fdlg.paths(), fdlg.scope()
-        name = self.f_name.text().strip() or "Mis widgets guardados"
+        name = self.f_name.text().strip() or "Mis modelos"
         path, _ = QFileDialog.getSaveFileName(self, "Guardar el pack", os.path.join(os.path.expanduser("~"), _pack_slug(name) + PACK_EXT),
                                               "Pack de widgets (*%s)" % PACK_EXT)
         if not path:
@@ -14534,7 +14639,7 @@ class PackExportDialog(QDialog):
             QMessageBox.warning(self, "Exportar pack", "No se pudo crear el pack:\n%s" % e)
             return
 
-        txt = "Pack guardado:\n%s\n\n%d widgets guardados, %d sets, %d im\u00e1genes (%.1f MB)." % (path, r['styles'], r['sets'], r['assets'], r['bytes'] / 1048576.0)
+        txt = "Pack guardado:\n%s\n\n%d modelos, %d sets, %d im\u00e1genes (%.1f MB)." % (path, r['styles'], r['sets'], r['assets'], r['bytes'] / 1048576.0)
         if r['missing']:
             txt += "\n\nNo se encontraron estas im\u00e1genes y quedaron sin ellas: " + ", ".join(r['missing'][:8]) + ("..." if len(r['missing']) > 8 else "")
         free = [f for f in r['fonts_used'] if f not in r['font_families']]
@@ -14562,7 +14667,7 @@ class DataHubWindow(QDialog):
         t1 = QLabel("Guardar y cargar")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
         t2 = QLabel("Todo lo que la aplicaci\u00f3n guarda, y d\u00f3nde vive cada cosa. Elige a la izquierda lo que buscas.\n"
-                    "Tambi\u00e9n puedes arrastrar aqu\u00ed cualquier archivo (set, widget guardado, configuraci\u00f3n, pack .wapack o copia .zip) y se detecta solo.")
+                    "Tambi\u00e9n puedes arrastrar aqu\u00ed cualquier archivo (set, modelo, configuraci\u00f3n, pack .wapack o copia .zip) y se detecta solo.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
         tl.addWidget(t1)
@@ -14570,7 +14675,7 @@ class DataHubWindow(QDialog):
         tl.addWidget(t2)
         head.addLayout(tl, 1)
         for text, fn, tip in (("Guardar todo ahora", self._save_all, "Guarda el set activo, la configuraci\u00f3n, el historial y hace una copia completa"),
-                              ("Cargar un archivo...", lambda: self.m.load_anything_dialog(), "Elige un archivo: se detecta si es un set, un widget guardado, una configuraci\u00f3n o una copia")):
+                              ("Cargar un archivo...", lambda: self.m.load_anything_dialog(), "Elige un archivo: se detecta si es un set, un modelo, una configuraci\u00f3n o una copia")):
             b = QPushButton(text)
             b.setToolTip(tip)
             b.setStyleSheet("QPushButton{font-weight:bold;padding:8px 14px;}")
@@ -14592,10 +14697,10 @@ class DataHubWindow(QDialog):
         root.addWidget(self.status)
         self._sections = [
             ("sets", "Mis sets", "Sets de widgets que alternas (Alt+1\u2026)", self._sec_sets),
-            ("templates", "Widgets guardados y formas de papel", "Aspectos guardados y formas de papel editables", self._sec_templates),
+            ("templates", "Modelos y formas de papel", "Tus modelos y las formas de papel editables", self._sec_templates),
             ("config", "Configuraci\u00f3n y atajos", "Ajustes, cables, tonos y teclas", self._sec_config),
             ("files", "Archivos (exportar / importar)", "Para llevar o compartir widgets", self._sec_files),
-            ("packs", "Packs de widgets", "Widgets guardados y sets para compartir o estrenar", self._sec_packs),
+            ("packs", "Packs de widgets", "Modelos y sets para compartir o estrenar", self._sec_packs),
             ("backups", "Copias de seguridad", "Se hacen solas; aqu\u00ed se recuperan", self._sec_backups),
             ("undo", "Deshacer (historial)", "Ctrl+Alt+Z / Ctrl+Alt+Y, tambi\u00e9n entre sesiones", self._sec_undo),
         ]
@@ -14727,17 +14832,17 @@ class DataHubWindow(QDialog):
         m = self.m
         n_all = self._count(TEMPLATES_DIR)
         n_base = len(m.base_note_templates())
-        return ("Un widget guardado es el aspecto de un widget (capas, fondo, tama\u00f1o). Las formas de papel creadas con el editor se guardan tambi\u00e9n como widgets guardados "
+        return ("Un modelo es el aspecto de un widget (capas, fondo, tama\u00f1o). Las formas de papel creadas con el editor se guardan tambi\u00e9n como modelos "
                 "editables, en su propia lista.",
-                TEMPLATES_DIR, ["%d widgets guardados, %d de ellos son formas de papel editables" % (n_all, n_base)],
-                [("Ver, elegir, crear y editar widgets guardados...", lambda: m.show_template_chooser(), "Primero salen los aspectos en uso y las formas de papel", "Ver y editar",
-                  "Abre la lista de widgets guardados (primero los aspectos en uso y las formas de papel) para crear widgets nuevos a partir de ellos, editarlos o duplicarlos."),
+                TEMPLATES_DIR, ["%d modelos, %d de ellos son formas de papel editables" % (n_all, n_base)],
+                [("Ver, elegir, crear y editar modelos...", lambda: m.show_template_chooser(), "Primero salen los aspectos en uso y las formas de papel", "Ver y editar",
+                  "Abre la lista de modelos (primero los aspectos en uso y las formas de papel) para crear widgets nuevos a partir de ellos, editarlos o duplicarlos."),
                  ("Nueva nota && forma de papel...", lambda: m.show_base_note_dialog(), "Puedes guardar el resultado como forma de papel", "Ver y editar",
-                  "Dibuja una nota con el editor de formas de papel; el resultado se puede guardar como forma de papel (un widget guardado editable)."),
-                 ("Guardar un widget existente como widget guardado...", lambda: (m.show_template_chooser(), m.browser.templates._from_widget()), None, "Guardar",
-                  "Guarda el aspecto de uno de los widgets que ves (capas, fondo, tama\u00f1o) como un archivo .json en la carpeta de widgets guardados."),
-                 ("Importar un widget guardado desde un archivo...", lambda: (m.show_template_chooser(), m.browser.templates._import()), None, "Meter en la aplicaci\u00f3n",
-                  "Copia un archivo .json de widget guardado a tu carpeta de widgets guardados (si trae im\u00e1genes dentro, las deja en la carpeta de datos sin pisar nada)."),
+                  "Dibuja una nota con el editor de formas de papel; el resultado se puede guardar como forma de papel (un modelo editable)."),
+                 ("Guardar un widget que ya tienes como modelo...", lambda: (m.show_template_chooser(), m.browser.templates._from_widget()), None, "Guardar",
+                  "Guarda el aspecto de uno de los widgets que ves (capas, fondo, tama\u00f1o) como un archivo .json en la carpeta de modelos."),
+                 ("Importar un modelo desde un archivo...", lambda: (m.show_template_chooser(), m.browser.templates._import()), None, "Meter en la aplicaci\u00f3n",
+                  "Copia un archivo .json de modelo a tu carpeta de modelos (si trae im\u00e1genes dentro, las deja en la carpeta de datos sin pisar nada)."),
                  self._folder(TEMPLATES_DIR)])
 
     def _sec_config(self):
@@ -14761,20 +14866,20 @@ class DataHubWindow(QDialog):
     def _sec_files(self):
         m = self.m
         return ("Para llevar tus widgets a otro PC o compartirlos: se exportan a un archivo .waset (comprimido, con sus im\u00e1genes dentro) y se importan agreg\u00e1ndolos o reemplazando todo. "
-                "Los widgets guardados van en .wawidget, las formas de papel en .wapaper, los marcos en .waframe y varios a la vez en un pack .wapack. Los .json de antes tambi\u00e9n se leen.",
+                "Los modelos van en .wawidget, las formas de papel en .wapaper, los marcos en .waframe y varios a la vez en un pack .wapack. Los .json de antes tambi\u00e9n se leen.",
                 DATA_DIR, ["Archivo de trabajo actual: " + GLOBAL_STATE_FILE],
                 [("Exportar todos los widgets a un archivo...", m.export_state, "Puede incluir la configuraci\u00f3n", "Sacar de la aplicaci\u00f3n",
                   "Crea un archivo .waset con los widgets del set activo y sus im\u00e1genes dentro; puede incluir tambi\u00e9n la configuraci\u00f3n."),
-                 ("Exportar todos mis widgets guardados a un archivo...", m.export_all_templates, "Un solo archivo .wapack", "Sacar de la aplicaci\u00f3n",
-                  "Crea un archivo .wapack con todos tus widgets guardados (con las im\u00e1genes que usan). Se abre con \u00abCargar un archivo\u00bb o en Packs de widgets."),
+                 ("Exportar todos mis modelos a un archivo...", m.export_all_templates, "Un solo archivo .wapack", "Sacar de la aplicaci\u00f3n",
+                  "Crea un archivo .wapack con todos tus modelos (con las im\u00e1genes que usan). Se abre con \u00abCargar un archivo\u00bb o en Packs de widgets."),
                  ("Agregar widgets desde un archivo...", lambda: m.import_state(replace=False), None, "Meter en la aplicaci\u00f3n",
                   "Suma los widgets del archivo a los que ya tienes en el set activo."),
                  ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None, "Meter en la aplicaci\u00f3n",
                   "Elimina los widgets del set activo y pone los del archivo (se puede deshacer)."),
-                 ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Set, widget guardado, configuraci\u00f3n o copia .zip", "Meter en la aplicaci\u00f3n",
-                  "Elige cualquier archivo (.json de widgets, widget guardado o configuraci\u00f3n; .zip de copia; .wapack) y el programa averigua qu\u00e9 es y c\u00f3mo cargarlo."),
-                 ("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", m.show_import_data, "Widgets, sets, widgets guardados, im\u00e1genes y ajustes de una versi\u00f3n anterior", "Meter en la aplicaci\u00f3n",
-                  "Trae widgets, sets, widgets guardados, im\u00e1genes y ajustes desde la carpeta widget_arena_data de otra versi\u00f3n o desde una copia completa .zip."),
+                 ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Set, modelo, configuraci\u00f3n o copia .zip", "Meter en la aplicaci\u00f3n",
+                  "Elige cualquier archivo (.json de widgets, modelo o configuraci\u00f3n; .zip de copia; .wapack) y el programa averigua qu\u00e9 es y c\u00f3mo cargarlo."),
+                 ("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", m.show_import_data, "Widgets, sets, modelos, im\u00e1genes y ajustes de una versi\u00f3n anterior", "Meter en la aplicaci\u00f3n",
+                  "Trae widgets, sets, modelos, im\u00e1genes y ajustes desde la carpeta widget_arena_data de otra versi\u00f3n o desde una copia completa .zip."),
                  ("Buscar las im\u00e1genes que faltan (en otra carpeta)...", m.recover_images_dialog, "Si al cargar una copia vieja alguna nota se queda sin su base o su imagen", "Meter en la aplicaci\u00f3n",
                   "Si tras cargar una copia vieja alguna nota se queda sin su imagen, las busca en la carpeta de datos de otra instalaci\u00f3n."),
                  self._folder(DATA_DIR)])
@@ -14782,15 +14887,15 @@ class DataHubWindow(QDialog):
     def _sec_packs(self):
         m = self.m
         n = len(pack_list())
-        return ("Un pack es un archivo .wapack (un .zip) con widgets guardados y sets de widgets, con las im\u00e1genes que usan, para compartir o para estrenar. "
-                "Aqu\u00ed instalas uno, ves sus widgets guardados con vista previa y los agregas a los tuyos. Tambi\u00e9n puedes crear el tuyo con lo que ya tienes.",
+        return ("Un pack es un archivo .wapack (un .zip) con modelos y sets de widgets, con las im\u00e1genes que usan, para compartir o para estrenar. "
+                "Aqu\u00ed instalas uno, ves sus modelos con vista previa y los agregas a los tuyos. Tambi\u00e9n puedes crear el tuyo con lo que ya tienes.",
                 PACKS_DIR, [("%d pack instalado" if n == 1 else "%d packs instalados") % n, "Tambi\u00e9n puedes arrastrar un .wapack a esta ventana para instalarlo."],
                 [("Abrir los packs de widgets...", lambda: m.show_packs(), "Cat\u00e1logo con vista previa", "Usar",
-                  "Cat\u00e1logo de los packs instalados, con vista previa de sus widgets guardados y sets, para agregarlos a los tuyos."),
+                  "Cat\u00e1logo de los packs instalados, con vista previa de sus modelos y sets, para agregarlos a los tuyos."),
                  ("Instalar un pack desde un archivo...", m.pack_install_dialog, None, "Usar",
                   "A\u00f1ade un archivo .wapack al cat\u00e1logo. No toca tus widgets hasta que uses algo del pack."),
                  ("Exportar mis widgets y sets como pack...", m.pack_export_dialog, "Incluye las im\u00e1genes; la de las formas de papel no hace falta", "Crear",
-                  "Crea un archivo .wapack (un .zip) con los widgets guardados y los sets que elijas, con sus im\u00e1genes (las formas de papel se redibujan solas)."),
+                  "Crea un archivo .wapack (un .zip) con los modelos y los sets que elijas, con sus im\u00e1genes (las formas de papel se redibujan solas)."),
                  self._folder(PACKS_DIR)])
 
     def _sec_backups(self):
@@ -14798,15 +14903,15 @@ class DataHubWindow(QDialog):
         bl = m.list_backups()
         full = [b for b in bl if b['kind'] == 'Completa']
         auto = [b for b in bl if b['kind'] != 'Completa']
-        info = ["%d copias completas (todos los sets y widgets guardados)%s" % (len(full), ("; la \u00faltima: " + full[0]['label'].split('\u00b7')[1].strip()) if full else ""),
+        info = ["%d copias completas (todos los sets y modelos)%s" % (len(full), ("; la \u00faltima: " + full[0]['label'].split('\u00b7')[1].strip()) if full else ""),
                 "%d copias autom\u00e1ticas del set activo%s" % (len(auto), ("; la \u00faltima: " + auto[0]['label'].split('\u00b7')[1].strip()) if auto else "")]
-        return ("Las copias se hacen solas mientras trabajas. Desde aqu\u00ed recuperas el set activo, sets eliminados o widgets guardados. "
+        return ("Las copias se hacen solas mientras trabajas. Desde aqu\u00ed recuperas el set activo, sets eliminados o modelos. "
                 "Antes de restaurar el set activo se guarda una copia de lo actual y se puede deshacer.",
                 FULL_BACKUP_DIR + "   (y " + BACKUP_DIR + ")", info,
                 [("Restaurar una copia de seguridad...", lambda: m.show_backup_restore(), None, "Recuperar",
-                  "Elige una copia (completa .zip o autom\u00e1tica del set activo) y qu\u00e9 traer de ella: el set activo, sets, widgets guardados e im\u00e1genes. No pisa nada sin avisar."),
+                  "Elige una copia (completa .zip o autom\u00e1tica del set activo) y qu\u00e9 traer de ella: el set activo, sets, modelos e im\u00e1genes. No pisa nada sin avisar."),
                  ("Hacer una copia completa ahora", m._full_backup_now, None, "Guardar",
-                  "Crea un .zip en la carpeta de copias completas con el set activo, todos los sets, los widgets guardados, los atajos y las im\u00e1genes que usan."),
+                  "Crea un .zip en la carpeta de copias completas con el set activo, todos los sets, los modelos, los atajos y las im\u00e1genes que usan."),
                  self._folder(FULL_BACKUP_DIR)])
 
     def _sec_undo(self):
@@ -17050,13 +17155,32 @@ def frame_lib_delete(name):
         return False
 
 
+def frame_from_text(text):
+    """[PACK154] Parametros de marco que hay en un texto copiado ({"frame_shape": ...}, el JSON de un widget con marco o los parametros sueltos);
+    None si no hay un marco. Devuelve solo las claves conocidas (sin completar)."""
+    try:
+        obj = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    if isinstance(obj, dict) and isinstance(obj.get('template_data'), dict):
+        obj = obj['template_data']
+    if isinstance(obj, dict) and isinstance(obj.get('frame_shape'), dict):
+        obj = obj['frame_shape']
+    if not isinstance(obj, dict) or sum(1 for k in obj if k in FRAME_DEFAULTS) < 4:
+        return None
+    return {k: v for k, v in obj.items() if k in FRAME_DEFAULTS}
+
+
 class FrameDialog(QDialog):
     """[PACK131] Editor de marcos: grosor de cada lado, color o degradado, bisel, textura y sombras, con una vista previa sobre un paisaje de ejemplo."""
 
-    def __init__(self, manager, parent=None, start=None, editing=False, live=None):
+    def __init__(self, manager, parent=None, start=None, editing=False, live=None, view=None):
         super().__init__(parent)
         from PySide6.QtWidgets import QSpinBox as _SB, QTabWidget, QScrollArea
-        self.setWindowTitle("Editar marco" if editing else "Generar marco")
+        self.setWindowTitle("Editar marco" if editing else "Crear marco")
+        self._editing = bool(editing)
+        self._view = view if isinstance(view, dict) else {}          # [PACK154] lo que hay en la capa 2 del widget: imagen, medida y posicion
+        self.saved_name = None
         self._mgr = manager
         self._live = live                   # [PACK133] funcion(parametros | None, ajustar) que pinta los cambios en el widget real; None = volver a como estaba
         self.p = _fr_clean(start)
@@ -17220,34 +17344,95 @@ class FrameDialog(QDialog):
         f3.addRow("Color de la sombra exterior", color_btn('shadow_color'))
         right = QVBoxLayout()
         root.addLayout(right, 1)
-        self.preview = QLabel()
-        self.preview.setAlignment(Qt.AlignCenter)
-        self.preview.setMinimumSize(340, 340)
+        self.preview = BaseNotePreview()                       # [PACK154] la misma vista previa que la de los papeles: zoom, mover y fondo
         right.addWidget(self.preview, 1)
-        right.addWidget(QLabel("La vista previa muestra el marco sobre un paisaje de ejemplo."))
+        ps = manager.global_state.get('note_preview') if isinstance(getattr(manager, 'global_state', None), dict) else None
+        ps = ps if isinstance(ps, dict) else {}
+        crow = QHBoxLayout()
+        crow.addWidget(QLabel("Contenido del hueco:"))
+        self.cb_cnt = QComboBox()
+        self.cb_cnt.addItems(["Paisaje de ejemplo", "Imagen de este widget", "Sin contenido"])
+        _has_img = self._view.get('img') is not None
+        self.cb_cnt.model().item(1).setEnabled(_has_img)
+        self.cb_cnt.setCurrentIndex(1 if _has_img else 0)
+        self.cb_cnt.setToolTip("Lo que se ve por el hueco en la vista previa. Con \u00abImagen de este widget\u00bb ves tu imagen de verdad, recortada como quedar\u00e1.")
+        self.cb_cnt.currentIndexChanged.connect(lambda _i: self._refresh(live=False))
+        crow.addWidget(self.cb_cnt, 1)
+        right.addLayout(crow)
+        brow = QHBoxLayout()
+        brow.addWidget(QLabel("Fondo:"))
+        self.cb_pbg = QComboBox()
+        self.cb_pbg.addItems(["Gris claro", "Color personalizado", "Fondo de escritorio"])
+        brow.addWidget(self.cb_pbg, 1)
+        self.btn_pbg = QPushButton()
+        self.btn_pbg.setFixedWidth(60)
+        self.btn_pbg.setToolTip("Color del fondo de la vista previa")
+        brow.addWidget(self.btn_pbg)
+        right.addLayout(brow)
+        zrow = QHBoxLayout()
+        self.chk_lock = QCheckBox("Bloquear el zoom")
+        self.chk_lock.setToolTip("Si lo marcas, la vista previa no vuelve sola a la vista completa")
+        zrow.addWidget(self.chk_lock, 1)
+        self.btn_reset_view = QPushButton("Vista completa")
+        self.btn_reset_view.setToolTip("Doble clic en la vista previa hace lo mismo")
+        zrow.addWidget(self.btn_reset_view)
+        right.addLayout(zrow)
+        self.lbl_pbg = QLabel("Rueda: zoom \u00b7 Arrastrar: mover \u00b7 Doble clic: vista completa")
+        self.lbl_pbg.setStyleSheet("color:#888;")
+        self.lbl_pbg.setWordWrap(True)
+        right.addWidget(self.lbl_pbg)
+        self._pbg_color = ps.get('color') if isinstance(ps.get('color'), str) and QColor(ps.get('color')).isValid() else '#e9e9ec'
+        self.chk_lock.setChecked(bool(ps.get('lock', False)))
+        self.preview.set_locked(self.chk_lock.isChecked())
+        self.chk_lock.toggled.connect(lambda on: (self.preview.set_locked(on), self._save_preview_cfg()))
+        self.btn_reset_view.clicked.connect(lambda _c=False: self.preview.reset_view(True))
+        self.cb_pbg.currentIndexChanged.connect(self._pbg_changed)
+        self.btn_pbg.clicked.connect(self._pbg_pick)
+        self.cb_pbg.blockSignals(True)
+        self.cb_pbg.setCurrentIndex(max(0, min(2, int(ps.get('bg', 0) or 0))))
+        self.cb_pbg.blockSignals(False)
+        self._pbg_apply()
         self.chk_fit = QCheckBox("Ajustar la imagen o la p\u00e1gina de la capa 2 al hueco del marco")
         self.chk_fit.setChecked(True)
         right.addWidget(self.chk_fit)
+        self.btn_fitc = QPushButton("Ajustar el marco al contenido")
+        self.btn_fitc.setToolTip("Da al marco el tama\u00f1o justo para que la imagen o la p\u00e1gina de la capa 2 llene el hueco, con el grosor de borde que ten\u00e9is ahora")
+        self.btn_fitc.setEnabled(bool(self._view.get('content')))
+        self.btn_fitc.clicked.connect(lambda _c=False: self._fit_to_content())
+        right.addWidget(self.btn_fitc)
         self.chk_live = QCheckBox("Ver los cambios en el widget real mientras edito")      # [PACK133]
         self.chk_live.setChecked(True)
         self.chk_live.setVisible(live is not None)
         self.chk_live.toggled.connect(self._live_toggled)
-        self.chk_fit.toggled.connect(lambda _on: self._live_schedule())
+        self.chk_fit.toggled.connect(lambda _on: (self._refresh(live=False), self._live_schedule()))
         right.addWidget(self.chk_live)
         self._live_timer = QTimer(self)
         self._live_timer.setSingleShot(True)
         self._live_timer.setInterval(140)
         self._live_timer.timeout.connect(self._live_fire)
 
+        self.chk_lib = QCheckBox("Guardar tambi\u00e9n en Mis marcos:")                  # [PACK154] igual que al crear un papel
+        self.chk_lib.setToolTip("Adem\u00e1s de ponerlo en el widget, lo deja guardado en Mis marcos para usarlo en otros")
+        self.ed_lib = QLineEdit("mi_marco")
+        self.ed_lib.setEnabled(False)
+        self.chk_lib.toggled.connect(self.ed_lib.setEnabled)
+        lrow2 = QHBoxLayout()
+        lrow2.addWidget(self.chk_lib)
+        lrow2.addWidget(self.ed_lib, 1)
+        if editing:
+            self.chk_lib.hide()
+            self.ed_lib.hide()
+        else:
+            right.addLayout(lrow2)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("Aplicar" if editing else "Generar")
+        bb.button(QDialogButtonBox.Ok).setText("Aplicar cambios" if editing else "Crear marco")
         bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         right.addWidget(bb)
         self.chk_same.toggled.connect(self._same_toggled)
         self._building = False
-        self.resize(900, 560)
+        self.resize(1040, 680)
         self._refresh(live=False)
 
     # ---- [PACK137] Mis marcos y .waframe
@@ -17374,37 +17559,103 @@ class FrameDialog(QDialog):
         if hasattr(self, 'sp_rad'):                # [PACK134] con la elipse las esquinas no cuentan
             self.sp_rad.setEnabled(int(self.p['shape']) == 0)
             self.sp_irad.setEnabled(int(self.p['shape']) == 0)
+        if not hasattr(self, 'cb_cnt'):
+            return
         L = _frame_layout(self.p)
         fr = render_frame(self.p)
-        bg = QImage(fr.size(), QImage.Format_ARGB32_Premultiplied)
-        bg.fill(QColor('#e9ecef'))
-        q = QPainter(bg)
-        q.setPen(Qt.NoPen)
-        q.setBrush(QColor('#dde1e6'))
-        cell = 12
-        for yy in range(0, bg.height(), cell):
-            for xx in range(0, bg.width(), cell):
-                if ((xx // cell) + (yy // cell)) % 2:
-                    q.drawRect(xx, yy, cell, cell)
+        img = QImage(fr.size(), QImage.Format_ARGB32_Premultiplied)
+        img.fill(Qt.transparent)
+        q = QPainter(img)
+        q.setRenderHint(QPainter.Antialiasing)
+        q.setRenderHint(QPainter.SmoothPixmapTransform)
         hx, hy, hw, hh = L['hole']
         t = 3
-        q.save()
-        q.setClipPath(_frame_paths(self.p, L)[0])   # [PACK134] la imagen se recorta por la silueta del marco, como en el widget
-        q.drawImage(hx - t, hy - t, _frame_sample_picture(hw + 2 * t, hh + 2 * t))
-        q.restore()
+        mode = int(self.cb_cnt.currentIndex())
+        src = dst = None
+        clip = True
+        if mode == 0:
+            src, dst = _frame_sample_picture(hw + 2 * t, hh + 2 * t), QRect(hx - t, hy - t, hw + 2 * t, hh + 2 * t)
+        elif mode == 1 and self._view.get('img') is not None:
+            src = self._view['img']
+            if self.chk_fit.isChecked():                       # como en el widget: la imagen se estira al hueco y se recorta por la silueta
+                dst = QRect(hx - t, hy - t, hw + 2 * t, hh + 2 * t)
+            else:                                              # sin ajustar, la imagen se queda donde esta respecto al centro del marco
+                rx, ry, rw, rh = self._view.get('rel') or (0, 0, hw, hh)
+                dst = QRect(int(round(fr.width() / 2.0 + rx)), int(round(fr.height() / 2.0 + ry)), max(1, int(round(rw))), max(1, int(round(rh))))
+                clip = False
+        if src is not None:
+            q.save()
+            if clip:
+                q.setClipPath(_frame_paths(self.p, L)[0])      # [PACK134] la imagen se recorta por la silueta del marco, como en el widget
+            q.drawImage(dst, src)
+            q.restore()
         q.drawImage(0, 0, fr)
         q.end()
-
-        pm = QPixmap.fromImage(bg)
-        box = self.preview.size() - QSize(8, 8) if self.preview.width() > 60 else QSize(340, 340)
-        self.preview.setPixmap(pm.scaled(max(100, box.width()), max(100, box.height()), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.preview.set_image(img)
         if live:
             self._live_schedule()
 
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        if hasattr(self, 'preview') and not self._building:
-            self._refresh(live=False)
+    # ---- [PACK154] vista previa: fondo, medida del contenido, guardar en Mis marcos
+    def _save_preview_cfg(self):
+        gs = getattr(self._mgr, 'global_state', None)
+        if isinstance(gs, dict):
+            cur = dict(gs.get('note_preview')) if isinstance(gs.get('note_preview'), dict) else {}
+            cur.update({'bg': int(self.cb_pbg.currentIndex()), 'color': self._pbg_color, 'lock': bool(self.chk_lock.isChecked())})        # misma configuraci\u00f3n que la vista previa de los papeles
+            gs['note_preview'] = cur
+            try:
+                self._mgr.save_global_state(record_history=False)
+            except Exception as e:
+                log_warn("Marco", "No se pudo guardar el ajuste de la vista previa: %s" % e)
+
+    def _pbg_apply(self):
+        k = int(self.cb_pbg.currentIndex())
+        self.btn_pbg.setEnabled(k == 1)
+        self.btn_pbg.setStyleSheet("background:%s;border:1px solid #666;min-height:18px;" % self._pbg_color)
+        pix = None
+        hint = "Rueda: zoom \u00b7 Arrastrar: mover \u00b7 Doble clic: vista completa"
+        if k == 2:
+            pix = _desktop_wallpaper()
+            if pix is None:
+                hint = "No se pudo leer el fondo de escritorio (solo en Windows): se usa el gris claro."
+                k = 0
+        self.lbl_pbg.setText(hint)
+        self.preview.set_background(k, self._pbg_color, pix)
+
+    def _pbg_changed(self, _i):
+        self._pbg_apply()
+        self._save_preview_cfg()
+
+    def _pbg_pick(self):
+        c = QColorDialog.getColor(QColor(self._pbg_color), self, "Color de fondo de la vista previa")
+        if c.isValid():
+            self._pbg_color = c.name()
+            self._pbg_apply()
+            self._save_preview_cfg()
+
+    def _fit_to_content(self):
+        """Pone el marco justo del tama\u00f1o del contenido: ancho = contenido + bordes izquierdo y derecho, alto = contenido + bordes de arriba y abajo."""
+        cw, ch = self._view.get('content') or (0, 0)
+        if cw < 1 or ch < 1:
+            return
+        self._set_many({'w': int(round(cw)) + int(self.p['bl']) + int(self.p['br']), 'h': int(round(ch)) + int(self.p['bt']) + int(self.p['bb'])})
+
+    def accept(self):
+        self.saved_name = None
+        if not self._editing and self.chk_lib.isChecked():
+            name = frame_clean_name(self.ed_lib.text())
+            if not name:
+                QMessageBox.information(self, "Mis marcos", "Escribe un nombre para guardar el marco en Mis marcos (o quita la marca).")
+                return
+            same = os.path.exists(frame_lib_path(name))
+            if same and QMessageBox.question(self, "Mis marcos", "Ya hay un marco llamado \u00ab%s\u00bb. \u00bfReemplazarlo?" % name,
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            try:
+                self.saved_name = frame_lib_save(name, self.p, overwrite=same)
+            except Exception as e:
+                QMessageBox.warning(self, "Mis marcos", "No se pudo guardar el marco:\n%s" % e)
+                return
+        super().accept()
 
     def _live_schedule(self):
         if self._live is not None and not self._building and self.chk_live.isChecked():
@@ -17430,18 +17681,12 @@ class FrameDialog(QDialog):
         QApplication.clipboard().setText(json.dumps({"frame_shape": self.p}, indent=2, ensure_ascii=False))
 
     def _paste(self):
-        try:
-            obj = json.loads(QApplication.clipboard().text())
-        except ValueError:
-            QMessageBox.information(self, "Pegar marco", "El portapapeles no tiene un marco copiado (JSON).")
-            return
-        if isinstance(obj, dict) and isinstance(obj.get('frame_shape'), dict):
-            obj = obj['frame_shape']
-        if not isinstance(obj, dict) or not any(k in obj for k in FRAME_DEFAULTS):
+        obj = frame_from_text(QApplication.clipboard().text())
+        if obj is None:
             QMessageBox.information(self, "Pegar marco", "El portapapeles no tiene un marco copiado (JSON).")
             return
         q = dict(self.p)
-        q.update({k: v for k, v in obj.items() if k in FRAME_DEFAULTS})
+        q.update({k: v for k, v in obj.items() if k not in ('w', 'h')})          # se pega el aspecto; el tama\u00f1o se queda
         self.p = _fr_clean(q)
         self._building = True
         for f in self._sync:
@@ -17856,7 +18101,7 @@ class AboutDialog(QDialog):
                           "color:#d9d5ff;font:500 14px 'Segoe UI';"))
         chip = ("background:rgba(255,255,255,28);border:1px solid rgba(255,255,255,50);border-radius:11px;"
                 "padding:4px 10px;color:#f1eeff;font:600 11px 'Segoe UI';")
-        for row in (("Widgets enlazados", "Corona", "Widgets guardados"), ("Sets al instante", "Atajos globales", "Telegram")):
+        for row in (("Widgets enlazados", "Corona", "Modelos"), ("Sets al instante", "Atajos globales", "Telegram")):
             hl = QHBoxLayout()
             hl.setSpacing(8)
             hl.addStretch(1)
@@ -18820,7 +19065,7 @@ class BaseNoteDialog(QDialog):
         xrow_ = QHBoxLayout()                # [PACK97] copiar / pegar el template o el estilo (JSON) y exportar el template
         xrow_.addWidget(QLabel("JSON:"))
         for txt, fn, tip in (("Copiar widget", self._tpl_copy, "Copia al portapapeles el widget completo de esta nota (JSON): forma, colores, texto e imagen"),
-                             ("Pegar widget", self._tpl_paste, "Aplica aqu\u00ed un widget copiado (tambi\u00e9n vale el JSON copiado en la ventana de widgets guardados), con su texto"),
+                             ("Pegar widget", self._tpl_paste, "Aplica aqu\u00ed un widget copiado (tambi\u00e9n vale el JSON copiado en la ventana de modelos), con su texto"),
                              ("Copiar forma de papel", self._style_copy, "Copia al portapapeles solo la forma de papel (JSON): forma, colores y esquinas, sin el texto"),
                              ("Pegar forma de papel", self._style_paste, "Aplica una forma de papel copiada a esta nota, manteniendo su texto"),
                              ("Exportar...", self._tpl_export, "Guarda esta forma de papel en un archivo .wapaper (comprimido); tambi\u00e9n se puede guardar como .json")):
@@ -19202,7 +19447,7 @@ class BaseNoteDialog(QDialog):
         trow.addWidget(spin('font_size', 6, 120, " pt"))
         tf.addRow("Color y tama\u00f1o del texto", trow)
 
-        self.chk_tpl = QCheckBox("Guardar tambi\u00e9n como widget guardado:")
+        self.chk_tpl = QCheckBox("Guardar tambi\u00e9n como modelo:")
         self.ed_tpl = _LE("nota_base")
         self.ed_tpl.setEnabled(False)
         self.chk_tpl.toggled.connect(self.ed_tpl.setEnabled)
@@ -19335,7 +19580,7 @@ class BaseNoteDialog(QDialog):
     def _paste(self, with_text):
         d = self._clip_params(with_text)
         if not d:
-            self._tell("El portapapeles no contiene un widget guardado (JSON)" if with_text else "El portapapeles no contiene una forma de papel (JSON)", 2800)
+            self._tell("El portapapeles no contiene un widget copiado (JSON)" if with_text else "El portapapeles no contiene una forma de papel (JSON)", 2800)
             return
         new = dict(BASE_NOTE_DEFAULTS)
         new['corners'] = list(new['corners'])
@@ -19344,7 +19589,7 @@ class BaseNoteDialog(QDialog):
         new['text'] = self.p.get('text', new['text'])
         new.update(d)
         self._apply(new)
-        self._tell("Widget guardado pegado" if with_text else "Forma de papel pegada")
+        self._tell("Widget pegado" if with_text else "Forma de papel pegada")
 
     def _tpl_paste(self):
         self._paste(True)
@@ -19358,7 +19603,7 @@ class BaseNoteDialog(QDialog):
     def _tpl_copy(self):
         """[PACK97] Copia el template completo (el mismo JSON que guarda 'Guardar estilo...')."""
         QApplication.clipboard().setText(self._tpl_json())
-        self._tell("Widget guardado copiado (JSON)")
+        self._tell("Widget copiado (JSON)")
 
     def _style_copy(self):
         """[PACK97] Copia solo el estilo: los parametros de la nota base sin el texto."""
@@ -19378,7 +19623,7 @@ class BaseNoteDialog(QDialog):
         except (OSError, TypeError, ValueError) as e:
             QMessageBox.warning(self, "Exportar", "No se pudo exportar:\n%s" % e)
             return
-        self._tell("Widget guardado exportado: " + os.path.basename(path))
+        self._tell("Widget exportado: " + os.path.basename(path))
 
     def _style_delete(self):
         n = self.cb_styles.currentData()
@@ -20410,6 +20655,10 @@ class WidgetManager(QObject):
         base_note_action = QAction("Nueva nota && forma de papel...", self)
         base_note_action.triggered.connect(self.show_base_note_dialog)
         menu.addAction(base_note_action)
+        html_action = QAction("Nuevo widget HTML desde un archivo...", self)          # [PACK154]
+        html_action.setToolTip("Crea un widget cuya capa 2 es una p\u00e1gina HTML tuya (un reloj, un panel...). Se copia a la carpeta html de los datos.")
+        html_action.triggered.connect(lambda _c=False: self.new_html_widget())
+        menu.addAction(html_action)
         browser_action = QAction("Navegador de widgets...", self)
         browser_action.triggered.connect(lambda: self.show_browser())
         menu.addAction(browser_action)
@@ -20661,7 +20910,7 @@ class WidgetManager(QObject):
 
     SORT_MODES = (("created", "Orden de creaci\u00f3n"), ("created_desc", "M\u00e1s nuevos primero"),
                   ("name", "Nombre (A-Z)"), ("enabled", "Visibles primero"),
-                  ("template", "Widget guardado"), ("pos", "Posici\u00f3n en pantalla"))
+                  ("template", "Modelo"), ("pos", "Posici\u00f3n en pantalla"))
 
     def get_sort_mode(self):
         mode = self.global_state.get('widget_sort', 'created')
@@ -20717,7 +20966,7 @@ class WidgetManager(QObject):
             with open(self._tpl_settings_path(), 'w', encoding='utf-8') as f:
                 json.dump({"default": os.path.basename(name)}, f, indent=2)
         except OSError as e:
-            log_warn("Manager", f"No se pudo guardar el widget guardado predeterminado: {e}")
+            log_warn("Manager", f"No se pudo guardar el modelo predeterminado: {e}")
 
     TYPE_CRITERIA_DEFAULT = {'hue': False, 'font': False, 'size': False}
 
@@ -21008,7 +21257,15 @@ class WidgetManager(QObject):
             if isinstance(d, dict):
                 return d
         except Exception as e:
-            log_warn("Manager", f"No se pudo leer el widget guardado {name}: {e}")
+            log_warn("Manager", f"No se pudo leer el modelo {name}: {e}")
+        seen = self.__dict__.setdefault('_tpl_missing_seen', set())
+        if name and os.path.basename(str(name)) != os.path.basename(DEFAULT_TEMPLATE_FILE) and str(name) not in seen:                           # [PACK154] una sola vez por modelo y sesi\u00f3n
+            seen.add(str(name))
+            log_warn("Manager", f"Falta el modelo \u00ab{name}\u00bb: se usa el predeterminado (carpeta {TEMPLATES_DIR})")
+            try:
+                self._osd("No encuentro el modelo \u00ab%s\u00bb: uso el predeterminado" % os.path.splitext(os.path.basename(str(name)))[0], 2600)
+            except Exception:
+                pass
         return self.get_default_template_data()
 
     @staticmethod
@@ -21045,6 +21302,40 @@ class WidgetManager(QObject):
             self.widgets[widget_id].load_template_data(data)
         self.save_global_state()
         self.build_tray_menu()
+
+    def new_html_widget(self, path=None, w=400, h=225):
+        """[PACK154] Crea un widget cuya capa 2 es una pagina HTML local: el archivo se copia a html/ (si no estaba ya) y el widget apunta a esa copia."""
+        import filecmp
+        if not path:
+            path, _f = QFileDialog.getOpenFileName(self.dialog_parent, "Elegir la p\u00e1gina HTML del widget", HTML_DIR,
+                                                   "P\u00e1ginas HTML (*.html *.htm);;Todos (*)")
+        if not path:
+            return None
+        try:
+            os.makedirs(HTML_DIR, exist_ok=True)
+            src = os.path.abspath(path)
+            inside = os.path.normcase(os.path.dirname(src)) == os.path.normcase(os.path.abspath(HTML_DIR))
+            dst = src
+            if not inside:
+                stem, ext = os.path.splitext(os.path.basename(src))
+                dst, n = os.path.join(HTML_DIR, stem + ext), 2
+                while os.path.exists(dst) and not filecmp.cmp(src, dst, shallow=False):
+                    dst = os.path.join(HTML_DIR, "%s_%d%s" % (stem, n, ext))
+                    n += 1
+                if not os.path.exists(dst):
+                    shutil.copy2(src, dst)
+        except OSError as e:
+            QMessageBox.warning(self.dialog_parent, "Widget HTML", "No se pudo copiar la p\u00e1gina:\n%s" % e)
+            return None
+        td = _html_tdata(_store_path(dst), w, h)
+        td['geometry']['x'] += (len(self.widgets) % 10) * 30
+        td['geometry']['y'] += (len(self.widgets) % 10) * 30
+        state = {"enabled": True, "always_on_top": self._default_always_on_top(), "template_name": "",
+                 "custom_name": os.path.splitext(os.path.basename(dst))[0].replace('_', ' '), "template_data": td}
+        wid = self.add_new_widget(state=state)
+        if not inside:
+            self._osd("P\u00e1gina copiada a la carpeta html. Si usa im\u00e1genes o scripts propios, copia tambi\u00e9n esos archivos ah\u00ed.", 5200)
+        return wid
 
     def show_simple_add(self, *_a, apply_to=None):
         """[PACK153] Modo usuario: la galeria unica para anadir un widget, o para cambiar el aspecto del widget apply_to."""
@@ -21899,10 +22190,10 @@ class WidgetManager(QObject):
 
         # ---- Aspecto: template, estilo (nota base), corona y giro del widget
         aspect_menu = QMenu("Aspecto", menu)
-        tpl_menu = QMenu("Widget guardado", aspect_menu)
-        add(tpl_menu, "Cambiar por otro widget guardado...", lambda: self._change_widget_template(widget_id))
-        add(tpl_menu, "Guardar este widget...", lambda: self.save_widget_as_template(widget_id),
-            tip="Lo a\u00f1ade a tus widgets guardados, para crear m\u00e1s widgets iguales")          # [PACK150] nombres: 'guardar' = a tu lista; 'exportar' = a un archivo
+        tpl_menu = QMenu("Modelo", aspect_menu)
+        add(tpl_menu, "Cambiar el modelo de este widget...", lambda: self._change_widget_template(widget_id))
+        add(tpl_menu, "Guardar este widget como modelo...", lambda: self.save_widget_as_template(widget_id),
+            tip="Lo a\u00f1ade a tus modelos, para crear m\u00e1s widgets iguales a este")          # [PACK150] nombres: 'guardar' = a tu lista; 'exportar' = a un archivo
         add(tpl_menu, "Exportar este widget a un archivo...", lambda: self._export_widget_template(widget_id),
             tip="Guarda este widget en un archivo .wawidget (comprimido, con sus im\u00e1genes) para llevarlo a otro equipo o compartirlo")
         tpl_menu.addSeparator()
@@ -21934,17 +22225,21 @@ class WidgetManager(QObject):
         aspect_menu.addMenu(sty_menu)
         fr_menu = QMenu("Marco", aspect_menu)                           # [PACK131]
         fr_menu.setToolTipsVisible(True)
-        add(fr_menu, "Generar marco...", lambda: self.generate_frame(widget_id),
-            tip="Dibuja un marco (un PNG con el centro transparente) como capa 1: grosor de cada lado, color, bisel, textura y sombras")
+        add(fr_menu, "Crear un marco...", lambda: self.generate_frame(widget_id),
+            tip="Dibuja un marco como capa 1 con el tama\u00f1o justo de la imagen o la p\u00e1gina de la capa 2: grosor de cada lado, color, bisel, textura y sombras")
         add(fr_menu, "Editar este marco...", lambda: self.edit_frame(widget_id), enabled=self._is_frame(state),
             tip="Reabre el editor de marcos con los par\u00e1metros de este widget y vuelve a dibujarlo")
         add(fr_menu, "Guardar este marco en Mis marcos...", lambda: self.save_frame_to_lib(widget_id), enabled=self._is_frame(state),
             tip="Guarda los par\u00e1metros de este marco con un nombre para ponerlo en otros widgets")
+        add(fr_menu, "Copiar este marco (json)", lambda: self.copy_frame(widget_id), enabled=self._is_frame(state),
+            tip="Copia el marco de este widget al portapapeles para pegarlo en otro")
+        add(fr_menu, "Pegar un marco copiado (json)", lambda: self.paste_frame(widget_id), enabled=self._clip_frame_params() is not None,
+            tip="Pone en este widget el marco que hayas copiado de otro")
         lib_menu = QMenu("Mis marcos", fr_menu)
         lib_menu.setToolTipsVisible(True)
         _lib = frame_lib_list()
         for _n, _p in _lib:
-            add(lib_menu, _n, lambda _n=_n: self.apply_frame_from_lib(widget_id, _n), tip="Pone este marco en el widget (conserva su tama\u00f1o)")
+            add(lib_menu, _n, lambda _n=_n: self.apply_frame_from_lib(widget_id, _n), tip="Pone este marco en el widget (si ya ten\u00eda marco conserva su tama\u00f1o; si no, lo ajusta al contenido)")
         if not _lib:
             add(lib_menu, "(vac\u00edo: guarda un marco desde el editor)", lambda: None, enabled=False)
         fr_menu.addMenu(lib_menu)
@@ -22358,7 +22653,7 @@ class WidgetManager(QObject):
 
     def _change_widget_template_from_file(self, widget_id):
         parent_widget = self.widgets.get(widget_id) 
-        path, _ = QFileDialog.getOpenFileName(parent_widget, "Seleccionar widget guardado", DATA_DIR,
+        path, _ = QFileDialog.getOpenFileName(parent_widget, "Seleccionar modelo", DATA_DIR,
                                               "Widgets y formas de papel (*.wawidget *.wapaper *.json);;Todos (*)")
         if not path:
             return
@@ -22383,11 +22678,11 @@ class WidgetManager(QObject):
             self.build_tray_menu()
             
         except Exception as e:
-            print(f"ERROR: No se pudo cargar el widget guardado desde {path}: {e}")
-            QMessageBox.critical(parent_widget, "Error de widget guardado", f"No se pudo cargar o leer el archivo JSON:\n{e}")
+            print(f"ERROR: No se pudo cargar el modelo desde {path}: {e}")
+            QMessageBox.critical(parent_widget, "No se pudo cargar el modelo", f"No se pudo cargar o leer el archivo JSON:\n{e}")
 
     def export_all_templates(self, parent=None):
-        """[PACK151] Todos mis widgets guardados en un solo archivo .wapack (con las imagenes que usan; la imagen de las formas de papel
+        """[PACK151] Todos mis modelos en un solo archivo .wapack (con las imagenes que usan; la imagen de las formas de papel
         no va dentro: se vuelve a dibujar). Se abre despues con 'Cargar un archivo' o en Packs de widgets."""
         parent = parent if isinstance(parent, QWidget) else self.dialog_parent
         dflt = os.path.basename(DEFAULT_TEMPLATE_FILE)
@@ -22398,29 +22693,29 @@ class WidgetManager(QObject):
             try:
                 styles.append((n[:-5], self.load_template_by_name(n)))
             except Exception as e:
-                log_warn("Packs", "No se pudo leer el widget guardado %s: %s" % (n, e))
+                log_warn("Packs", "No se pudo leer el modelo %s: %s" % (n, e))
         if not styles:
-            QMessageBox.information(parent, "Exportar widgets guardados", "Todav\u00eda no tienes widgets guardados.")
+            QMessageBox.information(parent, "Exportar modelos", "Todav\u00eda no tienes modelos.")
             return None
-        path, _flt = QFileDialog.getSaveFileName(parent, "Exportar todos mis widgets guardados", os.path.join(DATA_DIR, "mis_widgets_guardados" + PACK_EXT),
+        path, _flt = QFileDialog.getSaveFileName(parent, "Exportar todos mis modelos", os.path.join(DATA_DIR, "mis_modelos" + PACK_EXT),
                                                  "Pack de widgets (*%s)" % PACK_EXT)
 
         if not path:
             return None
         if not path.lower().endswith(PACK_EXT):
             path += PACK_EXT
-        meta = {'name': "Mis widgets guardados", 'author': os.environ.get('USERNAME') or os.environ.get('USER') or "", 'version': "1.0.0",
-                'license': "Uso personal; no redistribuir", 'description': "Todos mis widgets guardados.", 'fonts_scope': 'personal'}
+        meta = {'name': "Mis modelos", 'author': os.environ.get('USERNAME') or os.environ.get('USER') or "", 'version': "1.0.0",
+                'license': "Uso personal; no redistribuir", 'description': "Todos mis modelos.", 'fonts_scope': 'personal'}
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             r = pack_build(path, meta, styles, [], [])
         except Exception as e:
-            log_error("Packs", "No se pudieron exportar los widgets guardados: %s" % e)
-            QMessageBox.warning(parent, "Exportar widgets guardados", "No se pudo crear el archivo:\n%s" % e)
+            log_error("Packs", "No se pudieron exportar los modelos: %s" % e)
+            QMessageBox.warning(parent, "Exportar modelos", "No se pudo crear el archivo:\n%s" % e)
             return None
         finally:
             QApplication.restoreOverrideCursor()
-        txt = "%d widgets guardados exportados a %s%s" % (r['styles'], os.path.basename(path), (" (con %d im\u00e1genes)" % r['assets']) if r['assets'] else "")
+        txt = "%d modelos exportados a %s%s" % (r['styles'], os.path.basename(path), (" (con %d im\u00e1genes)" % r['assets']) if r['assets'] else "")
         if r.get('missing'):
             txt += "; no se encontraron: " + ", ".join(r['missing'][:4])
 
@@ -22429,7 +22724,7 @@ class WidgetManager(QObject):
         return path
 
     def _sample_td(self, td):
-        """[PACK151] Copia de los datos de un widget lista para guardarla como widget guardado: si es una nota, su texto es el estandar
+        """[PACK151] Copia de los datos de un widget lista para guardarla como modelo: si es una nota, su texto es el estandar
         (lorem ipsum, con el formato del texto de ahora); el contenido que tiene el widget no se guarda."""
         td = copy.deepcopy(td)
         l1 = td.get('layer1')
@@ -22444,22 +22739,22 @@ class WidgetManager(QObject):
         template_data = self._sample_td(self.global_state[widget_id]['template_data'])          # [PACK151]
         default_name = wa_stem(self.global_state[widget_id].get('template_name', 'exportado')) + ".wawidget"
 
-        path, _flt = QFileDialog.getSaveFileName(parent_widget, "Exportar widget guardado", os.path.join(DATA_DIR, default_name), WA_FILTER['widget'])
+        path, _flt = QFileDialog.getSaveFileName(parent_widget, "Exportar este widget", os.path.join(DATA_DIR, default_name), WA_FILTER['widget'])
         if not path:
             return
 
         try:
             path, n_img, skipped = wa_export_template(path, template_data, 'widget', _flt)          # [PACK130] .wawidget: comprimido, con sus imagenes
-            print(f"INFO [{widget_id}]: Widget guardado exportado a {path}")
-            self._osd("Widget guardado exportado%s%s" % ((" (con %d im\u00e1genes)" % n_img) if n_img else "",
+            print(f"INFO [{widget_id}]: Widget exportado a {path}")
+            self._osd("Widget exportado%s%s" % ((" (con %d im\u00e1genes)" % n_img) if n_img else "",
                                                        ("; no se pudieron incluir: " + ", ".join(skipped[:4])) if skipped else ""), 2600)
         except Exception as e:
-            print(f"ERROR: No se pudo exportar el widget guardado a {path}: {e}")
+            print(f"ERROR: No se pudo exportar el widget a {path}: {e}")
             QMessageBox.critical(parent_widget, "Error de exportaci\u00f3n", f"No se pudo guardar el archivo JSON:\n{e}")
 
     @staticmethod
     def _clip_bundle_td(td):
-        """[PACK126] Copia de un widget guardado lista para el portapapeles: sus imagenes (las que no redibuja el programa) van en un .zip temporal
+        """[PACK126] Copia de un modelo lista para el portapapeles: sus imagenes (las que no redibuja el programa) van en un .zip temporal
         y el JSON lleva '__imagenes_zip__' con su ruta. Devuelve (dict, cuantas imagenes)."""
         td = copy.deepcopy(td)
         imgs, _sk = tree_collect_images({'x': {'template_data': td}})
@@ -22477,10 +22772,10 @@ class WidgetManager(QObject):
             td, n_img = self._clip_bundle_td(st['template_data'])
             txt = json.dumps(td, indent=2, ensure_ascii=False)
         except (TypeError, ValueError) as e:
-            log_warn("Widget guardado", f"No se pudo copiar el widget guardado de {widget_id}: {e}")
+            log_warn("Modelo", f"No se pudo copiar el widget {widget_id}: {e}")
             return
         QApplication.clipboard().setText(txt)
-        self._osd("JSON del widget guardado copiado" + (" (con %d im\u00e1genes)" % n_img if n_img else ""))
+        self._osd("JSON del widget copiado" + (" (con %d im\u00e1genes)" % n_img if n_img else ""))
 
     @staticmethod
     def _clip_widget_data():
@@ -22564,7 +22859,7 @@ class WidgetManager(QObject):
             td, n_img = self._clip_bundle_td(td)
             txt = json.dumps(td, indent=2, ensure_ascii=False)
         except (TypeError, ValueError) as e:
-            log_warn("Widget guardado", f"No se pudo copiar la forma de papel de {widget_id}: {e}")
+            log_warn("Modelo", f"No se pudo copiar la forma de papel de {widget_id}: {e}")
             return
 
         QApplication.clipboard().setText(txt)
@@ -22579,7 +22874,7 @@ class WidgetManager(QObject):
         if data is None:
             data = self._clip_widget_data()
         if data is None:
-            self._osd("El portapapeles no contiene un widget guardado (JSON)" if with_content else "El portapapeles no contiene una forma de papel (JSON)", 2800)
+            self._osd("El portapapeles no contiene un widget copiado (JSON)" if with_content else "El portapapeles no contiene una forma de papel (JSON)", 2800)
             return False
         old = copy.deepcopy(st['template_data'])
         new = copy.deepcopy(data)
@@ -22624,11 +22919,11 @@ class WidgetManager(QObject):
                     self.widgets[widget_id].load_template_data(old)
             except Exception:
                 pass
-            log_warn("Widget guardado", f"No se pudo pegar en {widget_id}: {e}")
+            log_warn("Modelo", f"No se pudo pegar en {widget_id}: {e}")
             self._osd("No se pudo pegar: %s" % e, 3000)
             return False
 
-        self._osd("Widget guardado pegado" if with_content else "Forma de papel pegada")
+        self._osd("Widget pegado" if with_content else "Forma de papel pegada")
         return True
 
     def _confirm_remove_widget(self, widget_id):
@@ -22918,8 +23213,8 @@ class WidgetManager(QObject):
         QTimer.singleShot(700, lambda: window._set_hierarchy_highlighted(False))
 
     CHILD_KINDS = (("clone", "Clon exacto del padre (contenido y aspecto)"),
-                   ("default", "Widget guardado predeterminado"),
-                   ("template", "Un widget guardado concreto"))
+                   ("default", "Modelo predeterminado"),
+                   ("template", "Un modelo concreto"))
 
     def child_gesture_cfg(self, with_win):
         """[PACK62] Tipo de hija que crea el gesto Ctrl+Alt+Mayus (+Win): (clase, plantilla)."""
@@ -23494,6 +23789,42 @@ class WidgetManager(QObject):
         except Exception:
             return 1.0
 
+    def _frame_view(self, widget_id):
+        """[PACK154] Lo que hay en la capa 2 de un widget (imagen o pagina web), para que el editor de marcos lo muestre y mida:
+        {'img': QImage | None (hasta 800 px), 'content': (ancho, alto) que debe llenar el hueco, 'rel': (x, y, ancho, alto) respecto al centro del marco}.
+        Vacio si la capa 2 no es una imagen ni una web."""
+        st = self.global_state.get(widget_id)
+        td = st.get('template_data') if isinstance(st, dict) else None
+        if not isinstance(td, dict):
+            return {}
+        l1 = td.get('layer1') if isinstance(td.get('layer1'), dict) else {}
+        l2 = td.get('layer2') if isinstance(td.get('layer2'), dict) else {}
+        if l2.get('type') not in ('png', 'web'):
+            return {}
+        try:
+            g2, g1 = l2.get('geometry') or {}, l1.get('geometry') or {}
+            w2, h2 = float(g2.get('w') or 0), float(g2.get('h') or 0)
+            if w2 < 8 or h2 < 8:
+                return {}
+            fr = self._is_frame(st)
+            sc = self._frame_scale(td) if fr else 1.0
+            ov = 6.0 if fr else 0.0                                   # un marco ya puesto mete la capa 2 3 px bajo el borde por cada lado
+            out = {'content': (max(1.0, w2 / sc - ov), max(1.0, h2 / sc - ov)), 'img': None}
+            if g1 and float(g1.get('w') or 0) > 0:
+                c1x, c1y = float(g1.get('x', 0)) + float(g1['w']) / 2.0, float(g1.get('y', 0)) + float(g1.get('h', 0)) / 2.0
+                out['rel'] = ((float(g2.get('x', 0)) - c1x) / sc, (float(g2.get('y', 0)) - c1y) / sc, w2 / sc, h2 / sc)
+            if l2.get('type') == 'png':
+                real = _find_stored_file(str(l2.get('content') or ''), 2)
+                im = QImage(real) if real else QImage()
+                if not im.isNull():
+                    if max(im.width(), im.height()) > 800:
+                        im = im.scaled(800, 800, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    out['img'] = im.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+            return out
+        except Exception as e:
+            log_warn(widget_id, "No se pudo leer la capa 2 para el editor de marcos: %s" % e)
+            return {}
+
     def _frame_start(self, widget_id):
         st = self.global_state.get(widget_id) or {}
         td = st.get('template_data') if isinstance(st.get('template_data'), dict) else {}
@@ -23504,8 +23835,14 @@ class WidgetManager(QObject):
         except Exception:
             start = {}
         start = dict(start) if isinstance(start, dict) else {}
+        v = self._frame_view(widget_id)
+        if v.get('content'):                                               # [PACK154] el marco nuevo mide lo que mide el contenido m\u00e1s sus bordes
+            q = _fr_clean(start)
+            start['w'] = int(round(v['content'][0])) + q['bl'] + q['br']
+            start['h'] = int(round(v['content'][1])) + q['bt'] + q['bb']
+            return start
         g = (td.get('layer1') or {}).get('geometry') or {}
-        if int(g.get('w') or 0) >= 40 and int(g.get('h') or 0) >= 40:        # el marco nuevo mide lo que mide hoy la capa 1
+        if int(g.get('w') or 0) >= 40 and int(g.get('h') or 0) >= 40:        # sin contenido, mide lo que mide hoy la capa 1
             start['w'], start['h'] = int(g['w']), int(g['h'])
         return start
 
@@ -23517,7 +23854,7 @@ class WidgetManager(QObject):
         td = st.get('template_data') or {}
         l1 = td.get('layer1') if isinstance(td.get('layer1'), dict) else {}
         if l1.get('type') == 'text' and re.sub(r'<[^>]+>', '', str(l1.get('content') or '')).strip():
-            r = QMessageBox.question(self.dialog_parent, "Generar marco",
+            r = QMessageBox.question(self.dialog_parent, "Crear marco",
                                      "La capa 1 de este widget es texto (es una nota). Con un marco pasa a ser un marco para una imagen o una p\u00e1gina web y el texto se pierde.\n\n\u00bfContinuar?")
             if r != QMessageBox.Yes:
                 return None
@@ -23625,7 +23962,7 @@ class WidgetManager(QObject):
             self._live_wid = widget_id           # mientras tanto, guardar o cambiar de set no toma la vista previa como estado
             self.preview_frame(widget_id, params, fit)
             state['on'] = True
-        dlg = FrameDialog(self, self.dialog_parent, self._frame_start(widget_id), editing=editing, live=live)
+        dlg = FrameDialog(self, self.dialog_parent, self._frame_start(widget_id), editing=editing, live=live, view=self._frame_view(widget_id))
         try:                                     # el editor a un lado del widget, para que no tape lo que cambia
             g = win.geometry()
             scr = (win.screen() or QApplication.primaryScreen()).availableGeometry()
@@ -23645,6 +23982,8 @@ class WidgetManager(QObject):
         if not ok:
             live(None)
             return None
+        if dlg.saved_name:
+            self._osd("Marco guardado en Mis marcos: " + dlg.saved_name)
         return dlg.get_params(), dlg.chk_fit.isChecked()
 
     # ---- [PACK137] .waframe y Mis marcos desde el menu del widget
@@ -23670,6 +24009,30 @@ class WidgetManager(QObject):
         q['w'], q['h'] = int(s.get('w', q['w'])), int(s.get('h', q['h']))
         self.apply_frame(widget_id, q, fit=True)
         return True
+
+    def copy_frame(self, widget_id):
+        """[PACK154] Copia el marco de este widget al portapapeles (JSON); se pega en otro widget con Pegar un marco."""
+        st = self.global_state.get(widget_id)
+        if not isinstance(st, dict) or not self._is_frame(st):
+            return False
+        QApplication.clipboard().setText(json.dumps({"frame_shape": _fr_clean(st['template_data']['frame_shape'])}, indent=2, ensure_ascii=False))
+        self._osd("Marco copiado")
+        return True
+
+    def _clip_frame_params(self):
+        """Parametros de marco que hay en el portapapeles, o None."""
+        try:
+            return frame_from_text(QApplication.clipboard().text())
+        except Exception:
+            return None
+
+    def paste_frame(self, widget_id):
+        """[PACK154] Pone en este widget el marco copiado (conserva el tama\u00f1o del marco, o ajusta el nuevo al contenido)."""
+        p = self._clip_frame_params()
+        if p is None:
+            QMessageBox.information(self.dialog_parent, "Pegar marco", "El portapapeles no tiene un marco copiado (JSON).")
+            return False
+        return self.apply_frame_params(widget_id, p)
 
     def apply_frame_from_lib(self, widget_id, name):
         try:
@@ -24018,13 +24381,13 @@ class WidgetManager(QObject):
         if not isinstance(st, dict):
             return None
         if name is None:
-            name, ok = QInputDialog.getText(self.dialog_parent, "Guardar widget", "Nombre del widget guardado:",
+            name, ok = QInputDialog.getText(self.dialog_parent, "Guardar como modelo", "Nombre del modelo:",
                                             text=self._get_widget_display_name(widget_id, st))
             if not ok:
                 return None
         n = self._tpl_safe_name(name)
         if not n:
-            self._osd("Nombre de widget guardado no v\u00e1lido")
+            self._osd("Nombre de modelo no v\u00e1lido")
             return None
         cand, i = n, 1
         while os.path.exists(os.path.join(TEMPLATES_DIR, cand)):
@@ -24038,7 +24401,7 @@ class WidgetManager(QObject):
         tb = getattr(self, 'template_browser', None)
         if tb is not None:
             tb.reload()
-        self._osd("Widget guardado: " + cand[:-5])
+        self._osd("Modelo guardado: " + cand[:-5])
         return cand
 
     def _template_for_widget(self, widget_id):
@@ -24156,7 +24519,7 @@ class WidgetManager(QObject):
         bp = d.get('base_note') if isinstance(d, dict) else None
         if not isinstance(bp, dict):
             return
-        dlg = BaseNoteDialog(self, self.dialog_parent, bp, editing=True, view=self._widget_view(d))          # [PACK152] giro y matiz del widget guardado
+        dlg = BaseNoteDialog(self, self.dialog_parent, bp, editing=True, view=self._widget_view(d))          # [PACK152] giro y matiz del modelo
         if dlg.exec():
             self.save_base_note_template(name, dlg.get_params())
 
@@ -24646,7 +25009,7 @@ class WidgetManager(QObject):
         self.build_tray_menu()
         
     def reload_all_widgets(self):
-        log_info("Manager", f"Recargando widgets guardados para {len(self.widgets)} widgets...")
+        log_info("Manager", f"Recargando modelos para {len(self.widgets)} widgets...")
         for widget in self.widgets.values():
             try:
                 widget._force_web_reload = True
@@ -24900,7 +25263,7 @@ class WidgetManager(QObject):
                     with open(p, 'w', encoding='utf-8') as f:
                         f.write(raw)
                     n += 1
-            msg.append("widgets guardados: %d" % n)
+            msg.append("modelos: %d" % n)
 
         if config and (data.get('settings') or data.get('hotkeys')):       # [PACK129] configuracion y atajos de la copia
             try:
@@ -24950,7 +25313,7 @@ class WidgetManager(QObject):
         export_action = QAction("Exportar todos los widgets a un archivo...", self)
         export_action.triggered.connect(self.export_state)
         data_menu.addAction(export_action)
-        export_tpl_action = QAction("Exportar todos mis widgets guardados a un archivo...", self)          # [PACK151]
+        export_tpl_action = QAction("Exportar todos mis modelos a un archivo...", self)          # [PACK151]
         export_tpl_action.triggered.connect(lambda _c=False: self.export_all_templates())
         data_menu.addAction(export_tpl_action)
         restore_cfg_action = QAction("Restaurar configuraci\u00f3n previa...", self)
@@ -25122,7 +25485,7 @@ class WidgetManager(QObject):
                         k += 1
                 self.save_template(dest, raw)
                 done.append(dest)
-            rep.append("Widgets guardados: %d nuevos%s" % (len(done), (", %d ya estaban" % skip) if skip else ""))
+            rep.append("Modelos: %d nuevos%s" % (len(done), (", %d ya estaban" % skip) if skip else ""))
 
         self.build_tray_menu()
         tb = getattr(self, 'template_browser', None)
@@ -25908,7 +26271,7 @@ class WidgetManager(QObject):
                 i += 1
             self.save_template(dest, raw)
             self.show_template_chooser(select=dest)
-            self._osd("Widget guardado cargado: " + dest[:-5])
+            self._osd("Modelo cargado: " + dest[:-5])
             return 'template'
         if kind == 'config':
             if QMessageBox.question(parent, "Cargar configuraci\u00f3n",
@@ -25954,7 +26317,7 @@ class WidgetManager(QObject):
                 self._osd("Set reemplazado (se puede deshacer)")
             return 'set'
 
-        QMessageBox.warning(parent, "Cargar archivo", "No reconozco este archivo: no parece un set, un widget guardado, una configuraci\u00f3n ni una copia.")
+        QMessageBox.warning(parent, "Cargar archivo", "No reconozco este archivo: no parece un set, un modelo, una configuraci\u00f3n ni una copia.")
         return None
 
     def show_backup_restore(self):
@@ -26483,7 +26846,7 @@ class WidgetManager(QObject):
                 for f in sorted(os.listdir(TEMPLATES_DIR)):
                     if f.lower().endswith('.json'):
                         texts.append(self._read_text_quiet(os.path.join(TEMPLATES_DIR, f)))
-            # [PACK125] imagenes que usan el set activo, todos los sets y los widgets guardados (tambien las notas base dibujadas por el programa)
+            # [PACK125] imagenes que usan el set activo, todos los sets y los modelos (tambien las notas base dibujadas por el programa)
             media, outside, missing = backup_media_from_texts([cur] + list(res.values()) + texts)
             skipped, picked, total = [], [], 0
             for arc in sorted(media):
@@ -27037,7 +27400,7 @@ class WidgetManager(QObject):
             with open(DEFAULT_TEMPLATE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(default_data, f, indent=4)
         except Exception as e:
-            print(f"ADVERTENCIA: No se pudo guardar el widget guardado predeterminado en {DEFAULT_TEMPLATE_FILE}. {e}")
+            print(f"ADVERTENCIA: No se pudo guardar el modelo predeterminado en {DEFAULT_TEMPLATE_FILE}. {e}")
             
         return default_data
 

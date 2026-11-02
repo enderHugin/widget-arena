@@ -9,12 +9,14 @@ Funciona en Windows, macOS y Linux, con instalación de un clic.
 ## Qué puedes hacer
 
 - **Notas y widgets flotantes** sobre el escritorio: texto, imágenes y páginas web, cada uno con sus capas, fuente, color, giro y tamaño.
+- **Widgets HTML**: cualquier página `.html` puede ser un widget (viene uno de ejemplo, el *Reloj LED*, entre tus modelos). En modo creativo: *Nuevo widget HTML desde un archivo…* copia la página a `widget_arena_data/html/` y la abre como widget; la página se recorta por la forma del widget (esquinas redondeadas, elipse o la silueta de un marco). Las páginas con imágenes propias deben tener esas imágenes en la misma carpeta `html/`.
+- **Modelos**: el aspecto de un widget guardado para crear más widgets iguales (*Guardar este widget como modelo…*, *Cambiar el modelo de este widget…*). Un pack trae modelos y sets.
 - **Conectar**: enlaza una nota con otra y los dos widgets quedan unidos por un cable, que cuelga como una cuerda con física y se balancea al moverlos.
 - **Jerarquizar**: padres, hijos, nietos… Los hijos pueden seguir al padre cuando lo arrastras, y puedes mover una rama entera.
 - **Plegar y desplegar**: oculta los hijos de una nota (o de todas) para ver solo lo que importa, y recupéralos cuando quieras.
 - **Sets de widgets**: guarda conjuntos completos de widgets y cambia entre ellos al instante con el teclado.
-- **Packs y archivos de widgets**: comparte o estrena widgets en un solo archivo: `.wapack` (varios widgets guardados y sets), `.waset` (un árbol o todos los widgets de un set), `.wawidget` (un widget guardado) `.wapaper` (una forma de papel) y `.waframe` (un marco; el editor de marcos tiene una biblioteca, *Mis marcos*). Todos van comprimidos con sus imágenes.
-- **Configurable a fondo**: cables (grosor, opacidad, degradado, cuerda, calidad de dibujo; nacen del borde del widget y pueden verse como a través de un cristal), formas de papel, marcos rectangulares, redondeados u ovalados, recorte de imágenes, widgets guardados, atajos de teclado y gestos del icono de bandeja.
+- **Packs y archivos de widgets**: comparte o estrena widgets en un solo archivo: `.wapack` (varios modelos y sets), `.waset` (un árbol o todos los widgets de un set), `.wawidget` (un modelo) `.wapaper` (una forma de papel) y `.waframe` (un marco; el editor de marcos tiene una biblioteca, *Mis marcos*). Todos van comprimidos con sus imágenes.
+- **Configurable a fondo**: cables (grosor, opacidad, degradado, cuerda, calidad de dibujo; nacen del borde del widget y pueden verse como a través de un cristal), formas de papel, marcos rectangulares, redondeados u ovalados, recorte de imágenes, modelos, atajos de teclado y gestos del icono de bandeja.
 - **Rápido y ligero**: la calidad de dibujo de los cables se adapta sola al ordenador, y un estudio opcional de unos 3 segundos (al instalar o desde *Cables → Punteados y rendimiento*) recomienda la calidad que va fluida en tu equipo.
 - **Tus datos son tuyos**: todo se guarda en archivos JSON en tu carpeta de usuario, con copias de seguridad.
 
@@ -67,12 +69,12 @@ se vuelve a activar en la ventana de actualizaciones. Es una conexión más a es
 
 Si usabas una versión anterior (o otro equipo), no hace falta copiar nada a mano: **Ajustes → Importar y exportar → Importar datos de otra instalación...**
 Elige la carpeta `widget_arena_data` de la versión anterior (suele estar junto al programa), la carpeta que la contiene, o una copia completa `.zip`, y marca lo que quieras traer:
-widgets (sustituyendo, agregando a los actuales o como set nuevo), sets, widgets guardados, imágenes y marcos, ajustes, atajos de teclado y la conexión con Telegram.
+widgets (sustituyendo, agregando a los actuales o como set nuevo), sets, modelos, imágenes y marcos, ajustes, atajos de teclado y la conexión con Telegram.
 
 - Antes de tocar nada se guarda una copia completa de lo que tenías.
 - Nunca se pisa un archivo que ya exista con otro contenido: el importado entra con otro nombre («... (importado)»).
 - Las rutas de las imágenes se ajustan solas, también las absolutas de otro equipo o de Windows.
-- Una copia completa `.zip` (desde el pack 125) lleva también las imágenes que usan tus sets y widgets guardados (no las de la forma de papel, que el programa redibuja al cargar; sí las de los marcos); desde el pack 131 incluye también las fuentes y los esquemas de atajos y **no incluye el token ni el chat de Telegram** (hay que volver a ponerlos en el equipo nuevo); las copias anteriores solo llevan los `.json`: para traer también sus imágenes usa la carpeta `widget_arena_data`.
+- Una copia completa `.zip` (desde el pack 125) lleva también las imágenes que usan tus sets y modelos (no las de la forma de papel, que el programa redibuja al cargar; sí las de los marcos); desde el pack 131 incluye también las fuentes y los esquemas de atajos y **no incluye el token ni el chat de Telegram** (hay que volver a ponerlos en el equipo nuevo); las copias anteriores solo llevan los `.json`: para traer también sus imágenes usa la carpeta `widget_arena_data`.
 - Si cargas una copia vieja (un `.json`) y alguna nota se queda sin su base o su imagen, el programa avisa de cuáles faltan; *Importar y exportar → Buscar las imágenes que faltan (en otra carpeta)...* las recupera de la carpeta `widget_arena_data` de la versión anterior.
 
 ## Pasar un árbol de widgets a otro set
@@ -80,7 +82,7 @@ widgets (sustituyendo, agregando a los actuales o como set nuevo), sets, widgets
 Clic derecho sobre un widget (en la sección de gestión de widgets, entre *Clonar* y *Eliminar*):
 
 - **Mover árbol a otro set...**: lo saca de este set y lo lleva, con sus enlaces, a otro set que elijas **o a uno nuevo** (con la opción de ir a ese set después). La lista muestra la tecla de cada set (`[1]`…`[0]`, Ctrl / Alt + N) y marca con ● los que están en memoria. Si en el destino ya hay widgets en esas posiciones, se desplaza un poco.
-- **Copiar árbol (json)**: el widget y todos sus descendientes al portapapeles como JSON. Sus imágenes (marcos, fotos; no la forma de papel, que se redibuja sola) van en un `.zip` temporal al que apunta una marca del JSON; al pegar se traen sin pisar nada. Lo mismo vale para copiar un widget guardado o una forma de papel. Si el `.zip` ya no existe (otro equipo), se pega igual y el programa avisa de las imágenes que faltan.
+- **Copiar árbol (json)**: el widget y todos sus descendientes al portapapeles como JSON. Sus imágenes (marcos, fotos; no la forma de papel, que se redibuja sola) van en un `.zip` temporal al que apunta una marca del JSON; al pegar se traen sin pisar nada. Lo mismo vale para copiar un widget o una forma de papel. Si el `.zip` ya no existe (otro equipo), se pega igual y el programa avisa de las imágenes que faltan.
 - **Pegar árbol (json)**: lo agrega al set activo, con ids nuevos, la jerarquía intacta y un pequeño desplazamiento para que no quede encima del original.
 - **Exportar árbol a un archivo...**: un `.json` con las imágenes incluidas (igual que *Exportar este widget a un archivo...* y *Exportar todos los widgets a un archivo...*). Para usarlo en otro set, cámbiate a él y usa *Agregar widgets desde un archivo*.
 
@@ -98,10 +100,10 @@ parecida. Widget Arena trae tres, con licencia SIL Open Font License (están en 
 
 ## Packs de widgets
 
-Un **pack** (`.wapack`, un zip) reúne widgets guardados y sets de widgets ya colocados, con las imágenes que usan, para compartir o estrenar.
-Abre *icono de bandeja → Guardar y cargar → Packs de widgets...* (o arrastra un `.wapack` a la ventana *Guardar y cargar*): ves sus widgets guardados con vista previa y los agregas a los tuyos
+Un **pack** (`.wapack`, un zip) reúne modelos y sets de widgets ya colocados, con las imágenes que usan, para compartir o estrenar.
+Abre *icono de bandeja → Guardar y cargar → Packs de widgets...* (o arrastra un `.wapack` a la ventana *Guardar y cargar*): ves sus modelos con vista previa y los agregas a los tuyos
 o a tus sets. Las notas base no guardan imagen: se vuelven a dibujar y se pueden seguir editando. También puedes **exportar lo que ya tienes**
-(*Exportar mis widgets y sets...*), y tus notas, widgets guardados y sets de siempre se leen sin cambios.
+(*Exportar mis widgets y sets...*), y tus notas, modelos y sets de siempre se leen sin cambios.
 
 Con el primer arranque se instala un pack de ejemplo, **Notas de colores** (8 colores y dos tableros). Descárgalo también desde la página: `dl/notas-de-colores.wapack`.
 El formato está descrito en [docs/FORMATO-WAPACK.md](docs/FORMATO-WAPACK.md); los demás archivos, en [docs/FORMATOS-ARCHIVO.md](docs/FORMATOS-ARCHIVO.md).
