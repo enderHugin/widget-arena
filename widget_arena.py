@@ -5749,7 +5749,7 @@ class StickerWindow(QMainWindow):
             td = self.current_template_data
             l1 = td.get('layer1') or {}
             fp = td.get('frame_shape')
-            if not isinstance(fp, dict) or not os.path.basename(str(l1.get('content') or '').replace('\\', '/')).startswith('marco_'):
+            if not isinstance(fp, dict) or not os.path.basename(str(l1.get('content') or '').replace('\\', '/')).startswith(('marco_', 'vivo_')):          # [PACK156] vivo_ = la vista en vivo del editor
                 return None
             if abs(float(l1.get('rotation') or 0)) % 360 > 0.01:
                 return None
@@ -5792,7 +5792,7 @@ class StickerWindow(QMainWindow):
             return
         self._l2_clip_busy = True
         try:
-            if self.layer2_web.isVisible():
+            if not self.layer2_web.isHidden():            # [PACK156] antes isVisible(): con la ventana aun sin mostrar no se recortaba
                 self._web_clip_apply()
             elif not self.layer2_base_pixmap.isNull():
                 self._on_layer2_rotation_changed(self.layer2_label.property("rotation") or 0)
@@ -8620,7 +8620,7 @@ def _menu_item_look(a, group, titles, tints, key=False):
 
 
 # ---- [PACK145] modo usuario / modo creativo: en modo usuario los menus se reducen a lo esencial (el modo creativo los muestra enteros)
-_UI_T_DROP = ("Nuevo con un aspecto", "Nueva nota", "Mostrar u ocultar la consola")
+_UI_T_DROP = ("Nuevo con un aspecto", "Nueva nota", "Mostrar u ocultar la consola", "Abrir la carpeta de registros")
 _UI_T_SUB = {      # submenus: (lo que se conserva, lo que se quita), por el principio del texto
     "Sets de widgets": (None, ("Duplicar el set", "Guardar el set activo al cambiar", "Precargar", "Importar y exportar", "Eliminar todos")),      # [PACK149] "Elegir los sets de la rotacion" se queda: los gestos de rotacion siguen en modo usuario
     "Ajustes": (("Apariencia", "Atajos de teclado", "Importar y exportar"), None),
@@ -12507,7 +12507,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 155                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 156                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -20106,6 +20106,7 @@ class WidgetManager(QObject):
         
         self.setup_tray_icon()
         self._ensure_data_defaults()
+        self._seed_clock_frame()
         self.load_global_state()
         if not self.global_state:
             self._first_run_default()
@@ -20820,6 +20821,9 @@ class WidgetManager(QObject):
         console_action = QAction("Mostrar u ocultar la consola", self)
         console_action.triggered.connect(self.toggle_console_visibility)
         menu.addAction(console_action)
+        logs_action = QAction("Abrir la carpeta de registros", self)          # [PACK156] d\u00f3nde caen los logs
+        logs_action.triggered.connect(lambda _c=False: self.open_log_folder())
+        menu.addAction(logs_action)
         menu.addSeparator()
         update_action = QAction("Buscar actualizaciones...", self)       # [PACK114]
         update_action.triggered.connect(lambda checked=False: self.show_updates())
@@ -22450,6 +22454,42 @@ class WidgetManager(QObject):
         except Exception as e_im:
             log_warn("Manager", f"No se pudo copiar la imagen a la carpeta de la capa: {e_im}")
             return path
+
+    def _seed_clock_frame(self):
+        """[PACK156] Una sola vez: el modelo \u00abReloj LED\u00bb que dej\u00f3 el Pack 154 (capa 1 de texto, sin marco) pasa a llevar un marco (capa 1 imagen) si
+        sigue como lo dej\u00f3 el programa. Si lo borraste o lo cambiaste t\u00fa, no se toca."""
+        marker = os.path.join(DATA_DIR, ".html_frame_done")
+        if os.path.exists(marker):
+            return
+        try:
+            tp = os.path.join(TEMPLATES_DIR, "Reloj LED.json")
+            if os.path.isfile(tp):
+                with open(tp, 'r', encoding='utf-8') as f:
+                    d = json.load(f)
+                l1, l2 = d.get('layer1') or {}, d.get('layer2') or {}
+                intacto = (not d.get('frame_shape') and l1.get('type') == 'text' and not re.sub(r'<[^>]+>', '', str(l1.get('content') or '')).strip()
+                           and l2.get('type') == 'web' and os.path.basename(str(l2.get('content') or '').replace('\\', '/')) == _WA_HTML_REL)
+                if intacto:
+                    g = l2.get('geometry') or {}
+                    p = _fr_clean({'color': '#1d5457', 'color_a': 85, 'grad': True, 'color2': '#00e5ff', 'color2_a': 30, 'grad_angle': 47,
+                                   'bt': 16, 'br': 16, 'bb': 16, 'bl': 16, 'radius': 14, 'iradius': 8, 'bevel': 12, 'bevel_light': 45, 'bevel_dark': 35,
+                                   'w': int(g.get('w') or 380) + 32, 'h': int(g.get('h') or 165) + 32})
+                    rel = _gen_frame_image(p)
+                    self._frame_fill_td(d, d, p, rel, True)
+                    d['geometry'] = d.get('geometry') or {"x": 100, "y": 100}
+                    with open(tp, 'w', encoding='utf-8') as f:
+                        json.dump(d, f, indent=4, ensure_ascii=False)
+                    log_info("Manager", "El modelo Reloj LED ahora lleva marco")
+            with open(marker, 'w', encoding='utf-8') as f:
+                f.write("ok\n")
+        except Exception as e156:
+            log_warn("Manager", "No se pudo poner el marco al Reloj LED: %s" % e156)
+
+    def open_log_folder(self):
+        """[PACK156] Abre la carpeta donde se guardan los registros (widget_arena_app_debug.log, rendimiento.log, widget_arena_crash.log)."""
+        os.makedirs(LOG_DIR, exist_ok=True)
+        __import__("PySide6.QtGui", fromlist=["QDesktopServices"]).QDesktopServices.openUrl(QUrl.fromLocalFile(LOG_DIR))
+        self._osd("Registros: " + LOG_DIR, 3500)
 
     def _ensure_data_defaults(self):
         """[PACK51] data/ trae siempre un conjunto por defecto (default_set.json) para el primer arranque."""
@@ -27384,53 +27424,70 @@ class WidgetManager(QObject):
             print(f"ERROR: No se pudo exportar los widgets a {path}: {e}")
             QMessageBox.critical(parent_widget, "Error de exportaci\u00f3n", f"No se pudo guardar el archivo:\n{e}")
 
-    def get_default_template_data(self):
+    @staticmethod
+    def _is_legacy_default(d):
+        """[PACK156] True si es la nota de emergencia de versiones anteriores: un cuadrado amarillo con el texto \u00abPost-it\u00bb de la capa 2 debajo del de la capa 1."""
         try:
-            _dp = self.default_template_path()
+            l1, l2 = d['layer1'], d['layer2']
+            return ('Clic derecho para opciones' in str(l1.get('content')) and l2.get('type') == 'text'
+                    and 'Post-it' in str(l2.get('content')) and str(l2.get('background')).lower() == '#fef08a')
+        except Exception:
+            return False
+
+    @staticmethod
+    def _nice_default_note():
+        """[PACK156] La nota normal que trae el programa (\u00abNota doblada\u00bb, papel con la esquina doblada y sin texto), de tus modelos o de defaults/."""
+        dirs = [TEMPLATES_DIR, os.path.join(APP_DIR, "defaults", "templates")]
+        if getattr(sys, '_MEIPASS', None):
+            dirs.append(os.path.join(sys._MEIPASS, "defaults", "templates"))
+        for d in dirs:
+            try:
+                with open(os.path.join(d, "Nota doblada.json"), 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and isinstance(data.get('layer1'), dict) and isinstance(data.get('layer2'), dict):
+                    return data
+            except (OSError, ValueError):
+                pass
+        return None
+
+    def get_default_template_data(self):
+        _dp = self.default_template_path()
+        try:
             if os.path.exists(_dp):
                 with open(_dp, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                if not self._is_legacy_default(data):
+                    return data
+                nice = self._nice_default_note()                 # [PACK156] el predeterminado era la nota antigua de emergencia: se cambia por la normal
+                if nice is not None:
+                    log_info("Manager", "El modelo predeterminado era la nota antigua con textos superpuestos: se sustituye por la nota normal")
+                    try:
+                        with open(_dp, 'w', encoding='utf-8') as f:
+                            json.dump(nice, f, indent=4, ensure_ascii=False)
+                    except OSError as e_w:
+                        log_warn("Manager", "No se pudo guardar el modelo predeterminado nuevo: %s" % e_w)
+                    return copy.deepcopy(nice)
+                return data
         except Exception as e:
-            log_warn("Manager", f"No se pudo leer {DEFAULT_TEMPLATE_FILE}. {e}")
-        
-        default_geom = {"x": 0, "y": 0, "w": 250, "h": 250}
-        
-        default_data = {
-            "geometry": {"x": 100, "y": 100}, 
-            
-            "layer1": {
-                "type": "text", 
-                "content": '<p style="color:#1f2737;" align="center">Clic derecho para opciones<br>Doble clic para ocultar</p>',
-                "background": "transparent",
-                "font_family": font_default(), 
-                "font_size": 14,
-                "color": "#1f2737",
-                "rotation": 0, 
-                "image_effects": {}, 
-                "geometry": default_geom.copy(),
-                "scaled_contents": False
-            },
-            "layer2": {
-                "type": "text", 
-                "content": '<p style="color:#1f2737;" align="center">Post-it</p>', 
-                "background": "#fef08a",
-                "font_family": font_default(), 
-                "font_size": 24,
-                "color": "#1f2737",
-                "rotation": 0, 
-                "image_effects": {}, 
-                "geometry": default_geom.copy(),
-                "scaled_contents": True
-            }
-        }
+            log_warn("Manager", f"No se pudo leer {_dp}. {e}")
+        log_warn("Manager", "No hay modelo predeterminado (%s): se crea el de f\u00e1brica" % _dp)
+        default_data = self._nice_default_note()
+        if default_data is None:
+            default_geom = {"x": 0, "y": 0, "w": 250, "h": 250}
+            default_data = {
+                "geometry": {"x": 100, "y": 100},
+                "layer1": {"type": "text", "content": '<p style="color:#1f2737;" align="center"></p>', "background": "transparent",
+                           "font_family": font_default(), "font_size": 18, "color": "#1f2737", "rotation": 0, "image_effects": {},
+                           "geometry": default_geom.copy(), "scaled_contents": False},
+                "layer2": {"type": "text", "content": "", "background": "#fef08a", "font_family": font_default(), "font_size": 24,
+                           "color": "#1f2737", "rotation": 0, "image_effects": {}, "geometry": default_geom.copy(), "scaled_contents": True}}   # [PACK156] sin texto debajo
         try:
-            os.makedirs(TEMPLATES_DIR, exist_ok=True) 
+            os.makedirs(TEMPLATES_DIR, exist_ok=True)
             with open(DEFAULT_TEMPLATE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(default_data, f, indent=4)
+                json.dump(default_data, f, indent=4, ensure_ascii=False)
         except Exception as e:
             print(f"ADVERTENCIA: No se pudo guardar el modelo predeterminado en {DEFAULT_TEMPLATE_FILE}. {e}")
-            
-        return default_data
+        return copy.deepcopy(default_data)
 
     def force_save_all_states(self):
         log_info("Manager", "La aplicacion esta a punto de salir. Forzando guardado...")
