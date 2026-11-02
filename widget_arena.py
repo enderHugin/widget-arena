@@ -812,6 +812,27 @@ from PySide6.QtWidgets import QSpinBox as _QtSpinBox, QDoubleSpinBox as _QtDoubl
 import PySide6.QtWidgets as _qtw
 
 
+def _wa_is_angle(sp):
+    """[PACK152] Un control de grados: lleva el simbolo \u00b0 y abarca una vuelta entera (o se marco con la propiedad wa_angle)."""
+    try:
+        return bool(sp.property('wa_angle')) or ('\u00b0' in sp.suffix() and (sp.maximum() - sp.minimum()) >= 359)
+    except Exception:
+        return False
+
+
+def _wa_wrap(sp, val):
+    """[PACK152] Lleva un valor a [minimo, maximo] sumando o restando vueltas de 360 (0 = 360): pasar del tope da la vuelta."""
+    lo, hi = sp.minimum(), sp.maximum()
+    for _i in range(8):
+        if val > hi:
+            val -= 360
+        elif val < lo:
+            val += 360
+        else:
+            return val
+    return max(lo, min(hi, val))
+
+
 class _ScrubFilter(QObject):
     PX_PER_STEP = 4.0
 
@@ -851,7 +872,7 @@ class _ScrubFilter(QObject):
             val = self.v0 + int(dy / self.PX_PER_STEP) * self._step(ev.modifiers())
             if isinstance(sp, _QtDoubleSpinBox):
                 val = round(val, sp.decimals())
-            sp.setValue(max(sp.minimum(), min(sp.maximum(), val)))
+            sp.setValue(_wa_wrap(sp, val) if _wa_is_angle(sp) else max(sp.minimum(), min(sp.maximum(), val)))          # [PACK152] los grados dan la vuelta
             return True
         elif t == QEvent.MouseButtonRelease and ev.button() == Qt.LeftButton:
             was, self.y0, self.active = self.active, None, False
@@ -870,16 +891,71 @@ def _install_scrub(spin):
         spin.setToolTip("Arrastra arriba/abajo para cambiar el valor (Ctrl: salto grande, May\u00fas: paso fino) o haz clic para escribirlo")
 
 
+def _wa_angle_text(sp, text):
+    """[PACK152] Numero escrito en un control de grados (sin el sufijo); None si no es un numero."""
+    t = (text or '').replace(sp.suffix(), '').replace(sp.prefix(), '').strip().replace(',', '.')
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def _wa_angle_validate(sp, text):
+    """[PACK152] True si lo escrito puede ser un angulo aunque pase del tope (400 = 40; 360 = 0)."""
+    t = (text or '').replace(sp.suffix(), '').replace(sp.prefix(), '').strip()
+    return re.fullmatch(r'-?\d{0,4}([.,]\d{0,3})?', t) is not None
+
+
 class QSpinBox(_QtSpinBox):
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
         _install_scrub(self)
+
+    def stepBy(self, steps):                  # [PACK152] flechas, rueda y botones: al pasar del tope se da la vuelta
+        if _wa_is_angle(self):
+            self.setValue(int(_wa_wrap(self, self.value() + steps * self.singleStep())))
+        else:
+            super().stepBy(steps)
+
+    def validate(self, text, pos):
+        if _wa_is_angle(self) and _wa_angle_validate(self, text):
+            from PySide6.QtGui import QValidator
+            t = _wa_angle_text(self, text)
+            return (QValidator.State.Acceptable if t is not None else QValidator.State.Intermediate), text, pos
+        return super().validate(text, pos)
+
+    def valueFromText(self, text):
+        if _wa_is_angle(self):
+            t = _wa_angle_text(self, text)
+            if t is not None:
+                return int(_wa_wrap(self, int(round(t))))
+        return super().valueFromText(text)
 
 
 class QDoubleSpinBox(_QtDoubleSpinBox):
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
         _install_scrub(self)
+
+    def stepBy(self, steps):                  # [PACK152]
+        if _wa_is_angle(self):
+            self.setValue(round(_wa_wrap(self, self.value() + steps * self.singleStep()), self.decimals()))
+        else:
+            super().stepBy(steps)
+
+    def validate(self, text, pos):
+        if _wa_is_angle(self) and _wa_angle_validate(self, text):
+            from PySide6.QtGui import QValidator
+            t = _wa_angle_text(self, text)
+            return (QValidator.State.Acceptable if t is not None else QValidator.State.Intermediate), text, pos
+        return super().validate(text, pos)
+
+    def valueFromText(self, text):
+        if _wa_is_angle(self):
+            t = _wa_angle_text(self, text)
+            if t is not None:
+                return round(_wa_wrap(self, t), self.decimals())
+        return super().valueFromText(text)
 
 
 _qtw.QSpinBox, _qtw.QDoubleSpinBox = QSpinBox, QDoubleSpinBox   # los 'import' locales de las funciones tambien las usan
@@ -10187,6 +10263,8 @@ class TemplateBrowser(QWidget):
                     fl.addRow(label + ":", w)
                 elif kind == "int":
                     w = self._spin(-360, 360) if key == "rotation" else self._spin(1, 400)
+                    if key == "rotation":
+                        w.setSuffix(" \u00b0")          # [PACK152] grados: dan la vuelta (0 = 360)
                     fl.addRow(label + ":", w)
                 else:
                     w = QCheckBox(label)
@@ -12207,7 +12285,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 151                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 152                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -18549,6 +18627,41 @@ def _bn_clean(raw, ranges=None):
     return out
 
 
+def _bn_real_image(p, view=None):
+    """[PACK152] Muestra del papel. Con view = {'rot': grados, 'fx': efectos de imagen de la capa 2} se ve como la nota REAL:
+    con su matiz/efectos (el texto no se ti\u00f1e: en la nota real es otra capa) y girada. Sin view es la muestra normal."""
+    rot, fx = 0.0, None
+    if isinstance(view, dict):
+        try:
+            rot = float(view.get('rot', 0) or 0) % 360.0
+        except (TypeError, ValueError):
+            rot = 0.0
+        f = view.get('fx')
+        if isinstance(f, dict) and (any(f.get(k) for k in ('hue', 'saturation', 'brightness', 'contrast')) or f.get('colorize')):
+            fx = dict(f)
+    if fx is None and rot < 0.05:
+        return render_base_note(p, with_text=True)
+    img = render_base_note(p)
+    if fx is not None:
+        try:
+            img = _apply_numpy_effects(img, fx).convertToFormat(QImage.Format_ARGB32_Premultiplied)
+        except Exception as e:
+            log_warn("BaseNote", "No se pudo aplicar el matiz a la muestra: %s" % e)
+    if str(p.get('text', '')).strip():
+        from PySide6.QtCore import QRectF
+        w, h = max(20, int(p['w'])), max(20, int(p['h']))
+        pad = (img.width() - w) // 2
+        q = QPainter(img)
+        q.setRenderHint(QPainter.Antialiasing)
+        q.setPen(QColor(p['text_color']))
+        q.setFont(QFont('Inter', int(p.get('font_size', 22))))
+        q.drawText(QRectF(pad + 10, pad + 10, w - 20, h - 20), Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap, str(p['text']))
+        q.end()
+    if rot >= 0.05:
+        img = img.transformed(QTransform().rotate(rot), Qt.SmoothTransformation)
+    return img
+
+
 class BaseNoteDialog(QDialog):
     """Crea (o edita) una nota con la forma elegida: esquinas, borde, degradado, franja adhesiva, pico doblado,
     sombra y texto, con vista previa en vivo. La nota se genera como imagen PNG (la mascara de la ventana sigue su forma)."""
@@ -18574,9 +18687,10 @@ class BaseNoteDialog(QDialog):
                         'shadow': 8, 'shadow_op': 45, 'shadow_dx': 0, 'shadow_dy': 3, 'corners': [True, True, True, True]}),
     )
 
-    def __init__(self, manager, parent=None, start=None, editing=False, live=None):
+    def __init__(self, manager, parent=None, start=None, editing=False, live=None, view=None):
         super().__init__(parent)
         from PySide6.QtWidgets import QSpinBox as _SB, QLineEdit as _LE, QTabWidget, QScrollArea
+        self._view = dict(view) if isinstance(view, dict) else {}          # [PACK152] giro y efectos (matiz) de la nota real, solo para la muestra
         self._live = live                   # [PACK80] funcion(parametros | None) que pinta los cambios en la nota real
         self.setWindowTitle("Editar forma de papel" if editing else "Nueva nota & forma de papel")
         self.p = dict(BASE_NOTE_DEFAULTS)
@@ -19038,6 +19152,11 @@ class BaseNoteDialog(QDialog):
         self.btn_reset_view.setToolTip("Doble clic en la vista previa hace lo mismo")
         crow_.addWidget(self.btn_reset_view)
         right.addLayout(crow_)
+        self.chk_real = QCheckBox("Previsualizar como en la realidad (giro y matiz)")          # [PACK152]
+        self.chk_real.setChecked(bool(ps.get('real', True)))
+        self.chk_real.toggled.connect(lambda _on: (self._save_preview_cfg(), self._refresh()))
+        right.addWidget(self.chk_real)
+        self._real_info()
         self.lbl_pbg = QLabel("Rueda: zoom \u00b7 Arrastrar: mover \u00b7 Doble clic: vista completa")
         self.lbl_pbg.setStyleSheet("color:#888;")
         self.lbl_pbg.setWordWrap(True)
@@ -19224,10 +19343,31 @@ class BaseNoteDialog(QDialog):
             for w_ in grad:
                 w_.setEnabled(on and bool(self.p.get(gk)))
 
+    def _real_info(self):
+        """[PACK152] Dice que giro y matiz tiene la nota real (la casilla solo tiene efecto si hay alguno)."""
+        v = self._view
+        try:
+            rot = float(v.get('rot', 0) or 0) % 360.0
+        except (TypeError, ValueError):
+            rot = 0.0
+        fx = v.get('fx') if isinstance(v.get('fx'), dict) else {}
+        hue = int(fx.get('hue', 0) or 0) % 360
+        bits = []
+        if rot >= 0.05:
+            bits.append("giro %s\u00b0" % (("%.1f" % rot).rstrip('0').rstrip('.')))
+        if hue:
+            bits.append("matiz %d\u00b0" % hue)
+        if any(fx.get(k) for k in ('saturation', 'brightness', 'contrast')) or fx.get('colorize'):
+            bits.append("otros efectos de color")
+        self.chk_real.setEnabled(bool(bits))
+        self.chk_real.setToolTip(("La muestra se ve como la nota real: " + ", ".join(bits) + ". Se recuerda para todas las vistas previas.") if bits
+                                 else "Esta nota no esta girada ni tiene el matiz cambiado: no hay nada que mostrar distinto. La casilla se recuerda para las vistas previas futuras.")
+
     def _save_preview_cfg(self):
         gs = getattr(self._mgr, 'global_state', None)
         if isinstance(gs, dict):
-            gs['note_preview'] = {'bg': int(self.cb_pbg.currentIndex()), 'color': self._pbg_color, 'lock': bool(self.chk_lock.isChecked())}
+            gs['note_preview'] = {'bg': int(self.cb_pbg.currentIndex()), 'color': self._pbg_color, 'lock': bool(self.chk_lock.isChecked()),
+                                  'real': bool(self.chk_real.isChecked()) if getattr(self, 'chk_real', None) is not None else True}          # [PACK152] la casilla se recuerda en todas las vistas previas
             try:
                 self._mgr.save_global_state(record_history=False)
             except Exception as e:
@@ -19384,7 +19524,7 @@ class BaseNoteDialog(QDialog):
         if self._building:
             return
         self.sp_r.setMaximum(max(1, min(self.sp_w.value(), self.sp_h.value()) // 2))
-        self.preview.set_image(render_base_note(self.p, with_text=True))
+        self.preview.set_image(_bn_real_image(self.p, self._view if self.chk_real.isChecked() else None))          # [PACK152]
         self._live_schedule()
 
     def get_params(self):
@@ -23088,7 +23228,7 @@ class WidgetManager(QObject):
             start = json.loads(self.global_state.get('base_note_settings') or '{}')
         except Exception:
             start = {}
-        dlg = BaseNoteDialog(self, self.dialog_parent, start if isinstance(start, dict) else {})
+        dlg = BaseNoteDialog(self, self.dialog_parent, start if isinstance(start, dict) else {}, view=self._widget_view(st['template_data'], hue=False))          # [PACK152] aqui el matiz se reinicia al aplicar
         dlg.setWindowTitle("Generar forma de papel de este widget (capa 2)")
         try:      # el texto y el template no tienen sentido aqui: se conserva la capa 1 de la nota
             fl = dlg.findChild(QFormLayout)
@@ -23525,6 +23665,17 @@ class WidgetManager(QObject):
             return False
         return isinstance(td.get('base_note'), dict) or os.path.basename(str((td.get('layer2') or {}).get('content', ''))).startswith('nota_base_')
 
+    @staticmethod
+    def _widget_view(td, hue=True):
+        """[PACK152] Giro y efectos de color (matiz...) de la capa 2 de un widget, para previsualizar la forma como se ve en la realidad."""
+        l2 = (td.get('layer2') or {}) if isinstance(td, dict) else {}
+        try:
+            rot = float(l2.get('rotation', 0) or 0) % 360.0
+        except (TypeError, ValueError):
+            rot = 0.0
+        fx = dict(l2.get('image_effects') or {}) if (hue and isinstance(l2.get('image_effects'), dict)) else {}
+        return {'rot': rot, 'fx': fx}
+
     def edit_base_note(self, widget_id):
         """[PACK68] Reabre el dialogo de la nota base con los parametros de ESTA nota y regenera su imagen."""
         st = self.global_state.get(widget_id)
@@ -23549,7 +23700,8 @@ class WidgetManager(QObject):
             self._live_wid = widget_id           # [PACK124] mientras tanto, guardar o cambiar de set no toma la vista previa como estado
             self.preview_base_note(widget_id, params)
             live_state['on'] = True
-        dlg = BaseNoteDialog(self, self.dialog_parent, start if isinstance(start, dict) else {}, editing=True, live=live)
+        dlg = BaseNoteDialog(self, self.dialog_parent, start if isinstance(start, dict) else {}, editing=True, live=live,
+                             view=self._widget_view(st['template_data']))          # [PACK152] la muestra se ve girada y con el matiz de la nota real
         try:
             ok = dlg.exec()
         finally:
@@ -23817,7 +23969,7 @@ class WidgetManager(QObject):
         bp = d.get('base_note') if isinstance(d, dict) else None
         if not isinstance(bp, dict):
             return
-        dlg = BaseNoteDialog(self, self.dialog_parent, bp, editing=True)
+        dlg = BaseNoteDialog(self, self.dialog_parent, bp, editing=True, view=self._widget_view(d))          # [PACK152] giro y matiz del widget guardado
         if dlg.exec():
             self.save_base_note_template(name, dlg.get_params())
 
@@ -26061,6 +26213,7 @@ class WidgetManager(QObject):
         row2.addWidget(QLabel("O grados exactos:"))
         spin = QSpinBox()
         spin.setRange(0, 359)
+        spin.setSuffix("\u00b0")                 # [PACK152]
         b_deg = QPushButton("Agregar")
         row2.addWidget(spin)
         row2.addWidget(b_deg)
