@@ -9810,6 +9810,27 @@ class SetRotationDialog(QDialog):
 
 
 _TPL_PREVIEW_CACHE = {}
+TPL_SAMPLE_TEXT = "Lorem ipsum dolor sit amet, consectetur adipiscing elit."          # [PACK151] texto de las notas en un widget guardado
+
+
+def _tpl_missing_pixmap(size):
+    """[PACK151] Lo que se ve en una vista previa cuando la imagen de una capa no esta y no hay de donde redibujarla."""
+    pm = QPixmap(max(1, size.width()), max(1, size.height()))
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    try:
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor(160, 160, 168, 210), 2, Qt.DashLine))
+        p.setBrush(QColor(128, 128, 136, 40))
+        p.drawRoundedRect(QRectF(pm.rect()).adjusted(2, 2, -2, -2), 8, 8)
+        f = QFont()
+        f.setPixelSize(max(9, min(15, pm.height() // 6)))
+        p.setFont(f)
+        p.setPen(QColor(190, 190, 198))
+        p.drawText(pm.rect().adjusted(6, 4, -6, -4), Qt.AlignCenter | Qt.TextWordWrap, "imagen no encontrada")
+    finally:
+        p.end()
+    return pm
 
 
 def _tpl_layer_pixmap(ld, num, size):
@@ -9818,6 +9839,9 @@ def _tpl_layer_pixmap(ld, num, size):
     kind = ld.get("type", "text" if num == 1 else "png")
     scaled = ld.get("scaled_contents", num == 2)
     if kind == "png":
+        _c151 = str(ld.get("content", "") or "")
+        if _c151 and not _find_stored_file(_c151, num):          # [PACK151] sin archivo: un hueco discreto, nunca el texto rojo de error
+            return _tpl_missing_pixmap(size)
         pm = StickerWindow._load_image(None, str(ld.get("content", "")), 0, f"widget guardado L{num}", num)
         if pm is None or pm.isNull():
             return None
@@ -9868,6 +9892,11 @@ def _tpl_preview(data, size):
     pm = QPixmap(size)
     pm.fill(QColor("#3a3a3e"))
     try:
+        data = copy.deepcopy(data)
+        _ensure_generated_layer(data)          # [PACK151] la imagen de una forma de papel que falta se dibuja de nuevo desde sus parametros
+    except Exception as e151:
+        log_warn("Widgets guardados", "No se pudo reparar la imagen de la vista previa: %s" % e151)
+    try:
         def geom(ld):
             g = ld.get("geometry") or {}
             return float(g.get("x", 0)), float(g.get("y", 0)), max(1, int(g.get("w", 400))), max(1, int(g.get("h", 225)))
@@ -9913,6 +9942,82 @@ def _tpl_preview(data, size):
         _TPL_PREVIEW_CACHE.clear()
     _TPL_PREVIEW_CACHE[key] = pm
     return pm
+# ---- [PACK151] miniaturas en las listas desplegables (Mis formas de papel, Mis marcos)
+_THUMB_SZ = QSize(112, 72)
+_COMBO_THUMB_CACHE = {}
+
+
+def _thumb_key(kind, obj):
+    return kind + ':' + hashlib.md5(json.dumps(obj, sort_keys=True, default=str).encode('utf-8', 'replace')).hexdigest()
+
+
+def _thumb_icon(key, render):
+    """Icono de miniatura (cacheado): render() devuelve un QImage con la pieza; se centra sobre un fondo neutro."""
+    ic = _COMBO_THUMB_CACHE.get(key)
+    if ic is not None:
+        return ic
+    img = render()
+    pm = QPixmap(_THUMB_SZ)
+    pm.fill(QColor('#c4c9d1'))
+    p = QPainter(pm)
+    try:
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        if img is not None and not img.isNull():
+            sc = img.scaled(_THUMB_SZ.width() - 8, _THUMB_SZ.height() - 8, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            p.drawImage((_THUMB_SZ.width() - sc.width()) // 2, (_THUMB_SZ.height() - sc.height()) // 2, sc)
+    finally:
+        p.end()
+    ic = QIcon(pm)
+    if len(_COMBO_THUMB_CACHE) > 400:
+        _COMBO_THUMB_CACHE.clear()
+    _COMBO_THUMB_CACHE[key] = ic
+    return ic
+
+
+def _combo_thumbs(cb, jobs):
+    """[PACK151] Pone una miniatura a cada elemento de la lista. jobs: [(indice, clave, funcion que devuelve el QImage)].
+    Las que ya se dibujaron salen al instante; el resto se dibujan una por turno del bucle de eventos (la ventana no se espera)."""
+    cb.setIconSize(_THUMB_SZ)
+    cb.setMaxVisibleItems(7)
+    token = object()
+    cb._thumb_token = token
+    pend = []
+    blank = QPixmap(_THUMB_SZ)
+    blank.fill(QColor('#c4c9d1'))
+    for i, key, render in jobs:
+        ic = _COMBO_THUMB_CACHE.get(key)
+        if ic is not None:
+            cb.setItemIcon(i, ic)
+        else:
+            cb.setItemIcon(i, QIcon(blank))
+            pend.append((i, key, render))
+
+    def step():
+        try:
+            if getattr(cb, '_thumb_token', None) is not token or not pend:
+                return
+            i, key, render = pend.pop(0)
+            try:
+                ic = _thumb_icon(key, render)
+                if i < cb.count():
+                    cb.setItemIcon(i, ic)
+            except Exception as e:
+                log_warn("Miniaturas", "No se pudo dibujar una miniatura: %s" % e)
+            QTimer.singleShot(0, step)
+        except RuntimeError:
+            pass                                   # la lista ya se cerro
+    if pend:
+        QTimer.singleShot(0, step)
+
+
+def _bn_thumb_image(bp):
+    d = dict(BASE_NOTE_DEFAULTS)
+    d['corners'] = list(d['corners'])
+    d.update(_bn_clean(bp))
+    d['text'] = ''
+    return render_base_note(d)
+
+
 _TPL_LAYER_FIELDS = (
     ("type", "Tipo", "type"), ("content", "Contenido (texto HTML, ruta de imagen o URL)", "text"),
     ("background", "Fondo", "color"), ("font_family", "Fuente", "font"), ("font_size", "Tama\u00f1o de letra", "int"),
@@ -9963,7 +10068,7 @@ class TemplateBrowser(QWidget):
                 self.btn_edit_base = b
                 b.setToolTip("Abre el editor de forma de papel con la de este widget guardado y lo guarda con el mismo nombre")
         for text, items in (("Gestionar \u25be", (("Renombrar", self._rename), ("Eliminar", self._delete), None,
-                                                              ("Importar...", self._import), ("Exportar...", self._export), None,
+                                                              ("Importar...", self._import), ("Exportar...", self._export), ("Exportar todos los widgets guardados...", self._export_all), None,
                                                               ("Criterio de aspectos en uso...", self.m.edit_type_criteria))),
                             ("Con un widget \u25be", (("Guardar un widget de la pantalla...", self._from_widget),
                                                       ("Aplicar a un widget...", self._to_widget)))):
@@ -10410,7 +10515,7 @@ class TemplateBrowser(QWidget):
             n = self._ask_name("Guardar este aspecto como widget guardado", ty['name'])
             if n:
                 n = self._unique(n)
-                self.m.save_template(n, self.m.state_for_type(ty)['template_data'])
+                self.m.save_template(n, self.m._sample_td(self.m.state_for_type(ty)['template_data']))          # [PACK151]
                 self.reload(n)
             return
         if self._name:
@@ -10493,6 +10598,12 @@ class TemplateBrowser(QWidget):
                 return
             self.status.setText(f"Exportado a {path}" + (f" (con {n_img} im\u00e1genes)" if n_img else ""))
 
+    def _export_all(self):
+        """[PACK151] Todos los widgets guardados a un archivo."""
+        p = self.m.export_all_templates(self)
+        if p:
+            self.status.setText("Exportados todos los widgets guardados a %s" % p)
+
     def _copy_json(self):
         """[PACK96] Copia al portapapeles el JSON del template seleccionado."""
         if not self._data:
@@ -10526,7 +10637,7 @@ class TemplateBrowser(QWidget):
         n = self._ask_name("Guardar widget", self.m._get_widget_display_name(wid))
         if n:
             n = n if not os.path.exists(os.path.join(TEMPLATES_DIR, n)) else self._unique(n)
-            self.m.save_template(n, copy.deepcopy(self.m.global_state[wid].get('template_data', {})))
+            self.m.save_template(n, self.m._sample_td(self.m.global_state[wid].get('template_data', {})))          # [PACK151]
             self.reload(n)
 
     def _to_widget(self):
@@ -12096,7 +12207,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 150                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 151                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -14487,6 +14598,8 @@ class DataHubWindow(QDialog):
                 DATA_DIR, ["Archivo de trabajo actual: " + GLOBAL_STATE_FILE],
                 [("Exportar todos los widgets a un archivo...", m.export_state, "Puede incluir la configuraci\u00f3n", "Sacar de la aplicaci\u00f3n",
                   "Crea un archivo .waset con los widgets del set activo y sus im\u00e1genes dentro; puede incluir tambi\u00e9n la configuraci\u00f3n."),
+                 ("Exportar todos mis widgets guardados a un archivo...", m.export_all_templates, "Un solo archivo .wapack", "Sacar de la aplicaci\u00f3n",
+                  "Crea un archivo .wapack con todos tus widgets guardados (con las im\u00e1genes que usan). Se abre con \u00abCargar un archivo\u00bb o en Packs de widgets."),
                  ("Agregar widgets desde un archivo...", lambda: m.import_state(replace=False), None, "Meter en la aplicaci\u00f3n",
                   "Suma los widgets del archivo a los que ya tienes en el set activo."),
                  ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None, "Meter en la aplicaci\u00f3n",
@@ -16975,8 +17088,15 @@ class FrameDialog(QDialog):
         self.cb_lib.blockSignals(True)
         self.cb_lib.clear()
         self.cb_lib.addItem("(elige uno)" if frame_lib_list() else "(vac\u00edo: guarda uno)", None)
+        _jobs = []
         for n, _p in frame_lib_list():
             self.cb_lib.addItem(n, n)
+            try:
+                _fp = frame_lib_get(n)
+                _jobs.append((self.cb_lib.count() - 1, _thumb_key('fr', _fr_clean(_fp)), lambda _fp=_fp: render_frame(_fp)))      # [PACK151]
+            except Exception as e151:
+                log_warn("Miniaturas", "No se pudo leer el marco %s: %s" % (n, e151))
+        _combo_thumbs(self.cb_lib, _jobs)
         i = self.cb_lib.findData(select) if select else 0
         self.cb_lib.setCurrentIndex(max(0, i))
         self.cb_lib.blockSignals(False)
@@ -18954,11 +19074,14 @@ class BaseNoteDialog(QDialog):
         self.cb_styles.clear()
         bn = self._mgr.base_note_templates()
         self.cb_styles.addItem("(elige una forma de papel guardada...)" if bn else "(a\u00fan no hay formas de papel: usa \u00abGuardar forma de papel...\u00bb)", None)
+        jobs = []
         for n, bp in bn:
             self.cb_styles.addItem(n[:-5], n)
+            jobs.append((self.cb_styles.count() - 1, _thumb_key('bn', bp), lambda bp=bp: _bn_thumb_image(bp)))      # [PACK151]
         i = self.cb_styles.findData(cur) if cur else 0
         self.cb_styles.setCurrentIndex(max(i, 0))
         self.cb_styles.blockSignals(False)
+        _combo_thumbs(self.cb_styles, jobs)
 
     def _style_load(self):
         n = self.cb_styles.currentData()
@@ -21936,9 +22059,62 @@ class WidgetManager(QObject):
             print(f"ERROR: No se pudo cargar el widget guardado desde {path}: {e}")
             QMessageBox.critical(parent_widget, "Error de widget guardado", f"No se pudo cargar o leer el archivo JSON:\n{e}")
 
+    def export_all_templates(self, parent=None):
+        """[PACK151] Todos mis widgets guardados en un solo archivo .wapack (con las imagenes que usan; la imagen de las formas de papel
+        no va dentro: se vuelve a dibujar). Se abre despues con 'Cargar un archivo' o en Packs de widgets."""
+        parent = parent if isinstance(parent, QWidget) else self.dialog_parent
+        dflt = os.path.basename(DEFAULT_TEMPLATE_FILE)
+        styles = []
+        for n in self.template_files():
+            if n == dflt:
+                continue
+            try:
+                styles.append((n[:-5], self.load_template_by_name(n)))
+            except Exception as e:
+                log_warn("Packs", "No se pudo leer el widget guardado %s: %s" % (n, e))
+        if not styles:
+            QMessageBox.information(parent, "Exportar widgets guardados", "Todav\u00eda no tienes widgets guardados.")
+            return None
+        path, _flt = QFileDialog.getSaveFileName(parent, "Exportar todos mis widgets guardados", os.path.join(DATA_DIR, "mis_widgets_guardados" + PACK_EXT),
+                                                 "Pack de widgets (*%s)" % PACK_EXT)
+
+        if not path:
+            return None
+        if not path.lower().endswith(PACK_EXT):
+            path += PACK_EXT
+        meta = {'name': "Mis widgets guardados", 'author': os.environ.get('USERNAME') or os.environ.get('USER') or "", 'version': "1.0.0",
+                'license': "Uso personal; no redistribuir", 'description': "Todos mis widgets guardados.", 'fonts_scope': 'personal'}
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            r = pack_build(path, meta, styles, [], [])
+        except Exception as e:
+            log_error("Packs", "No se pudieron exportar los widgets guardados: %s" % e)
+            QMessageBox.warning(parent, "Exportar widgets guardados", "No se pudo crear el archivo:\n%s" % e)
+            return None
+        finally:
+            QApplication.restoreOverrideCursor()
+        txt = "%d widgets guardados exportados a %s%s" % (r['styles'], os.path.basename(path), (" (con %d im\u00e1genes)" % r['assets']) if r['assets'] else "")
+        if r.get('missing'):
+            txt += "; no se encontraron: " + ", ".join(r['missing'][:4])
+
+        self._osd(txt, 3200)
+        log_info("Packs", txt)
+        return path
+
+    def _sample_td(self, td):
+        """[PACK151] Copia de los datos de un widget lista para guardarla como widget guardado: si es una nota, su texto es el estandar
+        (lorem ipsum, con el formato del texto de ahora); el contenido que tiene el widget no se guarda."""
+        td = copy.deepcopy(td)
+        l1 = td.get('layer1')
+        if isinstance(l1, dict) and l1.get('type') == 'text':
+            l1['content'] = self._blank_keep_format(l1.get('content'), TPL_SAMPLE_TEXT) or TPL_SAMPLE_TEXT
+        if isinstance(td.get('base_note'), dict) and 'text' in td['base_note']:
+            td['base_note']['text'] = TPL_SAMPLE_TEXT
+        return td
+
     def _export_widget_template(self, widget_id):
         parent_widget = self.widgets.get(widget_id) 
-        template_data = self.global_state[widget_id]['template_data']
+        template_data = self._sample_td(self.global_state[widget_id]['template_data'])          # [PACK151]
         default_name = wa_stem(self.global_state[widget_id].get('template_name', 'exportado')) + ".wawidget"
 
         path, _flt = QFileDialog.getSaveFileName(parent_widget, "Exportar widget guardado", os.path.join(DATA_DIR, default_name), WA_FILTER['widget'])
@@ -22494,12 +22670,12 @@ class WidgetManager(QObject):
         self._osd("Tipos de hijo guardados")
 
     @staticmethod
-    def _blank_keep_format(html):
+    def _blank_keep_format(html, text=''):
         """[PACK64] Vacia el texto de una capa 1 CONSERVANDO su formato (alineacion, margenes, fuente, tamano, negrita,
         color): ese formato vive dentro del HTML, y poner '' lo perdia todo."""
         try:
             if not isinstance(html, str) or not html.strip().startswith('<'):
-                return ''
+                return text
             d = QTextDocument()
             d.setHtml(html)
             c0 = QTextCursor(d)
@@ -22526,9 +22702,11 @@ class WidgetManager(QObject):
             c.setBlockFormat(bf)
             c.setBlockCharFormat(nf)
             c.setCharFormat(nf)
+            if text:                                  # [PACK151] texto estandar con el formato de la nota
+                c.insertText(text)
             return d.toHtml()
         except Exception:
-            return ''
+            return text
 
     def create_child_note(self, parent_id, independent=False, exact=False):
         parent_state = self.global_state.get(parent_id)
@@ -23334,7 +23512,7 @@ class WidgetManager(QObject):
         if tpl_name:
             safe = self._tpl_safe_name(tpl_name)
             if safe:
-                self.save_template(safe, copy.deepcopy(tdata))
+                self.save_template(safe, self._sample_td(tdata))          # [PACK151]
                 tname = safe
         state = {"enabled": True, "always_on_top": self._default_always_on_top(),
                  "template_name": tname, "custom_name": "", "template_data": tdata}
@@ -23514,10 +23692,7 @@ class WidgetManager(QObject):
             i += 1
             cand = f"{n[:-5]}_{i}.json"
 
-        data = copy.deepcopy(st['template_data'])
-        l1 = data.get('layer1')
-        if isinstance(l1, dict) and l1.get('type') == 'text':
-            l1['content'] = self._blank_keep_format(l1.get('content'))
+        data = self._sample_td(st['template_data'])          # [PACK151] texto estandar, no el de la nota
         data.setdefault('geometry', {})['x'], data['geometry']['y'] = 100, 100
         self.save_template(cand, data)
         st['template_name'] = cand        # el widget pasa a ser de ese template
@@ -23628,7 +23803,7 @@ class WidgetManager(QObject):
         safe = self._tpl_safe_name(name)
         if not safe:
             return None
-        self.save_template(safe, self._base_note_tdata(p))
+        self.save_template(safe, self._base_note_tdata(dict(p, text=TPL_SAMPLE_TEXT)))          # [PACK151] el texto de la nota no se guarda
         tb = getattr(self, 'template_browser', None)
         if tb is not None:
             tb.reload(select=safe)
@@ -24436,6 +24611,9 @@ class WidgetManager(QObject):
         export_action = QAction("Exportar todos los widgets a un archivo...", self)
         export_action.triggered.connect(self.export_state)
         data_menu.addAction(export_action)
+        export_tpl_action = QAction("Exportar todos mis widgets guardados a un archivo...", self)          # [PACK151]
+        export_tpl_action.triggered.connect(lambda _c=False: self.export_all_templates())
+        data_menu.addAction(export_tpl_action)
         restore_cfg_action = QAction("Restaurar configuraci\u00f3n previa...", self)
         restore_cfg_action.triggered.connect(self.restore_config_backup)
         data_menu.addAction(restore_cfg_action)
