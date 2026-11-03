@@ -2355,7 +2355,7 @@ class StickerWindow(QMainWindow):
             return self.layer2_web
         placeholder = self.layer2_web
         view = QWebEngineView(self.manager.web_profile, self.central_widget)
-        view.loadFinished.connect(lambda _ok: self._web_clip_js(getattr(self, '_web_shape', None)))          # [PACK154] el recorte se vuelve a poner en cada pagina que carga
+        view.loadFinished.connect(lambda _ok: self._web_clip_js(getattr(self, '_web_shape', None), getattr(self, '_web_overlay', None)))          # [PACK154] el recorte se vuelve a poner en cada pagina que carga
         view.setGeometry(placeholder.geometry())
         view.hide()
         view.stackUnder(self.layer1_label)   # mismo orden Z que antes: sobre L2 label, bajo L1
@@ -5836,12 +5836,14 @@ class StickerWindow(QMainWindow):
         w = self.layer2_web
         mode, rad = self._l2_clip()
         g = w.geometry()
-        shape = None
+        shape = overlay = None
+        hole = False
         try:
             if mode in (1, 2) and g.width() > 0 and g.height() > 0:
                 shape = _clip_shape_image(mode, g.width(), g.height(), rad)
             elif mode == 3 and self._l1_png_ready() and g.width() > 0 and g.height() > 0:
                 shape = self._frame_hole_mask(g)               # [PACK157] con un marco de la casa, por el hueco
+                hole = shape is not None
                 if shape is None:
                     g1 = self.layer1_label.geometry()
                     shape = QImage(g.size(), QImage.Format_ARGB32_Premultiplied)
@@ -5853,13 +5855,40 @@ class StickerWindow(QMainWindow):
                 w.setMask(_bool_to_region(_image_alpha(shape) >= 128))
             else:
                 w.clearMask()
+            if shape is not None and mode == 3 and hole:
+                p1, g1 = self.layer1_label.pixmap(), self.layer1_label.geometry()          # [PACK158] el marco, encima de la web
+                overlay = QImage(g.size(), QImage.Format_ARGB32_Premultiplied)
+                overlay.fill(Qt.transparent)
+                q = QPainter(overlay)
+                q.drawImage(g1.x() - g.x(), g1.y() - g.y(), p1.toImage())
+                q.end()
         except Exception as e_wc:
             log_warn(self.widget_id, "Recorte de la capa web: %s" % e_wc)
-            shape = None
-        self._web_clip_js(shape)
+            shape = overlay = None
+        self._web_clip_js(shape, overlay)
 
     @staticmethod
-    def _web_clip_script(shape):
+    def _web_clip_script(shape, overlay=None):
+        """[PACK158] El script del recorte (_web_clip_script_base) y, si hay overlay (la imagen del marco del tama\u00f1o de la web), un <div> fijo y transparente
+        a los clics, por encima de todo el contenido, con esa imagen: as\u00ed lo que el marco dibuja sobre el hueco (sombra interior, filo) se ve encima
+        de cualquier p\u00e1gina, aunque el visor web de Qt se pinte por encima del marco."""
+        base = StickerWindow._web_clip_script_base(shape)
+        if shape is None or overlay is None:
+            return base + "(function(){var f=document.getElementById('__wa_frame');if(f)f.remove();})();"
+        from PySide6.QtCore import QBuffer, QIODevice, QByteArray
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.WriteOnly)
+        overlay.save(buf, 'PNG')
+        buf.close()
+        url = "url(data:image/png;base64," + bytes(ba.toBase64()).decode('ascii') + ")"
+        props = {"position": "fixed", "top": "0", "left": "0", "right": "0", "bottom": "0", "margin": "0", "padding": "0", "border": "0",
+                 "pointer-events": "none", "z-index": "2147483647", "background": url + " 0 0 / 100% 100% no-repeat", "display": "block"}
+        return base + ("(function(){if(!document.body)return;var f=document.getElementById('__wa_frame');if(!f){f=document.createElement('div');f.id='__wa_frame';"
+                       "document.body.appendChild(f);}var P=" + json.dumps(props) + ";for(var k in P){f.style.setProperty(k,P[k],'important');}})();")
+
+    @staticmethod
+    def _web_clip_script_base(shape):
         """[PACK154] JavaScript que pone (o quita, si shape es None) en la pagina la mascara CSS con la forma del recorte. El cuerpo ocupa
         exactamente el visor y se desplaza dentro, asi la mascara cae siempre sobre lo que se ve y no sobre todo el documento."""
         if shape is None:
@@ -5882,16 +5911,17 @@ class StickerWindow(QMainWindow):
                 "s=document.createElement('style');s.id='__wa_clip';(document.head||document.documentElement).appendChild(s);}"
                 "s.textContent=" + json.dumps(css) + "+(window.__wa_bg?'body{background-color:'+window.__wa_bg+'!important;}':'');})();")
 
-    def _web_clip_js(self, shape):
+    def _web_clip_js(self, shape, overlay=None):
         """[PACK154] Aplica el recorte (imagen de forma o None) a la pagina del visor y deja el fondo de la pagina transparente mientras recorta."""
         self._web_shape = shape
+        self._web_overlay = overlay
         w = self.layer2_web
         if not getattr(self, '_web_is_real', False) or not hasattr(w, 'page'):
             return
         try:
             pg = w.page()
             pg.setBackgroundColor(QColor(0, 0, 0, 0) if shape is not None else QColor('#ffffff'))
-            pg.runJavaScript(self._web_clip_script(shape))
+            pg.runJavaScript(self._web_clip_script(shape, overlay))
         except Exception as e_js:
             log_warn(self.widget_id, "Recorte de la capa web (pagina): %s" % e_js)
 
@@ -12538,7 +12568,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 157                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 158                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
