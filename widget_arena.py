@@ -5741,6 +5741,35 @@ class StickerWindow(QMainWindow):
             self._sil_cache = c
         return c[1]
 
+    def _frame_hole_mask(self, g):
+        """[PACK157] Mascara (QImage del tama\u00f1o de la web, rect g en coordenadas del widget) con el HUECO exacto del marco de la capa 1 (esquinas redondeadas
+        u \u00f3valo incluidos). El visor web de Qt se pinta por encima del marco y no se deja tapar por \u00e9l, as\u00ed que es la web la que debe recortarse por
+        el hueco: el aro del marco queda siempre a la vista. None si la capa 1 no es un marco dibujado por el programa o est\u00e1 girada."""
+        try:
+            td = self.current_template_data
+            l1 = td.get('layer1') or {}
+            fp = td.get('frame_shape')
+            if (not isinstance(fp, dict) or not os.path.basename(str(l1.get('content') or '').replace('\\', '/')).startswith(('marco_', 'vivo_'))
+                    or abs(float(l1.get('rotation') or 0)) % 360 > 0.01 or not self._l1_png_ready()):
+                return None
+            fp = _fr_clean(fp)
+            L = _frame_layout(fp)
+            p1, g1 = self.layer1_label.pixmap(), self.layer1_label.geometry()
+            im = QImage(g.size(), QImage.Format_ARGB32_Premultiplied)
+            im.fill(Qt.transparent)
+            q = QPainter(im)
+            q.setRenderHint(QPainter.Antialiasing)
+            q.translate(g1.x() - g.x(), g1.y() - g.y())
+            q.scale(p1.width() / float(L['W']), p1.height() / float(L['H']))
+            q.setPen(Qt.NoPen)
+            q.setBrush(QColor(255, 255, 255))
+            q.drawPath(_frame_paths(fp, L)[1])
+            q.end()
+            return im
+        except Exception as e157:
+            log_warn(self.widget_id, "Hueco del marco: %s" % e157)
+            return None
+
     def _frame_silhouette(self, p1):
         """[PACK155] Silueta exacta de un marco dibujado por el programa (sin giro): su contorno exterior relleno, calculado con sus parametros.
         La silueta por transparencia de la imagen no sirve con marcos translucidos (Cristal esmerilado...): su aro no llega a ser \u00absolido\u00bb
@@ -5812,12 +5841,14 @@ class StickerWindow(QMainWindow):
             if mode in (1, 2) and g.width() > 0 and g.height() > 0:
                 shape = _clip_shape_image(mode, g.width(), g.height(), rad)
             elif mode == 3 and self._l1_png_ready() and g.width() > 0 and g.height() > 0:
-                g1 = self.layer1_label.geometry()
-                shape = QImage(g.size(), QImage.Format_ARGB32_Premultiplied)
-                shape.fill(Qt.transparent)
-                q = QPainter(shape)
-                q.drawImage(g1.x() - g.x(), g1.y() - g.y(), self._silhouette_of_l1())
-                q.end()
+                shape = self._frame_hole_mask(g)               # [PACK157] con un marco de la casa, por el hueco
+                if shape is None:
+                    g1 = self.layer1_label.geometry()
+                    shape = QImage(g.size(), QImage.Format_ARGB32_Premultiplied)
+                    shape.fill(Qt.transparent)
+                    q = QPainter(shape)
+                    q.drawImage(g1.x() - g.x(), g1.y() - g.y(), self._silhouette_of_l1())
+                    q.end()
             if shape is not None:
                 w.setMask(_bool_to_region(_image_alpha(shape) >= 128))
             else:
@@ -12507,7 +12538,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 156                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 157                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
