@@ -9611,6 +9611,7 @@ class WidgetBrowserWindow(QMainWindow):
         ll.addWidget(self.tree, 1)
         brow = QHBoxLayout()
         for text, fn in (("Nuevo...", lambda: self.m.show_template_chooser()),
+                         ("Eliminar...", lambda: self.delete_selected()),          # [PACK162]
                          ("Miniaturas", self.refresh_thumbnails)):
             b = QPushButton(text)
             b.clicked.connect(lambda _c=False, f=fn: f())
@@ -9654,6 +9655,7 @@ class WidgetBrowserWindow(QMainWindow):
         self.tree.itemActivated.connect(lambda it, _c: self.m._flash_widget(it.data(0, Qt.UserRole)))
         from PySide6.QtGui import QShortcut
         QShortcut(QKeySequence("Ctrl+F"), self, activated=lambda: (self.search.setFocus(), self.search.selectAll()))
+        QShortcut(QKeySequence(Qt.Key_Delete), self.tree, activated=self.delete_selected, context=Qt.WidgetShortcut)          # [PACK162]
         self._build_keys_tab()
         self.refresh()
 
@@ -9666,6 +9668,13 @@ class WidgetBrowserWindow(QMainWindow):
         sa.setWidget(host)
         self.tabs.addTab(sa, title)
         return host
+
+    def delete_selected(self):
+        """[PACK162] Elimina (con confirmaci\u00f3n) el widget elegido en el \u00e1rbol."""
+        it = self.tree.currentItem()
+        wid = it.data(0, Qt.UserRole) if it is not None else None
+        if wid and wid in self.m.global_state:
+            self.m._confirm_remove_widget(wid)
 
     def schedule_refresh(self):
         if self.isVisible():
@@ -10506,9 +10515,10 @@ class SimpleAddDialog(QDialog):
         self.setWindowTitle("Cambiar el aspecto de este widget" if self.target else "A\u00f1adir un widget")
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         lay = QVBoxLayout(self)
-        lbl = QLabel("Elige el que quieras y pulsa \u00ab%s\u00bb (o haz doble clic)." % ("Cambiar" if self.target else "A\u00f1adir"))
+        lbl = QLabel("Elige el que quieras y pulsa \u00ab%s\u00bb (o haz doble clic).\nPuedes arrastrar aqu\u00ed un archivo .wawidget para a\u00f1adirlo a la lista." % ("Cambiar" if self.target else "A\u00f1adir"))
         lbl.setWordWrap(True)
         lay.addWidget(lbl)
+        self.setAcceptDrops(True)                                          # [PACK162]
         self.list = QListWidget()
         self.list.setViewMode(QListWidget.IconMode)
         self.list.setIconSize(self.ICON)
@@ -10519,9 +10529,11 @@ class SimpleAddDialog(QDialog):
 
         self.list.setSpacing(6)
         self.list.setUniformItemSizes(True)
+        self.list.setAcceptDrops(False)                                    # [PACK162] el arrastre de archivos lo recoge la ventana
         ph = QPixmap(self.ICON)
         ph.fill(QColor('#c4c9d1'))
         blank = QIcon(ph)
+        self._blank = blank
         try:
             names = list(manager.template_files())
         except Exception as e:
@@ -10544,6 +10556,13 @@ class SimpleAddDialog(QDialog):
         self.btn_ok = bb.button(QDialogButtonBox.Ok)
         self.btn_ok.setText("Cambiar" if self.target else "A\u00f1adir")
         bb.button(QDialogButtonBox.Cancel).setText("Cancelar")
+        self.btn_del = bb.addButton("Borrar", QDialogButtonBox.ActionRole)          # [PACK162]
+        self.btn_del.setToolTip("Borra de la lista el widget elegido (Supr). Los que ya tienes en pantalla no cambian.")
+        self.btn_del.clicked.connect(lambda _c=False: self.delete_current())
+        from PySide6.QtGui import QShortcut
+        QShortcut(QKeySequence(Qt.Key_Delete), self.list, activated=self.delete_current, context=Qt.WidgetShortcut)
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._list_menu)
         bb.accepted.connect(self._go)
         bb.rejected.connect(self.reject)
         self.list.itemDoubleClicked.connect(lambda _i: self._go())
@@ -10551,6 +10570,82 @@ class SimpleAddDialog(QDialog):
         self._todo = list(range(self.list.count()))
         self.resize(640, 480)
         QTimer.singleShot(0, self._fill_icons)
+
+    def _list_menu(self, pos):
+        it = self.list.itemAt(pos)
+        if it is None:
+            return
+        self.list.setCurrentItem(it)
+        mn = QMenu(self)
+        a = mn.addAction("Borrar este widget...")
+        a.triggered.connect(lambda _c=False: self.delete_current())
+        mn.exec(self.list.viewport().mapToGlobal(pos))
+
+    def delete_current(self, confirm=True):
+        """[PACK162] Borra de la lista el widget (modelo) elegido, pidiendo confirmaci\u00f3n. Devuelve True si se borr\u00f3."""
+        it = self.list.currentItem()
+        if it is None:
+            return False
+        name = it.data(Qt.UserRole)
+        if self.m.model_is_default(name):
+            QMessageBox.information(self, "Borrar", "Este es el widget predeterminado y no se puede borrar.\nMarca otro como predeterminado antes.")
+            return False
+        if confirm and QMessageBox.question(self, "Borrar widget", "\u00bfBorrar \u00ab%s\u00bb de la lista?\nLos widgets que ya tienes en pantalla no cambian." % os.path.splitext(name)[0],
+                                            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return False
+        ok_, why = self.m.delete_model(name)
+        if not ok_:
+            QMessageBox.warning(self, "Borrar", why)
+            return False
+        row = self.list.row(it)
+        self.list.takeItem(row)
+
+        self._todo = [i - 1 if i > row else i for i in self._todo if i != row]
+        if self.list.count():
+            self.list.setCurrentRow(min(row, self.list.count() - 1))
+        return True
+
+    def _add_item(self, name):
+        from PySide6.QtWidgets import QListWidgetItem
+        it = QListWidgetItem(self._blank, os.path.splitext(name)[0].replace('_', ' '))
+        it.setData(Qt.UserRole, name)
+        it.setToolTip(os.path.splitext(name)[0])
+        self.list.addItem(it)
+        self._todo.append(self.list.count() - 1)
+        QTimer.singleShot(0, self._fill_icons)
+        return it
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        e.acceptProposedAction()
+        QTimer.singleShot(0, lambda: self.drop_files(paths))
+
+    def drop_files(self, paths):
+        """[PACK162] Cada .wawidget (o .wapaper / .json de widget) soltado se a\u00f1ade a la lista y queda elegido."""
+        added, bad = [], []
+        for p in paths:
+            if os.path.isdir(p):
+                continue
+            n, why = self.m.import_model_file(p)
+            if n:
+                added.append(n)
+                self._add_item(n)
+            else:
+                bad.append("%s: %s" % (os.path.basename(p), why))
+        if added:
+            self.list.setCurrentRow(self.list.count() - 1)
+            self.list.scrollToItem(self.list.currentItem())
+        if bad:
+            QMessageBox.information(self, "A\u00f1adir", "Solo se pueden a\u00f1adir archivos de widget (.wawidget).\n\n" + "\n".join(bad[:4]))
+        return added
 
     def _fill_icons(self):
         """Dibuja las miniaturas de una en una (la ventana no se espera)."""
@@ -10614,11 +10709,13 @@ class TemplateBrowser(QWidget):
         self.list.setIconSize(self.THUMB)
         self.list.setSpacing(2)
         ll.addWidget(self.list, 1)
+        from PySide6.QtGui import QShortcut as _QSC
+        _QSC(QKeySequence(Qt.Key_Delete), self.list, activated=lambda: self._delete(), context=Qt.WidgetShortcut)          # [PACK162]
         self.btn_create = QPushButton("Crear widget a partir de este")
         self.btn_create.setStyleSheet("QPushButton{font-weight:bold;padding:6px;background:#2f5f46;border:1px solid #3f7f5f;border-radius:4px;}QPushButton:hover{background:#38724f;}QPushButton:disabled{background:#333;color:#777;border-color:#444;}")
         ll.addWidget(self.btn_create)
         row = QHBoxLayout()
-        for text, fn in (("Nuevo", self._new), ("Duplicar", self._duplicate), ("Editar forma de papel...", self._edit_base)):
+        for text, fn in (("Nuevo", self._new), ("Duplicar", self._duplicate), ("Editar forma de papel...", self._edit_base), ("Eliminar", self._delete)):          # [PACK162] Eliminar tambien a la vista
             b = QPushButton(text)
             b.clicked.connect(lambda _c=False, f=fn: f())
             row.addWidget(b)
@@ -12771,7 +12868,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 161                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 162                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -21595,6 +21692,38 @@ class WidgetManager(QObject):
                 label.setPixmap(pm)
             except RuntimeError:
                 pass
+
+    def model_is_default(self, name):
+        """[PACK162] True si 'name' (archivo de modelo) es el predeterminado: ese no se borra."""
+        name = os.path.basename(str(name))
+        return name == "default.json" or name == self.default_template_name()
+
+    def delete_model(self, name):
+        """[PACK162] Borra un modelo de la lista. Devuelve (True, '') o (False, motivo). Los widgets ya creados no cambian."""
+        name = os.path.basename(str(name))
+        if self.model_is_default(name):
+            return False, "No se puede borrar el widget predeterminado (marca otro como predeterminado antes)."
+        try:
+            os.remove(os.path.join(TEMPLATES_DIR, name))
+        except OSError as e:
+            return False, "No se pudo borrar: %s" % e
+        return True, ""
+
+    def import_model_file(self, path):
+        """[PACK162] Importa un .wawidget / .wapaper / .json como modelo nuevo (con otro nombre si ya hay uno igual). Devuelve (nombre, '') o (None, motivo)."""
+        try:
+            _k, d = read_file_any(path)
+            if not isinstance(d, dict) or not (isinstance(d.get('layer1'), dict) or isinstance(d.get('layer2'), dict)):
+                raise ValueError("no es un widget")
+        except Exception as e:
+            return None, "No se pudo leer el archivo: %s" % e
+        base = self._tpl_safe_name(wa_stem(path)) or "importado.json"
+        stem, n, cand = base[:-5], 1, base
+        while os.path.exists(os.path.join(TEMPLATES_DIR, cand)):
+            n += 1
+            cand = f"{stem}_{n}.json"
+        self.save_template(cand, d)
+        return cand, ""
 
     def template_files(self):
         try:
