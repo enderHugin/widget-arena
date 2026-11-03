@@ -2174,6 +2174,60 @@ def generate_button_images(clean_text, bg_color, font, images_dir, text_color=No
 
 # --- Clase de la Ventana del Widget Individual ---
 
+def _text_opt(l_data, key, td=None):
+    """[PACK160] Opcion de texto de una capa (text_center / text_fit). Sin valor guardado: activada en los widgets tipo nota, apagada en los demas."""
+    v = l_data.get(key) if isinstance(l_data, dict) else None
+    if v is None:
+        try:
+            return _widget_kind({'template_data': td}) == 'nota' if isinstance(td, dict) else False
+        except Exception:
+            return False
+    return bool(v)
+
+
+def _text_layer_layout(html, w, h, family, size, center=False, fit=False):
+    """[PACK160] Documento de texto de una capa listo para dibujar: (doc, k, off). Se dibuja con painter.scale(k, k), painter.translate(0, off).
+    center: el texto sin alineaci\u00f3n propia va centrado en horizontal y todo el bloque centrado en vertical dentro del recuadro.
+    fit: si el texto no cabe, todas las tipograf\u00edas se reducen por igual (hasta un 25 %) hasta que quepa."""
+    def build(k):
+        d = QTextDocument()
+        d.setDocumentMargin(0)
+        d.setTextWidth(w / k)
+        d.setPageSize(QSizeF(w / k, h / k))
+        d.setDefaultFont(QFont(family, size))
+        if center:
+            o = QTextOption()
+            o.setAlignment(Qt.AlignHCenter)
+            d.setDefaultTextOption(o)
+        d.setHtml(html)
+        return d
+
+    def fits(d, k):
+        return d.size().height() * k <= h + 0.5 and d.idealWidth() * k <= w + 0.5
+
+    k, d = 1.0, build(1.0)
+    if fit and not fits(d, 1.0):
+        lo, hi = 0.25, 1.0
+        for _ in range(14):
+            mid = (lo + hi) / 2.0
+            if fits(build(mid), mid):
+                lo = mid
+            else:
+                hi = mid
+        k, d = lo, build(lo)
+    off = max(0.0, (h / k - d.size().height()) / 2.0) if center else 0.0
+    return d, k, off
+
+
+def _text_layer_draw(painter, html, w, h, family, size, center=False, fit=False):
+    d, k, off = _text_layer_layout(html, w, h, family, size, center, fit)
+    painter.save()
+    painter.scale(k, k)
+    painter.translate(0, off)
+    d.drawContents(painter)
+    painter.restore()
+
+
 class StickerWindow(QMainWindow):
 
     MULTI_CLICK_MSEC = 400   # ventana (ms) para encadenar doble / triple clic
@@ -3016,20 +3070,12 @@ class StickerWindow(QMainWindow):
             pixmap = QPixmap(l2_geom.size())
             pixmap.fill(Qt.transparent)
             painter = QPainter(pixmap)
-            
-            doc = QTextDocument()
-            doc.setDocumentMargin(0)
-            doc.setTextWidth(l2_geom.width())
-            doc.setPageSize(QSizeF(l2_geom.size()))
-            doc.setDefaultFont(QFont(font_family, font_size))
-            
             if not text.strip().startswith('<'):
                 text_html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                 text_html = text_html.replace('\n', '<br>')
                 text = f'<p style="color:{color};">{text_html}</p>'
-            
-            doc.setHtml(text)
-            doc.drawContents(painter)
+            _text_layer_draw(painter, text, l2_geom.width(), l2_geom.height(), font_family, font_size,
+                             _text_opt(l2_data, 'text_center', self.current_template_data), _text_opt(l2_data, 'text_fit', self.current_template_data))      # [PACK160]
             
             painter.end()
 
@@ -3079,20 +3125,12 @@ class StickerWindow(QMainWindow):
             pixmap = QPixmap(l1_geom.size())
             pixmap.fill(Qt.transparent)
             painter = QPainter(pixmap)
-            
-            doc = QTextDocument()
-            doc.setDocumentMargin(0)
-            doc.setTextWidth(l1_geom.width())
-            doc.setPageSize(QSizeF(l1_geom.size()))
-            doc.setDefaultFont(QFont(font_family, font_size))
-            
             if not text.strip().startswith('<'):
                 text_html = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                 text_html = text_html.replace('\n', '<br>')
                 text = f'<p style="color:{color};">{text_html}</p>'
-            
-            doc.setHtml(text)
-            doc.drawContents(painter)
+            _text_layer_draw(painter, text, l1_geom.width(), l1_geom.height(), font_family, font_size,
+                             _text_opt(l1_data, 'text_center', self.current_template_data), _text_opt(l1_data, 'text_fit', self.current_template_data))      # [PACK160]
             painter.end()
             
             self.layer1_base_pixmap = pixmap.copy()
@@ -3373,17 +3411,10 @@ class StickerWindow(QMainWindow):
         pixmap = QPixmap(geom.size())
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
-        doc = QTextDocument()
-        doc.setDocumentMargin(0)
-        doc.setTextWidth(geom.width())
-        doc.setPageSize(QSizeF(geom.size()))
-        doc.setDefaultFont(QFont(l_data.get('font_family', 'Inter'), l_data.get('font_size', 16)))
-        
         if not text.strip().startswith('<'):
             text = f'<p style="color:{l_data.get("color","white")};">{text}</p>'
-            
-        doc.setHtml(text)
-        doc.drawContents(painter)
+        _text_layer_draw(painter, text, geom.width(), geom.height(), l_data.get('font_family', 'Inter'), l_data.get('font_size', 16),
+                         _text_opt(l_data, 'text_center', self.current_template_data), _text_opt(l_data, 'text_fit', self.current_template_data))      # [PACK160]
         painter.end()
         
         label = self.layer1_label if layer_num == 1 else self.layer2_label
@@ -4011,11 +4042,12 @@ class StickerWindow(QMainWindow):
                 font_size = l_data.get('font_size', 16 if layer_num == 1 else 12)
                 font_family = l_data.get('font_family', 'Inter')
                 color = l_data.get('color', 'white' if layer_num == 1 else 'black')
-                doc_key = (content, font_family, font_size, color, orig_w, orig_h)
+                _tc, _tf = _text_opt(l_data, 'text_center', self.current_template_data), _text_opt(l_data, 'text_fit', self.current_template_data)      # [PACK160]
+                doc_key = (content, font_family, font_size, color, orig_w, orig_h, _tc, _tf)
                 doc_cache = self.__dict__.setdefault('_link_doc_cache', {})
                 cached = doc_cache.get(layer_num)
                 if cached is not None and cached[0] == doc_key:
-                    doc = cached[1]
+                    doc, _lk, _loy = cached[1]
                 else:
                     doc = QTextDocument()
                     doc.setDocumentMargin(0)
@@ -4029,8 +4061,11 @@ class StickerWindow(QMainWindow):
                         text_html = text_html.replace('\n', '<br>')
                         html = f'<p style="color:{color};">{text_html}</p>'
                     doc.setHtml(html)
-                    doc_cache[layer_num] = (doc_key, doc)
-                link = doc.documentLayout().anchorAt(QPointF(orig_x, orig_y))
+                    _lk, _loy = 1.0, 0.0
+                    if _tc or _tf:
+                        doc, _lk, _loy = _text_layer_layout(html, orig_w, orig_h, font_family, font_size, _tc, _tf)
+                    doc_cache[layer_num] = (doc_key, (doc, _lk, _loy))
+                link = doc.documentLayout().anchorAt(QPointF(orig_x / _lk, orig_y / _lk - _loy))
                 if link:
                     return link
         except Exception as e:
@@ -5908,8 +5943,10 @@ class StickerWindow(QMainWindow):
                 "var tr=function(c){return !c||c==='transparent'||/^rgba\\(.*,\\s*0\\)$/.test(c);};"
                 "var hb=getComputedStyle(document.documentElement).backgroundColor,bb=getComputedStyle(document.body).backgroundColor;"
                 "window.__wa_bg=tr(bb)?(tr(hb)?'#ffffff':hb):'';"
+                "var ob=getComputedStyle(document.body).overflow,oh=getComputedStyle(document.documentElement).overflow,hd=/hidden|clip/;"
+                "window.__wa_ov=(hd.test(ob)||(hd.test(oh)&&ob==='visible'))?'hidden':'auto';"
                 "s=document.createElement('style');s.id='__wa_clip';(document.head||document.documentElement).appendChild(s);}"
-                "s.textContent=" + json.dumps(css) + "+(window.__wa_bg?'body{background-color:'+window.__wa_bg+'!important;}':'');})();")
+                "s.textContent=" + json.dumps(css) + "+'body{overflow:'+(window.__wa_ov||'auto')+'!important;}'+(window.__wa_bg?'body{background-color:'+window.__wa_bg+'!important;}':'');})();")
 
     def _web_clip_js(self, shape, overlay=None):
         """[PACK154] Aplica el recorte (imagen de forma o None) a la pagina del visor y deja el fondo de la pagina transparente mientras recorta."""
@@ -6312,6 +6349,7 @@ class StickerWindow(QMainWindow):
         self.layer1_editor.setGeometry(geom)
         self.layer1_editor.setFont(QFont(font_family, font_size))
         self.layer1_editor.document().setDocumentMargin(0)
+        self.layer1_editor.set_vcenter(_text_opt(l1_data, 'text_center', self.current_template_data))      # [PACK160]
         
         self.layer1_editor.setStyleSheet(f"""
             QTextEdit {{
@@ -7193,6 +7231,31 @@ class InlineTextEditor(QTextEdit):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_text_context_menu)
         self._finishing = False
+        self._vcenter = False
+        self.textChanged.connect(self._recenter)
+
+    def set_vcenter(self, on):
+        """[PACK160] Centra el texto (en horizontal si no tiene alineaci\u00f3n propia y en vertical siempre) mientras se escribe, como lo dibuja la nota."""
+        self._vcenter = bool(on)
+        o = QTextOption()
+        if on:
+            o.setAlignment(Qt.AlignHCenter)
+        self.document().setDefaultTextOption(o)
+        self._recenter()
+
+    def _recenter(self):
+        try:
+            off = 0
+            if self._vcenter:
+                off = max(0, int((self.height() - self.document().size().height()) / 2.0))
+            if self.viewportMargins().top() != off:
+                self.setViewportMargins(0, off, 0, 0)
+        except Exception:
+            pass
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._recenter()
 
     def _show_text_context_menu(self, pos):
         menu = QMenu(self)
@@ -12621,7 +12684,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 159                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 160                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22366,6 +22429,12 @@ class WidgetManager(QObject):
                 add(cm_, "Editar texto en una ventana...", lambda k=n_: self._edit_widget_layer(widget_id, k, 'text'), enabled=(lt == 'text'))
                 add(cm_, "Cargar desde .txt...", lambda k=n_: self._load_text_from_file(widget_id, k), enabled=(lt == 'text'))
                 add(cm_, "Cambiar fuente...", lambda k=n_: self._edit_widget_font(widget_id, k), enabled=(lt == 'text'))
+                add(cm_, "Centrar el texto autom\u00e1ticamente", lambda c, k=n_: self._toggle_layer_text_opt(widget_id, k, 'text_center', c),
+                    checked=_text_opt(ld, 'text_center', template_data), enabled=(lt == 'text'),
+                    tip="Centra el texto en su recuadro, en horizontal y en vertical, sin tener que pulsar Intro ni recolocar la capa (los p\u00e1rrafos con alineaci\u00f3n propia la conservan)")
+                add(cm_, "Reducir el texto para que quepa", lambda c, k=n_: self._toggle_layer_text_opt(widget_id, k, 'text_fit', c),
+                    checked=_text_opt(ld, 'text_fit', template_data), enabled=(lt == 'text'),
+                    tip="Si el texto no cabe en su recuadro, reduce todas sus tipograf\u00edas por igual hasta que encaje (se aplica al terminar de escribir)")
             if lt == 'png' or full:
                 add(cm_, "Efectos de imagen (tono, color base, brillo...)", lambda k=n_: self._edit_widget_image_effects(widget_id, k),
                     enabled=(lt == 'png'))
@@ -22828,6 +22897,15 @@ class WidgetManager(QObject):
         win = self.widgets.get(widget_id)
         if win is not None:
             win.load_template_data(td)
+        self.save_global_state()
+        self.build_tray_menu()
+
+    def _toggle_layer_text_opt(self, widget_id, layer_num, key, is_checked):
+        """[PACK160] Activa o apaga text_center / text_fit de una capa de texto y la vuelve a dibujar."""
+        state = self.global_state[widget_id]
+        template_data = state['template_data']
+        template_data.setdefault(f"layer{layer_num}", {})[key] = bool(is_checked)
+        self.widgets[widget_id].load_template_data(template_data)
         self.save_global_state()
         self.build_tray_menu()
 
