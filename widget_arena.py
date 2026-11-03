@@ -9429,6 +9429,7 @@ class WidgetBrowserWindow(QMainWindow):
         self._thumbs, self._queue, self._loading, self._ctx_menu = {}, [], False, None
         self.setWindowTitle("Navegador de widgets")
         self.setAttribute(Qt.WA_QuitOnClose, False)
+        self.setAcceptDrops(True)                  # [PACK159] se pueden soltar aqu\u00ed archivos .wawidget
         self.resize(1080, 680)
 
         left = QWidget()
@@ -9436,6 +9437,7 @@ class WidgetBrowserWindow(QMainWindow):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Buscar widget...  (Ctrl+F)")
         self.search.setClearButtonEnabled(True)
+        self.search.setAcceptDrops(False)          # [PACK159] el buscador no se queda los archivos soltados
         self.filter = QComboBox()
         for label, key in (("Todos", "all"), ("Visibles", "on"), ("Ocultos", "off"),
                            ("Solo ra\u00edces", "roots"), ("Con hijos", "parents")):
@@ -9534,10 +9536,57 @@ class WidgetBrowserWindow(QMainWindow):
                     or (mode == "roots" and st.get('parent_id') in self.m.global_state)
                     or (mode == "parents" and not self.m.get_children(wid)))
 
+    # ---- [PACK159] arrastrar y soltar: los .wawidget (y .wapaper / .json de modelo) pasan a Modelos; el resto de archivos propios, a su carga de siempre
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        e.acceptProposedAction()
+        QTimer.singleShot(0, lambda: self.drop_files(paths))
+
+    def drop_files(self, paths):
+        done = []
+        for p in paths:
+            if os.path.isdir(p):
+                continue
+            if wa_file_kind(p) in ('widget', 'paper') or (p.lower().endswith('.json') and self._json_is_model(p)):
+                n = self.templates.import_path(p)
+                if n:
+                    done.append(n)
+            else:
+                try:
+                    self.m.load_anything(p)
+                except Exception as ex:
+                    log_warn("Navegador", f"No se pudo cargar {p}: {ex}")
+        if done:
+            self.tabs.setCurrentWidget(self.templates)
+            self.templates.status.setText("Importado: " + ", ".join(n[:-5] if n.lower().endswith('.json') else n for n in done))
+            try:
+                self.m._osd("Modelo importado: " + done[-1][:-5], 2000)
+            except Exception:
+                pass
+        return done
+
+    @staticmethod
+    def _json_is_model(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                raw = json.load(f)
+        except Exception:
+            return False
+        return isinstance(raw, dict) and (isinstance(raw.get('layer1'), dict) or isinstance(raw.get('layer2'), dict))
+
     def refresh(self):
         from PySide6.QtWidgets import QTreeWidgetItem
         m = self.m
         gs = {k: v for k, v in m.global_state.items() if isinstance(v, dict)}
+
         focus = getattr(m, '_focus_pending', None)
         m._focus_pending = None
         if focus in gs and not self._passes(focus, gs[focus]):     # el widget nuevo no debe quedar oculto por un filtro
@@ -10932,18 +10981,22 @@ class TemplateBrowser(QWidget):
     def _import(self):
         path, _ = QFileDialog.getOpenFileName(self, "Importar modelo", DATA_DIR,
                                               "Widgets y formas de papel (*.wawidget *.wapaper *.json);;Todos (*)")
-        if not path:
-            return
+        if path:
+            self.import_path(path)
+
+    def import_path(self, path):
+        """[PACK159] Importa un .wawidget / .wapaper / .json como modelo nuevo (con otro nombre si ya hay uno igual). Devuelve el nombre o None."""
         try:
             _k, d = read_file_any(path)
             if not isinstance(d, dict):
                 raise ValueError("no es un modelo (la ra\u00edz debe ser un objeto)")
         except Exception as e:
             self.status.setText(f"No se pudo importar: {e}")
-            return
+            return None
         n = self._unique(self.m._tpl_safe_name(wa_stem(path)) or "importado.json")
         self.m.save_template(n, d)
         self.reload(n)
+        return n
 
     def _export(self):
         """[PACK96] Guarda en un .json el template seleccionado (o el aspecto en uso seleccionado)."""
@@ -12568,7 +12621,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 158                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 159                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -16085,8 +16138,61 @@ CX_DEFAULTS = {
 }
 
 
+# [PACK159] Diseno por defecto del pico doblado (modo 1, dibujado en la esquina 0) y de la esquina levantada (modo 2, dibujada en la esquina 2)
+_CX_DESIGN = {
+    1: (0, {'size': 37, 'tip': 97, 'c1': -25, 'p1': 25, 'c2': 13, 'p2': 75, 'c3': 11, 'p3': 49, 'rlen': 0, 'round': 100,
+            'rev_auto': False, 'rev_color': '#ecee92',
+            'fa_k': 0, 'fa_a': 43, 'fa_s': 10, 'fa_dx': -3, 'fa_dy': -2,
+            'fb_k': 0, 'fb_a': 27, 'fb_s': 36, 'fb_dx': -3, 'fb_dy': 14, 'fb_over': True,
+            'la_k': 0, 'la_a': 40, 'la_s': 16, 'lb_k': 1, 'lb_a': 0, 'lb_s': 16, 'front': True, 'cast': 0}),
+    2: (2, {'size': 60, 'tip': 14, 'c1': 25, 'p1': 68, 'c2': 14, 'p2': 41, 'rlen': 45, 'round': 100,
+            'fa_k': 1, 'fa_a': 45, 'fa_s': 10, 'fb_k': 0, 'fb_a': 0, 'fb_s': 14,
+            'la_k': 1, 'la_a': 172, 'la_s': 26, 'la_dx': -9, 'la_dy': -12,
+            'lb_k': 0, 'lb_a': 33, 'lb_s': 2, 'lb_dx': 1, 'lb_dy': 1, 'front': True, 'cast': 0}),
+}
+
+
+def _cx_design(corner, mode, scale=1.0):
+    """[PACK159] El diseno por defecto del modo (1 doblez, 2 esquina levantada) puesto en la esquina 'corner': en las otras esquinas queda
+    como reflejo (los desplazamientos de las luces se espejan y, en la esquina inferior derecha, brillo y sombra se cambian).
+    'scale' encoge tama\u00f1os de luces y desplazamientos (miniaturas)."""
+    ref, src = _CX_DESIGN[int(mode)]
+    d = dict(CX_DEFAULTS)
+    d.update(src)
+    d['mode'] = int(mode)
+    t = int(corner) % 4
+    fx = (t in (1, 2)) != (ref in (1, 2))
+    fy = (t in (2, 3)) != (ref in (2, 3))
+    sw = (t == 2) != (ref == 2)
+    for pre in ('fa', 'fb', 'la', 'lb'):
+        dx, dy = d[pre + '_dx'], d[pre + '_dy']
+        d[pre + '_dx'] = int(round((-dx if fx else dx) * scale))
+        d[pre + '_dy'] = int(round((-dy if fy else dy) * scale))
+        d[pre + '_s'] = max(1, int(round(d[pre + '_s'] * scale)))
+        if sw:
+            d[pre + '_k'] = 1 - int(d[pre + '_k'])
+            if d[pre + '_k'] == 0:                   # una luz que era brillo y pasa a sombra no puede ser tan fuerte (el brillo del dise\u00f1o llega a 172)
+                d[pre + '_a'] = min(int(d[pre + '_a']), 60)
+    return d
+
+
+def _cx_design_list(spec, scale=1.0):
+    """[PACK159] Lista de 4 esquinas con el diseno por defecto en las de 'spec' ({esquina: modo}); el resto, sin efecto."""
+    out = [_cx_base(i, 0) for i in range(4)]
+    for i, m in spec.items():
+        out[int(i)] = _cx_design(i, m, scale) if int(m) else out[int(i)]
+    return out
+
+
 def _cx_new(corner, mode=0):
-    """Ajustes por defecto de una esquina. La luz viene de arriba a la izquierda: en la esquina inferior derecha
+    """Ajustes por defecto de una esquina que acaba de pasar a 'mode': el diseno por defecto (pico doblado / esquina levantada)."""
+    if int(mode) in _CX_DESIGN:
+        return _cx_design(corner, mode)
+    return _cx_base(corner, mode)
+
+
+def _cx_base(corner, mode=0):
+    """Ajustes antiguos por defecto de una esquina (para completar lo que falta en notas guardadas). La luz viene de arriba a la izquierda: en la esquina inferior derecha
     las luces empiezan al reves (brillo y sombra en vez de sombra y brillo)."""
     d = dict(CX_DEFAULTS)
     d['mode'] = int(mode)
@@ -16102,7 +16208,7 @@ def _cx_clean(i, x):
         m = max(0, min(2, int(x.get('mode', 0))))
     except (ValueError, TypeError):
         m = 0
-    d = _cx_new(i, m)
+    d = _cx_base(i, m)
     if 'rlen' not in x and 'round' in x:             # [PACK84] antes un solo valor con signo: longitud = su valor absoluto, curva = su signo
         try:
             r0 = int(x['round'])
@@ -16120,7 +16226,7 @@ def _cx_clean(i, x):
 
 def _cx_with(spec):
     """Lista de 4 esquinas con los ajustes de 'spec' ({esquina: {clave: valor}}); el resto, sin efecto."""
-    out = [_cx_new(i, 0) for i in range(4)]
+    out = [_cx_base(i, 0) for i in range(4)]
     for i, d in spec.items():
         out[i] = _cx_clean(i, d)
     return out
@@ -16132,7 +16238,7 @@ def _norm_cx(p):
     src = p.get('cx')
     if isinstance(src, list) and len(src) == 4 and all(isinstance(x, dict) for x in src):
         return [_cx_clean(i, x) for i, x in enumerate(src)]
-    out = [_cx_new(i, 0) for i in range(4)]
+    out = [_cx_base(i, 0) for i in range(4)]
     if not p.get('fold'):
         return out
     if int(p.get('fold_style', 0)) == 1:
@@ -16850,6 +16956,16 @@ FRAME_PRESETS = [
     ("Fino negro", {'color': '#16181d', 'grad': False, 'bt': 10, 'br': 10, 'bb': 10, 'bl': 10, 'bevel': 2, 'tex': 0, 'radius': 0, 'ishadow': 6}),
     ("Paspart\u00fa", {'color': '#f6f3ea', 'grad': False, 'bt': 54, 'br': 54, 'bb': 54, 'bl': 54, 'bevel': 0, 'tex': 0, 'ishadow': 18, 'line': 2, 'radius': 1, 'shadow': 8}),
     ("Redondeado", {'radius': 70, 'iradius': 42, 'bt': 30, 'br': 30, 'bb': 30, 'bl': 30}),
+    ("Ne\u00f3n cian", {'bt': 16, 'br': 16, 'bb': 16, 'bl': 16, 'radius': 23, 'iradius': 9, 'color': '#000000', 'grad': True, 'color2': '#00ffff', 'grad_angle': 252,
+                        'bevel': 0, 'bevel_light': 64, 'bevel_dark': 80, 'tex': 0, 'tex_amt': 15, 'shape': 0, 'ishadow': 51, 'ishadow_op': 45, 'line': 0, 'line_op': 55,
+                        'shadow': 18, 'shadow_op': 22, 'shadow_dx': 0, 'shadow_dy': 8, 'shadow_color': '#000000', 'color_a': 11, 'color2_a': 17,
+                        'bo': 2, 'bo_color': '#00ffff', 'bo_color2': '#ffffff', 'bo_a': 100, 'bo_a2': 0, 'bo_grad': True, 'bo_angle': 80, 'bo_bias': 9,
+                        'bi': 2, 'bi_color': '#00ffff', 'bi_color2': '#ffffff', 'bi_a': 94, 'bi_a2': 0, 'bi_grad': True, 'bi_angle': 235, 'bi_bias': 12}),
+    ("Ne\u00f3n lima", {'bt': 16, 'br': 16, 'bb': 16, 'bl': 16, 'radius': 23, 'iradius': 9, 'color': '#000000', 'grad': True, 'color2': '#aaff00', 'grad_angle': 252,
+                        'bevel': 0, 'bevel_light': 64, 'bevel_dark': 80, 'tex': 3, 'tex_amt': 15, 'shape': 0, 'ishadow': 51, 'ishadow_op': 45, 'line': 0, 'line_op': 55,
+                        'shadow': 18, 'shadow_op': 22, 'shadow_dx': 0, 'shadow_dy': 8, 'shadow_color': '#000000', 'color_a': 11, 'color2_a': 17,
+                        'bo': 2, 'bo_color': '#aaff00', 'bo_color2': '#ffffff', 'bo_a': 100, 'bo_a2': 0, 'bo_grad': True, 'bo_angle': 238, 'bo_bias': 9,
+                        'bi': 2, 'bi_color': '#aaff00', 'bi_color2': '#ffffff', 'bi_a': 94, 'bi_a2': 0, 'bi_grad': True, 'bi_angle': 81, 'bi_bias': 12}),
     ("Cristal esmerilado", {'color': '#ffffff', 'color2': '#cfe0ff', 'grad': True, 'grad_angle': 90, 'color_a': 22, 'color2_a': 8,
                             'bt': 20, 'br': 20, 'bb': 20, 'bl': 20, 'radius': 22, 'iradius': 12, 'bevel': 0, 'bevel_light': 0, 'bevel_dark': 0, 'tex': 0, 'ishadow': 0, 'line': 0,
                             'shadow': 18, 'shadow_op': 22, 'shadow_dy': 8,
@@ -18939,8 +19055,10 @@ class _CornerModePicker(QWidget):
             pm = QPixmap()
             try:
                 P = dict(BASE_NOTE_DEFAULTS)
-                P.update(w=84, h=62, radius=8, shadow=5, shadow_op=40, shadow_dx=0, shadow_dy=2, grad=False,
-                         fold=bool(mode), cx=_cx_with({int(corner): {'mode': int(mode), 'size': 26}} if mode else {}))
+                P.update(w=84, h=62, radius=8, shadow=5, shadow_op=40, shadow_dx=0, shadow_dy=2, grad=False,      # [PACK159] el dise\u00f1o por defecto, a escala de la miniatura
+                         fold=bool(mode), cx=_cx_design_list({int(corner): int(mode)}, 0.4) if mode else _cx_design_list({}))
+                if mode:
+                    P['cx'][int(corner)]['size'] = 26 if int(mode) == 1 else 28
                 pm = QPixmap.fromImage(render_base_note(P)).scaled(64, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             except Exception as e:
                 log_warn("BaseNote", f"No se pudo dibujar la miniatura de la esquina: {e}")
@@ -19091,20 +19209,15 @@ class BaseNoteDialog(QDialog):
     PRESETS = (
         ("Post-it con doblez", {'radius': 0, 'grad': True, 'color': '#fff6b0', 'color2': '#fbd34d', 'grad_angle': 35,
                                 'strip': 30, 'strip_op': 32, 'strip_y': 0, 'fold': True,
-                                'cx': _cx_with({3: {'mode': 1, 'size': 90, 'tip': 100, 'c1': 50, 'c2': 50, 'c3': -70, 'rlen': 55,
-                                                    'fa_k': 0, 'fa_a': 55, 'fa_s': 12, 'fb_k': 1, 'fb_a': 28, 'fb_s': 12, 'fb_over': True}}),
+                                'cx': _cx_design_list({3: 1}),
                                 'shadow': 18, 'shadow_op': 55, 'shadow_dx': -5, 'shadow_dy': 7, 'corners': [True, True, True, True]}),
         ("Esquina levantada", {'radius': 0, 'grad': True, 'color': '#fff6b0', 'color2': '#fbd34d', 'grad_angle': 35,
                                'strip': 30, 'strip_op': 32, 'strip_y': 0, 'fold': True,
-                               'cx': _cx_with({2: {'mode': 2, 'size': 90, 'tip': 0, 'c1': -45, 'c2': -45, 'la_k': 0, 'la_a': 40, 'la_s': 16,
-                                                   'front': True, 'cast': 6}}),
+                               'cx': _cx_design_list({2: 2}),
                                'shadow': 18, 'shadow_op': 55, 'shadow_dx': -5, 'shadow_dy': 7, 'corners': [True, True, True, True]}),
         ("Doblez + levantadas", {'radius': 0, 'grad': True, 'color': '#fff6b0', 'color2': '#fbd34d', 'grad_angle': 35,
                                  'strip': 30, 'strip_op': 32, 'strip_y': 0, 'fold': True,
-                                 'cx': _cx_with({3: {'mode': 1, 'size': 80, 'tip': 100, 'c1': 50, 'c2': 50, 'c3': -70, 'rlen': 55,
-                                                     'fa_k': 0, 'fa_a': 55, 'fa_s': 12, 'fb_k': 1, 'fb_a': 28, 'fb_s': 12},
-                                                 0: {'mode': 2, 'size': 60, 'tip': 0, 'c1': -40, 'c2': -40, 'la_k': 0, 'la_a': 35, 'la_s': 14, 'cast': 4},
-                                                 1: {'mode': 2, 'size': 45, 'tip': 0, 'c1': -40, 'c2': -40, 'la_k': 0, 'la_a': 35, 'la_s': 12, 'cast': 4}}),
+                                 'cx': _cx_design_list({3: 1, 0: 2, 1: 2}),
                                  'shadow': 18, 'shadow_op': 55, 'shadow_dx': -5, 'shadow_dy': 7, 'corners': [True, True, True, True]}),
         ("Nota plana", {'radius': 14, 'grad': False, 'color': '#fef08a', 'strip': 0, 'fold': False,
                         'shadow': 8, 'shadow_op': 45, 'shadow_dx': 0, 'shadow_dy': 3, 'corners': [True, True, True, True]}),
@@ -19847,10 +19960,11 @@ class BaseNoteDialog(QDialog):
         old = int(c['mode'])
         if m == old:
             return
-        if m:                                            # al cambiar de modo, la punta y las curvas toman las t\u00edpicas del modo nuevo (el tama\u00f1o se conserva)
+        if m:                                            # [PACK159] al cambiar de modo, la esquina toma el dise\u00f1o por defecto del modo nuevo (forma, curvas y luces)
             nd = _cx_new(i, m)
-            for k in ('tip', 'c1', 'p1', 'c2', 'p2'):
-                c[k] = nd[k]
+            for k, v in nd.items():
+                if k != 'mode':
+                    c[k] = v
         c['mode'] = m
         if m and self._lc != i:
             self._select_corner(i)                       # los controles pasan a mostrar esa esquina
