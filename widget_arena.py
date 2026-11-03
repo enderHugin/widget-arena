@@ -2228,6 +2228,47 @@ def _text_layer_draw(painter, html, w, h, family, size, center=False, fit=False)
     painter.restore()
 
 
+class _WebZoomFilter(QObject):
+    """[PACK161] Ctrl+rueda sobre la capa web cambia su zoom (y el widget lo recuerda). El visor web reparte los eventos entre widgets hijos
+    que crea cuando quiere, as\u00ed que el filtro se pone tambi\u00e9n a cada hijo que aparezca."""
+    def __init__(self, win, view):
+        super().__init__(view)
+        self._win = win
+        view.installEventFilter(self)
+        for c in view.findChildren(QWidget):
+            c.installEventFilter(self)
+        fp = view.focusProxy()
+        if fp is not None:
+            fp.installEventFilter(self)
+
+    def refresh(self):
+        v = self.parent()
+        for c in v.findChildren(QWidget):
+            c.installEventFilter(self)
+        fp = v.focusProxy()
+        if fp is not None:
+            fp.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        try:
+            t = ev.type()
+            if t == QEvent.ChildAdded:
+                ch = ev.child()
+                if ch is not None and ch.isWidgetType():
+                    ch.installEventFilter(self)
+            elif t == QEvent.Wheel:
+                m = ev.modifiers()
+                if (m & Qt.ControlModifier) and not (m & (Qt.AltModifier | Qt.ShiftModifier | Qt.MetaModifier)) and not getattr(self._win, '_selected_layer_num', 0):      # con una capa seleccionada, Ctrl+rueda sigue siendo su tama\u00f1o
+                    dy = ev.angleDelta().y()
+                    if dy:
+                        self._win._web_zoom_by(1.1 ** (dy / 120.0))
+                    ev.accept()
+                    return True
+        except RuntimeError:
+            pass
+        return False
+
+
 class StickerWindow(QMainWindow):
 
     MULTI_CLICK_MSEC = 400   # ventana (ms) para encadenar doble / triple clic
@@ -2419,7 +2460,52 @@ class StickerWindow(QMainWindow):
         self.layer2_web = view
         self._web_is_real = True
         self._web_loaded_url = None
+        self._web_zoom_filter = _WebZoomFilter(self, view)      # [PACK161]
+        view.loadFinished.connect(lambda _ok: (self._web_zoom_filter.refresh(), self._web_zoom_apply()))
         return view
+
+    # ---- [PACK161] zoom de la capa web: se guarda en la capa 2 (web_zoom) y se aplica siempre que se carga la pagina
+    WEB_ZOOM_MIN, WEB_ZOOM_MAX = 0.25, 5.0
+
+    def _web_zoom_value(self):
+        try:
+            return max(self.WEB_ZOOM_MIN, min(self.WEB_ZOOM_MAX, float(self.current_template_data.get('layer2', {}).get('web_zoom', 1.0))))
+        except (TypeError, ValueError, AttributeError):
+            return 1.0
+
+    def _web_zoom_apply(self):
+        v = self.layer2_web
+        if getattr(self, '_web_is_real', False) and hasattr(v, 'setZoomFactor'):
+            z = self._web_zoom_value()
+            try:
+                if abs(v.zoomFactor() - z) > 0.001:
+                    v.setZoomFactor(z)
+            except Exception as e:
+                log_warn(self.widget_id, "Zoom de la capa web: %s" % e)
+
+    def _web_zoom_set(self, z):
+        z = round(max(self.WEB_ZOOM_MIN, min(self.WEB_ZOOM_MAX, float(z))), 2)
+        l2 = self.current_template_data.setdefault('layer2', {})
+        if abs(z - 1.0) < 0.005:
+            l2.pop('web_zoom', None)
+        else:
+            l2['web_zoom'] = z
+        self._web_zoom_apply()
+        try:
+            self.manager._osd("Zoom %d %%" % int(round(z * 100)), 900)
+        except Exception:
+            pass
+        t = getattr(self, '_web_zoom_timer', None)
+        if t is None:
+            t = self._web_zoom_timer = QTimer(self)
+            t.setSingleShot(True)
+            t.setInterval(400)
+            t.timeout.connect(self._save_changes_to_manager)         # una sola vez al dejar de girar la rueda
+        t.start()
+        return z
+
+    def _web_zoom_by(self, factor):
+        return self._web_zoom_set(self._web_zoom_value() * factor)
 
     def _release_web_view(self):
         """Destruye el Chromium de esta nota cuando la capa 2 deja de ser web."""
@@ -3100,6 +3186,7 @@ class StickerWindow(QMainWindow):
                 self._force_web_reload = False
             self.layer2_web.setGeometry(l2_geom)
             self.layer2_web.setStyleSheet(f"background-color: {l2_background_color};")
+            self._web_zoom_apply()                         # [PACK161]
             self._web_clip_apply()                         # [PACK134]
             self.layer2_web.show()
             active_l2_widget = self.layer2_web
@@ -12684,7 +12771,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 160                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 161                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22435,6 +22522,12 @@ class WidgetManager(QObject):
                 add(cm_, "Reducir el texto para que quepa", lambda c, k=n_: self._toggle_layer_text_opt(widget_id, k, 'text_fit', c),
                     checked=_text_opt(ld, 'text_fit', template_data), enabled=(lt == 'text'),
                     tip="Si el texto no cabe en su recuadro, reduce todas sus tipograf\u00edas por igual hasta que encaje (se aplica al terminar de escribir)")
+            if lt == 'web' or full:                              # [PACK161]
+                _wwin = self.widgets.get(widget_id)
+                add(cm_, "Acercar la web (Ctrl+rueda)", lambda: _wwin and _wwin._web_zoom_by(1.1), enabled=(lt == 'web' and _wwin is not None))
+                add(cm_, "Alejar la web (Ctrl+rueda)", lambda: _wwin and _wwin._web_zoom_by(1 / 1.1), enabled=(lt == 'web' and _wwin is not None))
+                add(cm_, "Zoom de la web al 100 %", lambda: _wwin and _wwin._web_zoom_set(1.0), enabled=(lt == 'web' and _wwin is not None),
+                    tip="El zoom que dejes (Ctrl+rueda sobre la web o estas opciones) se conserva al reabrir el programa")
             if lt == 'png' or full:
                 add(cm_, "Efectos de imagen (tono, color base, brillo...)", lambda k=n_: self._edit_widget_image_effects(widget_id, k),
                     enabled=(lt == 'png'))
@@ -22498,7 +22591,12 @@ class WidgetManager(QObject):
         add(sty_menu, "Pegar forma de papel (json)", lambda: self._paste_widget_data(widget_id, False),
             tip="Aplica una forma de papel copiada a este widget y conserva su texto",
             enabled=self._clip_widget_data() is not None)
-        aspect_menu.addMenu(sty_menu)
+        _l1_is_text = template_data.get('layer1', {}).get('type', 'text') == 'text'          # [PACK161]
+        aspect_menu.setToolTipsVisible(True)
+        _a_sty = aspect_menu.addMenu(sty_menu)
+        if not full and not _l1_is_text:
+            _a_sty.setEnabled(False)
+            _a_sty.setToolTip("La forma de papel es para widgets cuya capa 1 es texto")
         fr_menu = QMenu("Marco", aspect_menu)                           # [PACK131]
         fr_menu.setToolTipsVisible(True)
         add(fr_menu, "Crear un marco...", lambda: self.generate_frame(widget_id),
@@ -22523,7 +22621,10 @@ class WidgetManager(QObject):
             tip="Aplica a este widget un marco guardado en un archivo (.waframe o .json), con el tama\u00f1o actual")
         add(fr_menu, "Exportar este marco (.waframe)...", lambda: self.export_frame(widget_id), enabled=self._is_frame(state),
             tip="Guarda este marco en un archivo .waframe para compartirlo")
-        aspect_menu.addMenu(fr_menu)
+        _a_fr = aspect_menu.addMenu(fr_menu)
+        if not full and _l1_is_text:
+            _a_fr.setEnabled(False)
+            _a_fr.setToolTip("El marco es para widgets cuya capa 1 es una imagen (en una nota con texto en la capa 1 no se usa)")
         crown_menu = QMenu("Corona", aspect_menu)
         add(crown_menu, "Tono, saturaci\u00f3n, brillo y opacidad...", lambda: self.edit_crown_style(widget_id))
         add(crown_menu, "Orientaci\u00f3n de la imagen (inclinaci\u00f3n de la corona)...", lambda: self.edit_upright_angle(widget_id))
