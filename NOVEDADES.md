@@ -1,3 +1,8 @@
+## Pack 165 · 2026-11-06
+- **Puente de red para páginas locales.** Una página HTML guardada en tu equipo (como el mando de la TV) puede pedir a Widget Arena que haga una petición GET por ella: escribe en su consola `__WA_HTTP_GET__<dirección>`, la aplicación hace la petición y le contesta llamando a `window.__waNet({url, ok, status, error})`. Así funciona aunque el visor web bloquee las peticiones de la página. Solo vale para páginas locales (nunca para páginas de internet), solo `http`/`https`, con un máximo de 20 peticiones cada 5 segundos.
+- Las páginas locales encuentran `window.__waApp` definido cuando están dentro de Widget Arena, para poder elegir el puente por sí solas.
+- Nuevo `mando_tv.html`: opción de envío «Puente (Widget Arena)», elegida por defecto dentro del widget (también para configuraciones guardadas de versiones anteriores, sin perder los códigos), y el aviso dice si la TV contestó, no contestó o no se pudo llegar a ella.
+
 ## Pack 164 · 2026-11-06
 - **Las páginas locales pueden hablar con la red.** El visor web bloqueaba por defecto que una página guardada en tu equipo (un mando, un panel) hiciera peticiones a direcciones de red, como el mando de la TV hacia `http://tv_switch.local/...`. Ahora está permitido.
 - **La consola de la página queda en el registro.** Lo que la página cuenta en su consola (bloqueos, errores de red, avisos de seguridad) se anota en el registro de la aplicación, y también si una página no termina de cargar. Así se puede ver por qué una página local no consigue hacer algo.

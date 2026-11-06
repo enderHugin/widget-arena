@@ -2237,9 +2237,68 @@ class _WaWebPage(QWebEnginePage):
     def __init__(self, profile, parent, widget_id=''):
         super().__init__(profile, parent)
         self._wid = widget_id
+        self._net = None
+        self._net_times = []
+        try:                                       # [PACK165] marca para las paginas locales: "estoy dentro de Widget Arena" (window.__waApp)
+            sc = QWebEngineScript()
+            sc.setName('wa_app')
+            sc.setSourceCode("if(location.protocol==='file:'){window.__waApp=1;}")
+            sc.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+            sc.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+            sc.setRunsOnSubFrames(False)
+            self.scripts().insert(sc)
+        except Exception as e:
+            log_warn(widget_id, "No se pudo marcar la p\u00e1gina como local: %s" % e)
+
+    # ---- [PACK165] puente de red: una pagina LOCAL escribe en su consola "__WA_HTTP_GET__<url>" y la aplicacion hace la peticion GET
+    # (la hace Qt, sin las restricciones del visor) y le contesta llamando a window.__waNet({url, ok, status, error}).
+    def _bridge_get(self, raw):
+        url = QUrl(str(raw).strip())
+        now = time.time()
+        self._net_times = [t for t in self._net_times if now - t < 5.0]
+        if (not url.isValid() or url.scheme().lower() not in ('http', 'https') or not url.host() or len(raw) > 2000):
+            log_warn(self._wid, "Puente de red: direcci\u00f3n no v\u00e1lida: %s" % str(raw)[:120])
+            return
+        if len(self._net_times) >= 20:
+            log_warn(self._wid, "Puente de red: demasiadas peticiones seguidas; se ignora: %s" % url.toString()[:120])
+            return
+        self._net_times.append(now)
+        if self._net is None:
+            self._net = QNetworkAccessManager(self)
+        req = QNetworkRequest(url)
+        try:
+            req.setTransferTimeout(8000)
+        except Exception:
+            pass
+
+        reply = self._net.get(req)
+        reply.finished.connect(lambda: self._bridge_done(reply, url.toString()))
+
+    def _bridge_done(self, reply, url):
+        try:
+            st = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
+            st = int(st) if st is not None else None
+            err = int(getattr(reply.error(), 'value', reply.error()))
+            ok = (st is not None and 200 <= st < 400)
+            res = {'url': url, 'ok': ok, 'status': st, 'error': '' if ok else reply.errorString()}
+            # hay dispositivos que ejecutan la orden y cierran sin contestar: eso no es un fallo claro
+            if st is None and err in (int(getattr(QNetworkReply.NetworkError.RemoteHostClosedError, 'value', 0)), int(getattr(QNetworkReply.NetworkError.TimeoutError, 'value', 0))):
+                res['ok'] = None
+            (log_debug if res['ok'] else log_warn)(self._wid, "Puente de red: %s -> %s %s" % (url[:120], st, res['error']))
+            reply.deleteLater()
+            self.runJavaScript("window.__waNet&&window.__waNet(%s);" % json.dumps(res))
+        except Exception as e:
+            log_warn(self._wid, "Puente de red: %s" % e)
 
     def javaScriptConsoleMessage(self, level, message, line, source):
         try:
+            m = str(message)
+            if m.startswith("__WA_HTTP_GET__"):
+                if str(source).startswith("file:"):                        # solo paginas locales (nunca una pagina de internet)
+                    self._bridge_get(m[len("__WA_HTTP_GET__"):])
+                else:
+                    log_warn(self._wid, "Puente de red: lo ha pedido una p\u00e1gina que no es local; se ignora")
+                return
             lv = int(getattr(level, 'value', level))
             txt = "Consola de la p\u00e1gina: %s (%s:%s)" % (str(message)[:400], os.path.basename(str(source)), line)
             if lv >= 1 and _WEB_CONSOLE_RX.search(str(message)):
@@ -12961,7 +13020,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 164                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 165                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
