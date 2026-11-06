@@ -1,3 +1,8 @@
+## Pack 173 · 2026-11-06
+- **La zona sensible de un widget con marco es el contorno exterior del marco.** Antes se calculaba por transparencia de la imagen, así que la sombra del marco (y su difuminado) contaba como zona de clic. Ahora, con un marco generado, la zona sale de su silueta exacta (sin sombra), y el hueco interior sigue agarrando. Si el marco está girado o es una imagen propia, se sigue usando la imagen como hasta ahora.
+- **Arreglo al pintar la zona de agarre:** cuando había una capa web y un marco a la vez, el recorte de la segunda capa no se aplicaba y el marco rellenaba todo su rectángulo (de ahí el espacio transparente sensible que seguía apareciendo). Ahora cada capa se pinta con su recorte aislado.
+- **Diagnóstico:** Mayús + clic derecho en un widget añade «Mostrar zona sensible (3 s)», que dibuja en rojo la zona que realmente responde al ratón.
+
 ## Pack 172 · 2026-11-06
 - **La corona ya no se mueve al cambiar el tono (Ctrl+rueda).** El borde superior del papel, su inclinación y su zona visible (de donde salen la posición de la corona, el anclaje de los cables y el rectángulo del papel) se medían sobre la imagen *ya con efectos*, buscando píxeles opacos y con brillo; al cambiar el tono (o la saturación, el brillo…) cambiaba el brillo de los píxeles y, con él, lo que se detectaba como papel (en papeles oscuros con un filo claro, el filo cambiaba de sitio). Ahora se mide sobre la imagen original de la capa 2, sin efectos, que no cambia con la rueda. Sin imagen original (capas que no son imagen) se usa la que se muestra, como antes.
 - Esto vale también para el resto de lo que usa esa medida (cables de la nota, zona del papel para las teclas globales) con tono, saturación, brillo y contraste.

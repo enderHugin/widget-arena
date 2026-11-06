@@ -5,6 +5,7 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
 ## Bugs
 - [x] 1. (Pack 171) **Notas: respetar la alineación a la izquierda.** Si el texto está alineado a la izquierda debe obedecer; solo se centra automáticamente en vertical (ejemplo: «personales» sale centrado aunque está alineado a la izquierda).
 - [x] 2. (Pack 172) **La corona se mueve con Ctrl+rueda (hue).** Revisar si pasa con otras acciones de rueda (tamaño, giro, zoom…) y arreglar la causa común.
+- [x] 2b. (Pack 173) **Zona sensible más allá del widget con marco.** La zona de clic se limita al contorno exterior del marco (sin sombra) y se corrige el pintado de la zona con capa web + marco.
 
 ## Funciones
 - [ ] 3. **Ajuste al mover widgets** (atajos de teclado o por defecto en la configuración): a otros widgets, a una rejilla configurable de líneas × columnas, a los límites de la pantalla.

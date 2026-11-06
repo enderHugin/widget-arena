@@ -3588,9 +3588,10 @@ class StickerWindow(QMainWindow):
         if as_block:                                       # un texto agarra por todo su bloque (el rectangulo que ocupa), no solo por las letras
             painter.fillRect(region.boundingRect().translated(geom.topLeft()), Qt.black)
             return
-        painter.setClipRegion(region.translated(geom.topLeft()))
+        painter.save()                                     # [PACK173] con save/restore: tras setClipping(False) una segunda region compleja dejaba el recorte sin efecto y rellenaba toda la capa
+        painter.setClipRegion(region.translated(geom.topLeft()), Qt.ReplaceClip)
         painter.fillRect(geom, Qt.black)
-        painter.setClipping(False)
+        painter.restore()
 
     def _scaled_cached(self, slot, pixmap, size, aspect_mode):
         """Escalado suave cacheado: solo se recalcula si cambia el pixmap, el tamano o el modo."""
@@ -3631,7 +3632,8 @@ class StickerWindow(QMainWindow):
 
             if self.layer1_label.isVisible():
                 if (l1_is_image or l1_is_text) and not self.layer1_label.pixmap().isNull():
-                    self._mask_fill(painter, l1_geom, self._layer_pixmap_mask('l1', self.layer1_label.pixmap()), l1_is_text)
+                    _l1_rg = self._l1_exact_hit() if l1_is_image else None          # [PACK173]
+                    self._mask_fill(painter, l1_geom, _l1_rg if _l1_rg is not None else self._layer_pixmap_mask('l1', self.layer1_label.pixmap()), l1_is_text)
                 else:
                     painter.fillRect(l1_geom, Qt.black) 
             for _ch in (self.layer1_editor, self.fold_badge, self.bell_badge, self.crown_badge):          # [PACK166] lo que se pulsa dentro de la ventana siempre agarra
@@ -3647,6 +3649,37 @@ class StickerWindow(QMainWindow):
             log_error(f"{self.widget_id} Mask", f"Fallo al crear la mascara: {e}")
             self._hit_win = None
             self.clearMask()
+
+    def _l1_exact_hit(self):
+        """[PACK173] Zona (coordenadas de la capa 1) que agarra un marco dibujado por el programa: su silueta exacta (aro + hueco), sin la sombra exterior
+        suave que lleva dibujada la imagen. None si la capa 1 no es un marco de la casa (entonces se usa la imagen)."""
+        try:
+            td = self.current_template_data
+            l1 = td.get('layer1') or {}
+            if (l1.get('type') != 'png' or not isinstance(td.get('frame_shape'), dict)
+                    or not os.path.basename(str(l1.get('content') or '').replace('\\', '/')).startswith(('marco_', 'vivo_'))):
+                return None
+            p1 = self.layer1_label.pixmap()
+            if p1.isNull():
+                return None
+            key = (p1.cacheKey(), p1.width(), p1.height())
+            c = getattr(self, '_l1_hit_cache', None)
+            if c is not None and c[0] == key:
+                return c[1]
+            reg = _bool_to_region(_image_alpha(self._silhouette_of_l1()) >= 128)
+            reg = reg if not reg.isEmpty() else None
+            self._l1_hit_cache = (key, reg)
+            return reg
+        except Exception as e:
+            log_debug(self.widget_id, "Silueta de agarre del marco: %s" % e)
+            return None
+
+    def show_hit_overlay(self):
+        """[PACK173] Diagnostico: dibuja unos segundos la zona sensible de este widget."""
+        try:
+            self._hit_overlay = _HitOverlay(self, getattr(self, '_hit_win', None))
+        except Exception as e:
+            log_warn(self.widget_id, "No se pudo mostrar la zona sensible: %s" % e)
 
     def _web_hit_refresh(self):
         """[PACK169] Mira lo que la pagina dibuja (una foto del visor) y guarda la zona que agarra: lo que se ve, con el interior de su contorno.
@@ -5227,6 +5260,10 @@ class StickerWindow(QMainWindow):
                 menu.insertSeparator(actions[0])
             else:
                 menu.addAction(edit_link_action)
+
+        if QApplication.keyboardModifiers() == Qt.ShiftModifier:          # [PACK173] Mayus + clic derecho: opciones de diagnostico
+            menu.addSeparator()
+            menu.addAction("Mostrar zona sensible (3 s)", self.show_hit_overlay)
 
         menu.exec(event.globalPos())
 
@@ -13237,7 +13274,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 172                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 173                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -17674,6 +17711,32 @@ def _bn_body_path(bp):
                 shape_fn = _fold_shapes(_cx_shape(i, cc), pw, ph, mg)[0]
                 body = shape_fn(body).intersected(whole)
     return body, pw + 2 * mg, ph + 2 * mg, mg
+
+
+class _HitOverlay(QWidget):
+    """[PACK173] Muestra durante unos segundos la zona que agarra el raton de un widget (rojo) y los limites de su ventana (azul)."""
+
+    def __init__(self, parent, region):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.region = QRegion(region) if region is not None else QRegion(0, 0, parent.width(), parent.height())
+        self.setGeometry(0, 0, parent.width(), parent.height())
+        QTimer.singleShot(3000, self.close)
+        self.show()
+        self.raise_()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setClipRegion(self.region)
+        p.fillRect(self.rect(), QColor(255, 40, 40, 110))
+        p.setClipping(False)
+        p.setPen(QPen(QColor(60, 140, 255, 220), 1, Qt.DashLine))
+        p.drawRect(self.rect().adjusted(0, 0, -1, -1))
+        p.setPen(QColor(255, 255, 255, 230))
+        br = self.region.boundingRect()
+        p.drawText(6, 14, "zona sensible: %dx%d de %dx%d" % (br.width(), br.height(), self.width(), self.height()))
+        p.end()
 
 
 class _UnderVeil(QWidget):
