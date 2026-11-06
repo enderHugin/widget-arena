@@ -1,3 +1,7 @@
+## Pack 168 · 2026-11-06
+- **Las páginas locales recuerdan su estado dentro del widget.** Una página HTML guardada en tu equipo (como `calendario_led.html`, que guarda el color y el modo día/mes con `localStorage`) no conservaba esos datos de forma fiable: Chromium no mantiene bien el almacenamiento de las páginas `file://` y además lo comparte entre todas las páginas locales. Ahora cada widget lleva su propio `localStorage` y sus cookies, guardados dentro del propio widget (capa 2, `web_state`): se restauran antes de que cargue la página, cada cambio se guarda al momento (sin llenar el historial de deshacer) y un widget no ve lo de otro.
+- Si la página se recarga por dentro, vuelve con lo último guardado. El estado de las páginas locales sigue viajando al exportar (Pack 163). Las páginas de internet no cambian.
+
 ## Pack 167 · 2026-11-06
 - **Se deshace el recorte de la ventana del Pack 166** (quitaba las sutilezas de los widgets translúcidos: el cuerpo casi transparente y el bloque del texto se veían distintos). La ventana vuelve a dibujarse entera.
 - **La zona que agarra el widget toma el borde como referencia:** es zona del widget todo lo que encierra su contorno visible (aunque dentro sea casi transparente), no los halos tenues de fuera ni las esquinas cortadas o redondeadas. En Windows, cuando el ratón está fuera de esa zona el sistema pasa el clic al widget (o ventana) de debajo; en otros sistemas no cambia nada.

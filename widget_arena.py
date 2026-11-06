@@ -2239,6 +2239,7 @@ class _WaWebPage(QWebEnginePage):
         self._wid = widget_id
         self._net = None
         self._net_times = []
+        self.state_sink = None                     # [PACK168] funcion que recibe el estado (localStorage/cookies) de la pagina local
         try:                                       # [PACK165] marca para las paginas locales: "estoy dentro de Widget Arena" (window.__waApp)
             sc = QWebEngineScript()
             sc.setName('wa_app')
@@ -2293,6 +2294,10 @@ class _WaWebPage(QWebEnginePage):
     def javaScriptConsoleMessage(self, level, message, line, source):
         try:
             m = str(message)
+            if m.startswith("__WA_STATE__"):                                  # [PACK168] el estado de una pagina local (solo si lo dice una pagina local)
+                if str(source).startswith("file:") and self.state_sink is not None and len(m) <= WEB_STATE_MAX:
+                    self.state_sink(json.loads(m[len("__WA_STATE__"):]))
+                return
             if m.startswith("__WA_HTTP_GET__"):
                 if str(source).startswith("file:"):                        # solo paginas locales (nunca una pagina de internet)
                     self._bridge_get(m[len("__WA_HTTP_GET__"):])
@@ -2548,6 +2553,10 @@ class StickerWindow(QMainWindow):
             view.setPage(_WaWebPage(self.manager.web_profile, view, self.widget_id))
         except Exception as e_pg:
             log_warn(self.widget_id, "No se pudo vigilar la consola de la p\u00e1gina web: %s" % e_pg)
+        try:
+            view.page().state_sink = self._web_state_store                   # [PACK168]
+        except Exception as e_sk:
+            log_warn(self.widget_id, "No se pudo enlazar el estado de la p\u00e1gina web: %s" % e_sk)
         view.loadFinished.connect(lambda ok: None if ok else log_warn(self.widget_id, "La p\u00e1gina web no termin\u00f3 de cargar: %s" % view.url().toString()))
         return view
 
@@ -2578,10 +2587,66 @@ class StickerWindow(QMainWindow):
             return None
         return st
 
-    def _web_state_install(self, l2_data):
-        """Si la capa trae 'web_state' (de un archivo importado), lo pone al crearse la siguiente pagina, antes de que corran sus scripts."""
+    def _web_state_store(self, st):
+        """[PACK168] Guarda en la capa 2 el estado que una pagina local acaba de comunicar (localStorage y cookies)."""
+        l2 = self.current_template_data.get('layer2')
+        if not isinstance(st, dict) or not isinstance(l2, dict) or l2.get('type') != 'web':
+            return
+        ls = st.get('ls')
+        if not isinstance(ls, dict):
+            return
+        new = {'o': 'file:', 'ls': {str(k): str(v) for k, v in ls.items()}, 'ck': _ck_to_str(st.get('ck'))}
+        if not new['ls'] and not new['ck']:
+            if 'web_state' not in l2:
+                return
+            del l2['web_state']
+        elif l2.get('web_state') == new:
+            return
+        else:
+            l2['web_state'] = new
+        if getattr(self, '_web_shim_script', None) is not None:                     # si la pagina se recarga por dentro, vuelve con lo ultimo
+            self._web_shim_put(l2)
+        try:
+            self.manager.update_widget_state(self.widget_id, self.current_template_data)
+        except Exception as e:
+            log_warn(self.widget_id, "No se pudo guardar el estado de la p\u00e1gina web: %s" % e)
+
+    def _web_shim_put(self, l2_data):
+        """Pone (o renueva) el script que da a la pagina local su almacenamiento propio con el estado guardado."""
+        self._web_shim_remove()
         st = l2_data.get('web_state') if isinstance(l2_data, dict) else None
-        if not isinstance(st, dict) or not getattr(self, '_web_is_real', False):
+        try:
+            sc = QWebEngineScript()
+            sc.setName('wa_shim')
+            sc.setSourceCode(web_shim_script(st if isinstance(st, dict) and st.get('o') == 'file:' else {}))
+            sc.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+            sc.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+            sc.setRunsOnSubFrames(False)
+            self.layer2_web.page().scripts().insert(sc)
+            self._web_shim_script = sc
+        except Exception as e:
+            log_warn(self.widget_id, "No se pudo preparar el almacenamiento de la p\u00e1gina local: %s" % e)
+
+    def _web_shim_remove(self):
+        sc = getattr(self, '_web_shim_script', None)
+        self._web_shim_script = None
+        if sc is not None:
+            try:
+                self.layer2_web.page().scripts().remove(sc)
+            except Exception:
+                pass
+
+    def _web_state_install(self, l2_data, url_str=''):
+        """Si la capa trae 'web_state' (de un archivo importado), lo pone al crearse la siguiente pagina, antes de que corran sus scripts.
+        Una pagina local (file://) recibe ademas su propio localStorage y sus cookies, guardados en el widget."""
+        if not getattr(self, '_web_is_real', False):
+            return
+        self._web_shim_remove()
+        if str(url_str).startswith('file:'):                                        # [PACK168]
+            self._web_shim_put(l2_data)
+            return
+        st = l2_data.get('web_state') if isinstance(l2_data, dict) else None
+        if not isinstance(st, dict):
             return
         self._web_state_done(force=True)
         try:
@@ -2663,6 +2728,7 @@ class StickerWindow(QMainWindow):
         if not self._web_is_real:
             return
         view = self.layer2_web
+        self._web_shim_script = None
         view.hide()
         view.setParent(None)
         view.deleteLater()
@@ -3332,7 +3398,7 @@ class StickerWindow(QMainWindow):
                 url_str = 'http://' + url_str
             self._ensure_web_view()
             if self._force_web_reload or self._web_loaded_url != url_str:
-                self._web_state_install(l2_data)                      # [PACK163]
+                self._web_state_install(l2_data, url_str)             # [PACK163] [PACK168]
                 self.layer2_web.setUrl(QUrl(url_str))
                 self._web_loaded_url = url_str
                 self._force_web_reload = False
@@ -13050,7 +13116,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 167                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 168                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -14291,6 +14357,30 @@ WEB_STATE_CAPTURE_JS = ("(function(){try{var o={},i,k;for(i=0;i<localStorage.len
 WEB_STATE_MAX = 400000
 
 
+def _ck_to_dict(ck):
+    """Cookies como dict desde un dict o desde el texto 'a=b; c=d'."""
+    if isinstance(ck, dict):
+        return {str(k): str(v) for k, v in ck.items()}
+    out = {}
+    for part in str(ck or '').split(';'):
+        n, _s, v = part.strip().partition('=')
+        if n and _s:
+            out[n] = v
+    return out
+
+
+def _ck_to_str(ck):
+    return '; '.join('%s=%s' % (k, v) for k, v in _ck_to_dict(ck).items())
+
+
+def web_shim_script(st):
+    """Codigo que da a una pagina local su propio localStorage y sus cookies (por widget), con el estado guardado, y avisa de cada cambio."""
+    st = st if isinstance(st, dict) else {}
+    ls = st.get('ls') if isinstance(st.get('ls'), dict) else {}
+    d = json.dumps({'ls': {str(k): str(v) for k, v in ls.items()}, 'ck': _ck_to_dict(st.get('ck'))})
+    return WEB_SHIM_JS.replace('@STATE@', d)
+
+
 def web_state_script(st):
     """Codigo que pone el estado guardado de una pagina (solo si es de su mismo origen)."""
     ls = st.get('ls') if isinstance(st.get('ls'), dict) else {}
@@ -14298,6 +14388,29 @@ def web_state_script(st):
     return ("(function(){try{var S=" + d + ";var o=(location.protocol==='file:')?'file:':location.origin;if(o!==S.o)return;"
             "for(var k in S.ls){try{localStorage.setItem(k,S.ls[k]);}catch(e){}}"
             "if(S.ck){S.ck.split('; ').forEach(function(c){try{document.cookie=c+'; path=/; max-age=31536000';}catch(e){}});}}catch(e){}})();")
+
+
+# ---- [PACK168] almacenamiento propio de las paginas locales: localStorage y cookies viven en la capa 2 del widget (web_state), no en el perfil del visor
+WEB_SHIM_JS = r"""(function(){try{
+if(location.protocol!=='file:'||window.top!==window)return;
+var I=@STATE@,ls={},ck={},k,t=null;
+for(k in (I.ls||{}))ls[k]=String(I.ls[k]);
+for(k in (I.ck||{}))ck[k]=String(I.ck[k]);
+function has(o,p){return Object.prototype.hasOwnProperty.call(o,p);}
+function rep(){if(t)return;t=setTimeout(function(){t=null;try{console.log('__WA_STATE__'+JSON.stringify({ls:ls,ck:ck}));}catch(e){}},250);}
+var api={getItem:function(k){k=String(k);return has(ls,k)?ls[k]:null;},setItem:function(k,v){ls[String(k)]=String(v);rep();},removeItem:function(k){delete ls[String(k)];rep();},clear:function(){ls={};rep();},key:function(i){var a=Object.keys(ls);return i<a.length?a[i]:null;}};
+var px=new Proxy(api,{get:function(o,p){if(p==='length')return Object.keys(ls).length;if(p in o)return o[p];return(typeof p==='string'&&has(ls,p))?ls[p]:undefined;},
+set:function(o,p,v){ls[String(p)]=String(v);rep();return true;},deleteProperty:function(o,p){delete ls[String(p)];rep();return true;},
+has:function(o,p){return p in o||has(ls,p);},ownKeys:function(){return Object.keys(ls);},
+getOwnPropertyDescriptor:function(o,p){return has(ls,p)?{value:ls[p],enumerable:true,configurable:true,writable:true}:undefined;}});
+Object.defineProperty(window,'localStorage',{configurable:true,get:function(){return px;}});
+Object.defineProperty(document,'cookie',{configurable:true,
+get:function(){return Object.keys(ck).map(function(n){return n+'='+ck[n];}).join('; ');},
+set:function(s){var p=String(s).split(';'),nv=p[0],i=nv.indexOf('=');if(i<0)return;var n=nv.slice(0,i).trim(),v=nv.slice(i+1).trim(),gone=false,j,a,d;
+for(j=1;j<p.length;j++){a=p[j].trim().toLowerCase();if(a.indexOf('max-age=')===0&&parseInt(a.slice(8),10)<=0)gone=true;if(a.indexOf('expires=')===0){d=Date.parse(p[j].trim().slice(8));if(!isNaN(d)&&d<Date.now())gone=true;}}
+if(gone)delete ck[n];else ck[n]=v;rep();}});
+}catch(e){}})();"""
+
 
 
 def ask_export_personal(parent, n_web):
