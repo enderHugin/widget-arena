@@ -1,3 +1,7 @@
+## Pack 171 · 2026-11-06
+- **Notas: el texto alineado a la izquierda se respeta.** En una nota el texto sin alineación propia se centra; pero Qt, al guardar el texto del editor, *no escribe* la alineación cuando es a la izquierda (es la de por defecto), así que un párrafo que habías alineado a la izquierda volvía a dibujarse centrado al terminar de editar. Ahora, al guardar, la alineación izquierda se escribe de forma explícita (`align="left"`), y el texto solo se centra automáticamente en vertical.
+- Las notas que ya tenías guardadas con un párrafo «perdido» en el centro no se pueden recuperar solas (no se sabe si estaba a la izquierda o sin alineación): hay que volver a alinearlas una vez.
+
 ## Pack 170 · 2026-11-06
 - **El estado de las páginas locales ya no depende del «origen» que da el visor.** En el Pack 168 el aviso de cambios (color, modo…) llegaba por la consola de la página y solo se aceptaba si venía de un archivo local; un script que el programa inyecta no siempre figura así, y el estado podía quedarse sin guardar. Ahora el aviso lleva una clave propia de cada widget (que una página de internet no conoce) y se acepta venga de donde venga; además, cada 2,5 s la aplicación pregunta a la página por su estado como red de seguridad.
 - Comprobado con clones: cada widget (y cada clon) tiene su propio almacenamiento, el clon parte de una copia del estado del original y desde ahí son independientes. Antes, todas las páginas locales compartían el mismo `localStorage` del navegador interno.

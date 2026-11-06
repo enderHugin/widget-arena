@@ -2174,6 +2174,19 @@ def generate_button_images(clean_text, bg_color, font, images_dir, text_color=No
 
 # --- Clase de la Ventana del Widget Individual ---
 
+def _html_keep_left(html):
+    """[PACK171] QTextEdit.toHtml() no escribe la alineacion cuando es a la izquierda (es la de por defecto), pero en una nota el texto sin
+    alineacion propia se centra: un parrafo alineado a la izquierda volvia a centrarse al dibujarse. Aqui se escribe de forma explicita."""
+    try:
+        if not isinstance(html, str) or '<body' not in html:
+            return html
+        head, sep, body = html.partition('<body')
+        body = re.sub(r'<(p|li|h[1-6]) (?![^>]*\balign=)', r'<\1 align="left" ', body)
+        return head + sep + body
+    except Exception:
+        return html
+
+
 def _text_opt(l_data, key, td=None):
     """[PACK160] Opcion de texto de una capa (text_center / text_fit). Sin valor guardado: activada en los widgets tipo nota, apagada en los demas."""
     v = l_data.get(key) if isinstance(l_data, dict) else None
@@ -8055,7 +8068,7 @@ class InlineTextEditor(QTextEdit):
                 return
             elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
                 self._finishing = True
-                self.editing_finished.emit(self.toHtml())
+                self.editing_finished.emit(_html_keep_left(self.toHtml()))          # [PACK171]
                 self.clearFocus()
                 self._finishing = False
                 event.accept()
@@ -8092,7 +8105,7 @@ class InlineTextEditor(QTextEdit):
 
         if not self._finishing:
             log_debug("Editor", "Focus out real. Finalizando edicion.")
-            self.editing_finished.emit(self.toHtml())
+            self.editing_finished.emit(_html_keep_left(self.toHtml()))          # [PACK171]
         super().focusOutEvent(event)
 
     def wheelEvent(self, event: QWheelEvent):
@@ -13207,7 +13220,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 170                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 171                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -24569,7 +24582,7 @@ class WidgetManager(QObject):
             c.setCharFormat(nf)
             if text:                                  # [PACK151] texto estandar con el formato de la nota
                 c.insertText(text)
-            return d.toHtml()
+            return _html_keep_left(d.toHtml())          # [PACK171]
         except Exception:
             return text
 
