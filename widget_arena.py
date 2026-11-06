@@ -10091,11 +10091,35 @@ class WidgetBrowserWindow(QMainWindow):
         it = self.tree.currentItem()
         return it.data(0, Qt.UserRole) if it is not None else None
 
+    def _sync_family_filter(self):
+        """[PACK174] Una entrada 'Familia: X' en el filtro por cada familia de los widgets que hay ahora."""
+        fams = {}
+        for w, st in self.m.global_state.items():
+            if isinstance(st, dict):
+                for g in self.m.widget_groups(w):
+                    fams.setdefault(g.lower(), g)
+        want = [("Familia: " + v, 'fam:' + k) for k, v in sorted(fams.items())]
+        have = [(self.filter.itemText(i), self.filter.itemData(i)) for i in range(self.filter.count()) if str(self.filter.itemData(i)).startswith('fam:')]
+        if want == have:
+            return
+        cur = self.filter.currentData()
+        self.filter.blockSignals(True)
+        for i in range(self.filter.count() - 1, -1, -1):
+            if str(self.filter.itemData(i)).startswith('fam:'):
+                self.filter.removeItem(i)
+        for t, k in want:
+            self.filter.addItem(t, k)
+        j = self.filter.findData(cur)
+        self.filter.setCurrentIndex(j if j >= 0 else 0)
+        self.filter.blockSignals(False)
+
     def _passes(self, wid, st):
         text = self.search.text().strip().lower()
         if text and text not in self.m._get_widget_display_name(wid, st).lower():
             return False
         mode = self.filter.currentData()
+        if isinstance(mode, str) and mode.startswith('fam:'):          # [PACK174]
+            return mode[4:] in [g.lower() for g in self.m.widget_groups(wid)]
         on = st.get('enabled', True)
         return not ((mode == "on" and not on) or (mode == "off" and on)
                     or (mode == "roots" and st.get('parent_id') in self.m.global_state)
@@ -10151,6 +10175,7 @@ class WidgetBrowserWindow(QMainWindow):
         from PySide6.QtWidgets import QTreeWidgetItem
         m = self.m
         gs = {k: v for k, v in m.global_state.items() if isinstance(v, dict)}
+        self._sync_family_filter()          # [PACK174]
 
         focus = getattr(m, '_focus_pending', None)
         m._focus_pending = None
@@ -10187,6 +10212,9 @@ class WidgetBrowserWindow(QMainWindow):
             name = m._get_widget_display_name(wid, st)
             it.setText(0, name + (f"   ({len(kids)})" if kids else ""))
             it.setData(0, Qt.UserRole, wid)
+            _fg = tpl_groups(st.get('template_data'))          # [PACK174]
+            if _fg:
+                it.setToolTip(0, "Familias: " + ", ".join(_fg) + (("\nAutor: " + tpl_author(st.get('template_data'))) if tpl_author(st.get('template_data')) else ""))
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(0, Qt.Checked if st.get('enabled', True) else Qt.Unchecked)
             it.setIcon(0, QIcon(self._thumbs[wid]) if wid in self._thumbs else QIcon(self._placeholder()))
@@ -11084,6 +11112,51 @@ class SimpleAddDialog(QDialog):
         self.accept()
 
 
+# [PACK174] Autor y familias de un modelo (o de un widget, que lleva copia de las de su modelo): td['wa_meta'] = {'author': ..., 'groups': [...]}.
+# Un modelo puede estar en varias familias a la vez. Hoy el autor es solo un texto; a futuro (registro, concursos) hara falta comprobar quien puede
+# crear o anadir a una familia: por eso viven juntos, en un bloque propio que admite mas campos.
+FAMILY_NONE = '__none__'
+
+
+def parse_groups(text):
+    """'Relojes modernos, Transparentes' -> ['Relojes modernos', 'Transparentes'] (sin repetidos, sin importar mayusculas)."""
+    raw = text if isinstance(text, (list, tuple)) else re.split(r'[,;\n]', str(text or ''))
+    out = []
+    for x in raw:
+        s = ' '.join(str(x).split())[:60]
+        if s and s.lower() not in [o.lower() for o in out]:
+            out.append(s)
+    return out
+
+
+def tpl_meta(td):
+    m = td.get('wa_meta') if isinstance(td, dict) else None
+    return m if isinstance(m, dict) else {}
+
+
+def tpl_groups(td):
+    return parse_groups(tpl_meta(td).get('groups') or [])
+
+
+def tpl_author(td):
+    return ' '.join(str(tpl_meta(td).get('author') or '').split())[:80]
+
+
+def tpl_set_meta(td, author=None, groups=None):
+    """Pone autor y / o familias en `td` (en el sitio). Sin nada que guardar, quita el bloque."""
+    m = dict(tpl_meta(td))
+    if author is not None:
+        m['author'] = ' '.join(str(author).split())[:80]
+    if groups is not None:
+        m['groups'] = parse_groups(groups)
+    m = {k: v for k, v in m.items() if v not in ('', [], None)}
+    if m:
+        td['wa_meta'] = m
+    else:
+        td.pop('wa_meta', None)
+    return td
+
+
 class TemplateBrowser(QWidget):
     """Elegir el template con el que crear un widget y crear / editar / duplicar / importar templates."""
     THUMB = QSize(120, 90)
@@ -11111,6 +11184,17 @@ class TemplateBrowser(QWidget):
         self.chk_keep.setToolTip("Cambiar el modelo solo cambia el aspecto: el texto (con su formato) del widget se mantiene.")
         self.chk_keep.toggled.connect(lambda on: self.m.set_keep_content_on_apply(on))
         ll.addWidget(self.chk_keep)
+        frow = QHBoxLayout()          # [PACK174] filtrar / agrupar por familia
+        self.fam_filter = QComboBox()
+        self.fam_filter.setToolTip("Muestra solo los modelos de una familia (un modelo puede estar en varias)")
+        self.chk_group = QCheckBox("Agrupar por familia")
+        self.chk_group.setChecked(bool(self.m.global_state.get('tpl_group_by_family', False)))
+        self.chk_group.setToolTip("Una secci\u00f3n por familia; un modelo que est\u00e1 en varias sale en cada una")
+        frow.addWidget(self.fam_filter, 1)
+        frow.addWidget(self.chk_group)
+        ll.addLayout(frow)
+        self.fam_filter.currentIndexChanged.connect(lambda _i: None if self._loading else self.reload(self._name))
+        self.chk_group.toggled.connect(self._group_toggled)
         self.list = QListWidget()
         self.list.setIconSize(self.THUMB)
         self.list.setSpacing(2)
@@ -11129,8 +11213,8 @@ class TemplateBrowser(QWidget):
                 self.btn_edit_base = b
                 b.setToolTip("Abre el editor de forma de papel con la de este modelo y lo guarda con el mismo nombre")
         for text, items in (("Gestionar \u25be", (("Renombrar", self._rename), ("Eliminar", self._delete), None,
-                                                              ("Importar...", self._import), ("Exportar...", self._export), ("Exportar todos los modelos...", self._export_all), None,
-                                                              ("Criterio de aspectos en uso...", self.m.edit_type_criteria))),
+                                                              ("Importar...", self._import), ("Exportar...", self._export), ("Exportar todos los modelos...", self._export_all), ("Exportar una familia...", self._export_family), None,
+                                                              ("Criterio de aspectos en uso...", self.m.edit_type_criteria), ("Mi nombre de autor...", lambda: self.m.ask_user_name(self)))),
                             ("Con un widget \u25be", (("Guardar un widget de la pantalla...", self._from_widget),
                                                       ("Aplicar a un widget...", self._to_widget)))):
             mb = QPushButton(text)
@@ -11226,6 +11310,13 @@ class TemplateBrowser(QWidget):
         self._f[("top", "x")], self._f[("top", "y")] = self._spin(-20000, 20000), self._spin(-20000, 20000)
         top.addRow("Posici\u00f3n inicial X:", self._f[("top", "x")])
         top.addRow("Posici\u00f3n inicial Y:", self._f[("top", "y")])
+        self.f_author = QLineEdit()          # [PACK174]
+        self.f_author.setPlaceholderText("vac\u00edo = ti (%s)" % self.m.user_name())
+        self.f_groups = QLineEdit()
+        self.f_groups.setPlaceholderText("varias, separadas por comas (ej.: Relojes modernos, Transparentes)")
+        self.f_groups.setToolTip("Un modelo puede estar en varias familias a la vez. Con familias, el modelo siempre lleva autor.")
+        top.addRow("Autor:", self.f_author)
+        top.addRow("Familias:", self.f_groups)
         v.addLayout(top)
         for layer, title in (("layer1", "Capa 1 (superior)"), ("layer2", "Capa 2 (inferior)")):
             box = QGroupBox(title)
@@ -11315,6 +11406,9 @@ class TemplateBrowser(QWidget):
                 dflt = {"type": "text", "font_size": 14, "rotation": 0, "scaled_contents": True,
                         "background": "transparent", "color": "#000000", "font_family": "Inter"}.get(key, "")
                 self._wset(w, (d.get(layer) or {}).get(key, dflt))
+        if hasattr(self, 'f_author'):          # [PACK174]
+            self.f_author.setText(tpl_author(d))
+            self.f_groups.setText(", ".join(tpl_groups(d)))
 
     def _collect_form(self):
         d = copy.deepcopy(self._data)
@@ -11326,6 +11420,10 @@ class TemplateBrowser(QWidget):
                 d.setdefault(layer, {}).setdefault("geometry", {})[key[9:]] = val
             else:
                 d.setdefault(layer, {})[key] = val
+        if hasattr(self, 'f_author'):          # [PACK174] autor y familias; con familias, siempre firma
+            tpl_set_meta(d, author=self.f_author.text(), groups=parse_groups(self.f_groups.text()))
+            if tpl_groups(d) and not tpl_author(d):
+                tpl_set_meta(d, author=self.m.user_name())
         return d
 
     def _tab_changed(self, idx):
@@ -11401,6 +11499,13 @@ class TemplateBrowser(QWidget):
         target = None
         types = self.m.widget_types_in_use()       # [PACK67] primero, los TIPOS en uso en este set
         self._types = {t['key']: t for t in types}
+        fams = self.m.template_families()          # [PACK174]
+        self._sync_fam_filter(fams)
+        fam_sel = self.fam_filter.currentData()
+        fam_sel = None if fam_sel in (None, '') else fam_sel
+        fam_view = fam_sel is not None or (self.chk_group.isChecked() and bool(fams))
+        if fam_sel is not None:
+            types = []          # con un filtro de familia no se ofrecen los aspectos en uso
         used, rest, use = self.m.template_files_grouped()
         first_type = None
         bn = dict(self.m.base_note_templates())       # [PACK89] las notas base (del editor de forma) van PRIMERO, con fondo propio
@@ -11414,6 +11519,11 @@ class TemplateBrowser(QWidget):
                                      + ("   \u00b7 \u00d7%d" % use[name] if name in use else ""))
                 it.setData(Qt.UserRole, name)
                 it.setIcon(QIcon(_tpl_preview(self.m.load_template_by_name(name), self.THUMB)))
+                _au, _gr = self.m.template_meta(name)          # [PACK174] las familias, bajo el nombre
+                if _gr:
+                    it.setText(it.text() + "\n\u25aa " + "   \u25aa ".join(_gr))
+                if _au or _gr:
+                    it.setToolTip("Autor: %s\nFamilias: %s" % (_au or "-", ", ".join(_gr) or "-"))
                 if bg is not None:
                     it.setBackground(QBrush(bg))
                 self.list.addItem(it)
@@ -11421,6 +11531,8 @@ class TemplateBrowser(QWidget):
                     target = it
         show_hdr = bool(types or bn)
         bn_names = [n for n in order if n in bn]
+        if fam_view:
+            bn_names = []
         if bn_names:
             self.list.addItem(self._hdr_item("FORMAS DE PAPEL (creadas con el editor)  (%d)" % len(bn_names), "#34d399", BN_BG))
             add_names(bn_names, BN_BG)
@@ -11435,6 +11547,9 @@ class TemplateBrowser(QWidget):
                 if first_type is None:
                     first_type = it
         rest_names = [n for n in order if n not in bn]
+        if fam_view:          # [PACK174] por familias en lugar de formas de papel / modelos
+            rest_names = []
+            self._family_sections(order, add_names, fam_sel, fams)
         if rest_names:
             if show_hdr:
                 self.list.addItem(self._hdr_item("MODELOS  (%d)" % len(rest_names), "#8a8a90"))
@@ -11664,6 +11779,60 @@ class TemplateBrowser(QWidget):
                 self.status.setText(f"No se pudo exportar: {e}")
                 return
             self.status.setText(f"Exportado a {path}" + (f" (con {n_img} im\u00e1genes)" if n_img else ""))
+
+    def _sync_fam_filter(self, fams):
+        """[PACK174] Lista de familias del filtro de Modelos (se conserva la elegida si sigue existiendo)."""
+        want = [("Todas las familias", ''), ("Sin familia", FAMILY_NONE)] + [("%s  (%d)" % (f, len(fams[f])), f) for f in sorted(fams, key=str.lower)]
+        have = [(self.fam_filter.itemText(i), self.fam_filter.itemData(i)) for i in range(self.fam_filter.count())]
+        if want == have:
+            return
+        cur = self.fam_filter.currentData()
+        self.fam_filter.blockSignals(True)
+        self.fam_filter.clear()
+        for t, k in want:
+            self.fam_filter.addItem(t, k)
+        j = self.fam_filter.findData(cur)
+        self.fam_filter.setCurrentIndex(j if j >= 0 else 0)
+        self.fam_filter.blockSignals(False)
+
+    def _family_sections(self, order, add_names, fam_sel, fams):
+        """[PACK174] Secciones de la lista: la familia elegida, o una por familia (cada modelo en todas las suyas) y los que no tienen."""
+        from PySide6.QtWidgets import QListWidgetItem
+        have = {n: self.m.template_meta(n)[1] for n in order}
+        groups = []
+        if fam_sel == FAMILY_NONE:
+            groups = [("SIN FAMILIA", [n for n in order if not have[n]])]
+        elif fam_sel is not None:
+            groups = [("FAMILIA \u00ab%s\u00bb" % fam_sel, [n for n in order if fam_sel.lower() in [g.lower() for g in have[n]]])]
+        else:
+            for f in sorted(fams, key=str.lower):
+                groups.append(("FAMILIA \u00ab%s\u00bb" % f, [n for n in order if f.lower() in [g.lower() for g in have[n]]]))
+            groups.append(("SIN FAMILIA", [n for n in order if not have[n]]))
+        for title, names in groups:
+            if names:
+                self.list.addItem(self._hdr_item("%s  (%d)" % (title, len(names)), "#fbbf24"))
+                add_names(names)
+
+    def _group_toggled(self, on):
+        self.m.global_state['tpl_group_by_family'] = bool(on)
+        self.m.save_global_state(record_history=False)
+        if not self._loading:
+            self.reload(self._name)
+
+    def _export_family(self):
+        """[PACK174] Todos los modelos de una familia a un pack."""
+        fams = self.m.template_families()
+        if not fams:
+            self.status.setText("Todav\u00eda no hay familias: ponles una en el campo \u00abFamilias\u00bb de un modelo.")
+            return
+        names = sorted(fams, key=str.lower)
+        cur = self.fam_filter.currentData()
+        labels = ["%s  (%d)" % (f, len(fams[f])) for f in names]
+        lab, ok = QInputDialog.getItem(self, "Exportar una familia", "Familia:", labels, names.index(cur) if cur in names else 0, False)
+        if ok:
+            p = self.m.export_all_templates(self, family=names[labels.index(lab)])
+            if p:
+                self.status.setText("Familia exportada a %s" % p)
 
     def _export_all(self):
         """[PACK151] Todos los modelos a un archivo."""
@@ -13274,7 +13443,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 173                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 174                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -21858,6 +22027,21 @@ class WidgetManager(QObject):
                 _a.triggered.connect(lambda _c=False, t=_t: self.add_widget_of_type(t))
                 types_menu.addAction(_a)
             menu.addMenu(types_menu)
+        fams_ = self.template_families()          # [PACK174] crear un widget desde una familia de modelos
+        if fams_:
+            fam_menu = QMenu("Nuevo widget de una familia", menu)
+            for _f in sorted(fams_, key=str.lower):
+                sub_ = QMenu("%s    (%d)" % (_f, len(fams_[_f])), fam_menu)
+                for _n in fams_[_f][:40]:
+                    _a = QAction(self.template_icon(_n), _n[:-5], self)
+                    _a.triggered.connect(lambda _c=False, n=_n: self.add_new_widget(template_name=n))
+                    sub_.addAction(_a)
+                sub_.addSeparator()
+                _x = QAction("Exportar esta familia...", self)
+                _x.triggered.connect(lambda _c=False, f=_f: self.export_all_templates(None, family=f))
+                sub_.addAction(_x)
+                fam_menu.addMenu(sub_)
+            menu.addMenu(fam_menu)
         base_note_action = QAction("Nueva nota && forma de papel...", self)
         base_note_action.triggered.connect(self.show_base_note_dialog)
         menu.addAction(base_note_action)
@@ -22526,6 +22710,7 @@ class WidgetManager(QObject):
         os.makedirs(TEMPLATES_DIR, exist_ok=True)
         with open(os.path.join(TEMPLATES_DIR, os.path.basename(name)), 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
+        self.__dict__.get('_tpl_meta_cache', {}).pop(name, None)          # [PACK174]
         return name
 
     def apply_template_to_widget(self, widget_id, name):
@@ -23447,6 +23632,8 @@ class WidgetManager(QObject):
         add(tpl_menu, "Cambiar el modelo de este widget...", lambda: self._change_widget_template(widget_id))
         add(tpl_menu, "Guardar este widget como modelo...", lambda: self.save_widget_as_template(widget_id),
             tip="Lo a\u00f1ade a tus modelos, para crear m\u00e1s widgets iguales a este")          # [PACK150] nombres: 'guardar' = a tu lista; 'exportar' = a un archivo
+        add(tpl_menu, "Familias y autor de este widget...", lambda: self.edit_widget_meta(widget_id),          # [PACK174]
+            tip="Las familias agrupan modelos y widgets (puede estar en varias a la vez); el autor firma el modelo")
         add(tpl_menu, "Exportar este widget a un archivo...", lambda: self._export_widget_template(widget_id),
             tip="Guarda este widget en un archivo .wawidget (comprimido, con sus im\u00e1genes) para llevarlo a otro equipo o compartirlo")
         tpl_menu.addSeparator()
@@ -23987,13 +24174,13 @@ class WidgetManager(QObject):
             print(f"ERROR: No se pudo cargar el modelo desde {path}: {e}")
             QMessageBox.critical(parent_widget, "No se pudo cargar el modelo", f"No se pudo cargar o leer el archivo JSON:\n{e}")
 
-    def export_all_templates(self, parent=None):
+    def export_all_templates(self, parent=None, family=None):
         """[PACK151] Todos mis modelos en un solo archivo .wapack (con las imagenes que usan; la imagen de las formas de papel
         no va dentro: se vuelve a dibujar). Se abre despues con 'Cargar un archivo' o en Packs de widgets."""
         parent = parent if isinstance(parent, QWidget) else self.dialog_parent
         dflt = os.path.basename(DEFAULT_TEMPLATE_FILE)
         styles = []
-        for n in self.template_files():
+        for n in (self.template_families().get(family, []) if family else self.template_files()):          # [PACK174] o solo los de una familia
             if n == dflt:
                 continue
             try:
@@ -24003,15 +24190,15 @@ class WidgetManager(QObject):
         if not styles:
             QMessageBox.information(parent, "Exportar modelos", "Todav\u00eda no tienes modelos.")
             return None
-        path, _flt = QFileDialog.getSaveFileName(parent, "Exportar todos mis modelos", os.path.join(DATA_DIR, "mis_modelos" + PACK_EXT),
+        path, _flt = QFileDialog.getSaveFileName(parent, "Exportar todos mis modelos", os.path.join(DATA_DIR, (wa_stem(family) if family else "mis_modelos") + PACK_EXT),
                                                  "Pack de widgets (*%s)" % PACK_EXT)
 
         if not path:
             return None
         if not path.lower().endswith(PACK_EXT):
             path += PACK_EXT
-        meta = {'name': "Mis modelos", 'author': os.environ.get('USERNAME') or os.environ.get('USER') or "", 'version': "1.0.0",
-                'license': "Uso personal; no redistribuir", 'description': "Todos mis modelos.", 'fonts_scope': 'personal'}
+        meta = {'name': family or "Mis modelos", 'author': self.user_name(), 'version': "1.0.0",
+                'license': "Uso personal; no redistribuir", 'description': ("Familia \u00ab%s\u00bb." % family) if family else "Todos mis modelos.", 'fonts_scope': 'personal'}
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             r = pack_build(path, meta, styles, [], [])
@@ -24038,6 +24225,8 @@ class WidgetManager(QObject):
             l1['content'] = self._blank_keep_format(l1.get('content'), TPL_SAMPLE_TEXT) or TPL_SAMPLE_TEXT
         if isinstance(td.get('base_note'), dict) and 'text' in td['base_note']:
             td['base_note']['text'] = TPL_SAMPLE_TEXT
+        if tpl_groups(td) and not tpl_author(td):          # [PACK174] una familia siempre lleva firma
+            tpl_set_meta(td, author=self.user_name())
         return td
 
     def _attach_web_state(self, widget_id, td, exclude_personal):
@@ -25771,6 +25960,93 @@ class WidgetManager(QObject):
         if tb is not None:
             tb.reload()
         self._osd(msg)
+
+    def user_name(self):
+        """[PACK174] Nombre con el que firmo mis modelos y familias (por ahora solo un texto; por defecto, el usuario del sistema)."""
+        n = ' '.join(str(self.global_state.get('user_name') or '').split())
+        return n[:80] or ' '.join(str(os.environ.get('USERNAME') or os.environ.get('USER') or '').split())[:80]
+
+    def set_user_name(self, name):
+        self.global_state['user_name'] = ' '.join(str(name or '').split())[:80]
+        self.save_global_state(record_history=False)
+
+    def ask_user_name(self, parent=None):
+        n, ok = QInputDialog.getText(parent if isinstance(parent, QWidget) else self.dialog_parent, "Mi nombre de autor",
+                                     "Nombre con el que firmas tus modelos y familias:", text=self.user_name())
+        if ok:
+            self.set_user_name(n)
+        return ok
+
+    def template_meta(self, name):
+        """[PACK174] (autor, [familias]) de un modelo guardado (en cache mientras no cambie el archivo)."""
+        p = os.path.join(TEMPLATES_DIR, os.path.basename(str(name)))
+        try:
+            mt = os.path.getmtime(p)
+        except OSError:
+            return '', []
+        cache = self.__dict__.setdefault('_tpl_meta_cache', {})
+        hit = cache.get(name)
+        if hit is not None and hit[0] == mt:
+            return hit[1], list(hit[2])
+        td = self.load_template_by_name(name)
+        a, g = tpl_author(td), tpl_groups(td)
+        cache[name] = (mt, a, g)
+        return a, list(g)
+
+    def template_families(self):
+        """[PACK174] {familia: [modelos]} de todos los modelos (la familia lleva la escritura de la primera vez que aparece)."""
+        out, low = {}, {}
+        for n in self.template_files():
+            for g in self.template_meta(n)[1]:
+                k = low.setdefault(g.lower(), g)
+                out.setdefault(k, []).append(n)
+        return out
+
+    def widget_groups(self, wid):
+        st = self.global_state.get(wid)
+        return tpl_groups(st.get('template_data')) if isinstance(st, dict) else []
+
+    def set_widget_meta(self, wid, author, groups):
+        """[PACK174] Autor y familias de un widget de la pantalla (su modelo guardado no cambia)."""
+        st = self.global_state.get(wid)
+        if not isinstance(st, dict) or not isinstance(st.get('template_data'), dict):
+            return False
+        tpl_set_meta(st['template_data'], author=author, groups=groups)
+        if tpl_groups(st['template_data']) and not tpl_author(st['template_data']):
+            tpl_set_meta(st['template_data'], author=self.user_name())
+        self.save_global_state()
+        b = getattr(self, 'browser', None)
+        if b is not None:
+            b.schedule_refresh()
+        self.build_tray_menu()
+        return True
+
+    def edit_widget_meta(self, wid):
+        st = self.global_state.get(wid)
+        if not isinstance(st, dict) or not isinstance(st.get('template_data'), dict):
+            return
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout
+        td = st['template_data']
+        dlg = QDialog(self.dialog_parent)
+        dlg.setWindowTitle("Familias y autor")
+        fl = QFormLayout(dlg)
+        a = QLineEdit(tpl_author(td) or self.user_name())
+        g = QLineEdit(", ".join(tpl_groups(td)))
+        g.setPlaceholderText("varias, separadas por comas")
+        fl.addRow("Autor:", a)
+        fl.addRow("Familias:", g)
+        known = sorted(self.template_families(), key=str.lower)
+        if known:
+            lab = QLabel("Familias que ya existen: " + ", ".join(known[:20]))
+            lab.setWordWrap(True)
+            fl.addRow(lab)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        fl.addRow(bb)
+        if dlg.exec() == QDialog.Accepted:
+            self.set_widget_meta(wid, a.text(), parse_groups(g.text()))
 
     def keep_content_on_apply(self):
         return bool(self.global_state.get('tpl_keep_content', True))

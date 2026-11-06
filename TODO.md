@@ -13,7 +13,9 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
 ## Diseño (acordar antes de tocar)
 - [ ] 4. **Qué viaja al copiar/pegar forma de papel, marco o widget** (rotación, hue, dimensiones actuales…): qué se copia, qué se conserva del destino y cómo elegirlo. Caso típico: pegar un marco generado por el programa, modificado como imagen en el origen, y que el destino ajuste tamaños/hue y se pierda lo que se quería conservar.
 - [ ] 5. **Capas/aspecto y exportar un widget «tal cual»** sin pasar por un menú titulado «Aspecto». Valorar unificar capas y aspecto. Afecta a los puntos 4 y 6.
+- [ ] 5b. **Revisar el concepto «modelo»** (qué es, cómo se llama y dónde aparece: modelo / widget / aspecto / forma de papel / pack / familia). Está entrelazado con los puntos 4, 5 y 6 (las familias agrupan modelos y widgets). Pendiente: que me cuentes qué no te cuadra para acordar el vocabulario antes de tocar menús.
 - [ ] 6. **Grupos/familias de widgets** con subordinación («transparentes», «bordes redondeados», «reloj y calendarios modernos»…): navegables visualmente en el navegador de widgets y en un nuevo elemento del menú contextual de la bandeja para crear widgets; exportar packs por grupo (hoy solo «los de mi perfil» o individuales); los widgets conservan el flag de pertenencia al grupo (autor: X Smith).
+  - Pack 174 (hecho): autor + familias (varias a la vez) en cada modelo, filtro/agrupación en Modelos y Navegador, submenú de bandeja, exportar familia, nombre de autor. **Falta:** registro/verificación de autores y de quién puede añadir a una familia (concursos), carpetas de familias en el modo usuario, ordenar/ver familias en más sitios.
 
 ## Pendientes del asistente (al final; no bloquean lo anterior)
 - [ ] 7a. Pedir las líneas de registro de Linux `Ctrl+Alt+rueda: evento=… fisicas=…` (rotación fina).
