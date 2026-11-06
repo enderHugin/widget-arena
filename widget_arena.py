@@ -435,7 +435,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import (
     Qt, QPoint, QSize, QUrl, QRect, QObject, QTimer, QMargins,
     Signal, QThreadPool, QRunnable, Slot, QSizeF,
-    QPropertyAnimation, QEasingCurve, QVariantAnimation, QEvent, QDateTime
+    QPropertyAnimation, QEasingCurve, QVariantAnimation, QEvent, QDateTime, QEventLoop
 )
 from PySide6.QtGui import (
     QPixmap, QColor, QFont, QIcon, QAction, QActionGroup,
@@ -444,7 +444,7 @@ from PySide6.QtGui import (
     QTextDocument, QTextCursor, QTextCharFormat, QTextOption, QPainterPathStroker, QRegion
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWebEngineCore import QWebEngineProfile # <--- PARCHE WEB PERSISTENCIA: Importar QWebEngineProfile
+from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineScript # <--- PARCHE WEB PERSISTENCIA: Importar QWebEngineProfile
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 # ----------------------------------------------------------------------
@@ -2462,7 +2462,72 @@ class StickerWindow(QMainWindow):
         self._web_loaded_url = None
         self._web_zoom_filter = _WebZoomFilter(self, view)      # [PACK161]
         view.loadFinished.connect(lambda _ok: (self._web_zoom_filter.refresh(), self._web_zoom_apply()))
+        view.loadFinished.connect(lambda _ok: self._web_state_done())          # [PACK163]
         return view
+
+    # ---- [PACK163] estado de la pagina web (localStorage y cookies) que viaja con el widget
+    def web_state_capture(self, timeout_ms=1500):
+        """Estado actual de la pagina web de la capa 2 ({'o': origen, 'ls': {...}, 'ck': cookies}) o None si no hay nada que guardar."""
+        if not getattr(self, '_web_is_real', False) or not hasattr(self.layer2_web, 'page'):
+            return None
+        res = []
+        try:
+            loop = QEventLoop(self)
+
+            def cb(v):
+                res.append(v)
+                loop.quit()
+            self.layer2_web.page().runJavaScript(WEB_STATE_CAPTURE_JS, cb)
+            if not res:
+                QTimer.singleShot(int(timeout_ms), loop.quit)
+                loop.exec()
+            st = json.loads(res[0]) if res and isinstance(res[0], str) and res[0] else None
+        except Exception as e:
+            log_warn(self.widget_id, "No se pudo leer el estado de la p\u00e1gina web: %s" % e)
+            return None
+        if not isinstance(st, dict) or not (st.get('ls') or st.get('ck')):
+            return None
+        if len(json.dumps(st)) > WEB_STATE_MAX:
+            log_warn(self.widget_id, "El estado de la p\u00e1gina web es demasiado grande: no se incluye.")
+            return None
+        return st
+
+    def _web_state_install(self, l2_data):
+        """Si la capa trae 'web_state' (de un archivo importado), lo pone al crearse la siguiente pagina, antes de que corran sus scripts."""
+        st = l2_data.get('web_state') if isinstance(l2_data, dict) else None
+        if not isinstance(st, dict) or not getattr(self, '_web_is_real', False):
+            return
+        self._web_state_done(force=True)
+        try:
+            sc = QWebEngineScript()
+            sc.setName('wa_state')
+            sc.setSourceCode(web_state_script(st))
+            sc.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+            sc.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+            sc.setRunsOnSubFrames(False)
+            self.layer2_web.page().scripts().insert(sc)
+            self._web_state_script = sc
+        except Exception as e:
+            log_warn(self.widget_id, "No se pudo preparar el estado de la p\u00e1gina web: %s" % e)
+
+    def _web_state_done(self, force=False):
+        """Una vez cargada la pagina: quita el script y olvida el estado importado (asi lo que cambies despues no se pisa)."""
+        sc = getattr(self, '_web_state_script', None)
+        if sc is None:
+            return
+        self._web_state_script = None
+        try:
+            self.layer2_web.page().scripts().remove(sc)
+        except Exception:
+            pass
+        if force:
+            return
+        l2 = self.current_template_data.get('layer2')
+        if isinstance(l2, dict) and l2.pop('web_state', None) is not None:
+            try:
+                self.manager.update_widget_state(self.widget_id, self.current_template_data)
+            except Exception as e:
+                log_warn(self.widget_id, "No se pudo guardar el widget tras restaurar la p\u00e1gina: %s" % e)
 
     # ---- [PACK161] zoom de la capa web: se guarda en la capa 2 (web_zoom) y se aplica siempre que se carga la pagina
     WEB_ZOOM_MIN, WEB_ZOOM_MAX = 0.25, 5.0
@@ -3181,6 +3246,7 @@ class StickerWindow(QMainWindow):
                 url_str = 'http://' + url_str
             self._ensure_web_view()
             if self._force_web_reload or self._web_loaded_url != url_str:
+                self._web_state_install(l2_data)                      # [PACK163]
                 self.layer2_web.setUrl(QUrl(url_str))
                 self._web_loaded_url = url_str
                 self._force_web_reload = False
@@ -12868,7 +12934,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 162                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 163                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -13851,7 +13917,7 @@ TREE_MAX_FILE = 25 * 1024 * 1024               # [PACK120] tope por imagen y en 
 TREE_MAX_TOTAL = 100 * 1024 * 1024
 
 
-def tree_collect_images(notes):
+def tree_collect_images(notes, with_html=False):
     """Imagenes de capa que usan estas notas (las notas base que el programa redibuja desde sus parametros no hacen falta). Reescribe sus
     rutas a la forma portable 'widget_arena_data/<carpeta>/<nombre>' y devuelve ({'images/x.png': bytes}, [las que no se encontraron o no caben])."""
     out, used, skipped, total = {}, {}, [], 0
@@ -13895,7 +13961,247 @@ def tree_collect_images(notes):
                 total += len(data)
             ld['content'] = DATA_DIRNAME + '/' + used[real]
 
+    if with_html:                                         # [PACK163] las paginas HTML de las capas web viajan tambien
+        h, hsk = html_collect(notes)
+        out.update(h)
+        skipped += hsk
     return out, sorted(set(skipped))
+
+
+# ---- [PACK163] paginas HTML de las capas web: viajan dentro del archivo (html/<nombre>/pagina.html + los archivos que usa) y su estado con ellas
+HTML_ASSET_RX = re.compile(r"""(?:\b(?:src|href|poster|data-src)\s*=\s*|url\(\s*|@import\s+)(["']?)([^"'()\s>]+)\1""", re.I)
+_HTML_ASSET_EXT = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.css', '.js', '.woff', '.woff2', '.ttf', '.otf',
+                   '.mp3', '.ogg', '.wav', '.mp4', '.webm', '.json')
+HTML_MAX_ASSETS = 200
+
+
+def _html_assets(real):
+    """Archivos locales que usa una pagina por rutas relativas (en su carpeta o debajo): {ruta_real: 'ruta/relativa'}. Mira tambien dentro de los .css."""
+    base = os.path.dirname(real)
+    found, seen, todo = {}, {real}, [real]
+    while todo and len(found) < HTML_MAX_ASSETS:
+        cur = todo.pop()
+        try:
+            if os.path.getsize(cur) > TREE_MAX_FILE:
+                continue
+            with open(cur, 'rb') as f:
+                txt = f.read().decode('utf-8', 'replace')
+        except OSError:
+            continue
+        for m in HTML_ASSET_RX.finditer(txt):
+            u = m.group(2).split('#')[0].split('?')[0]
+            if not u or re.match(r'^[A-Za-z][A-Za-z0-9+.-]*:', u) or u.startswith(('/', '\\', '//')):
+                continue
+            u = urllib.parse.unquote(u)
+            if os.path.splitext(u)[1].lower() not in _HTML_ASSET_EXT:
+                continue
+            p = os.path.normpath(os.path.join(os.path.dirname(cur), u))
+            try:
+                rel = os.path.relpath(p, base)
+            except ValueError:
+                continue
+            if rel.startswith('..') or os.path.isabs(rel) or p in seen or not os.path.isfile(p):
+                continue
+            seen.add(p)
+            found[p] = rel.replace(os.sep, '/')
+            if p.lower().endswith('.css'):
+                todo.append(p)
+
+    return found
+
+
+def html_collect(notes):
+    """Paginas HTML locales de las capas web de estas notas, con los archivos que usan. Reescribe la ruta de la capa a
+    'widget_arena_data/html/<nombre>/<pagina>' y devuelve ({'html/<nombre>/<archivo>': bytes}, [las que no se encontraron o no caben])."""
+    out, groups, skipped, total = {}, {}, [], 0
+    for st in notes.values():
+        td = st.get('template_data') if isinstance(st, dict) else None
+        l2 = td.get('layer2') if isinstance(td, dict) else None
+        if not isinstance(l2, dict) or l2.get('type') != 'web':
+            continue
+        c = l2.get('content')
+        if not isinstance(c, str) or not c.strip().lower().endswith(('.html', '.htm')) or c.strip().lower().startswith(('http://', 'https://', 'data:', 'about:')):
+            continue
+        real = _find_stored_file(c)
+        if not real:
+            skipped.append(os.path.basename(c.replace('\\', '/')))
+            continue
+        if real not in groups:
+            files = {real: os.path.basename(real)}
+            files.update(_html_assets(real))
+            datas = {}
+            try:
+                for p, rel in files.items():
+                    if os.path.getsize(p) > TREE_MAX_FILE or total + os.path.getsize(p) > TREE_MAX_TOTAL:
+                        raise OSError("demasiado grande")
+                    with open(p, 'rb') as f:
+                        datas[rel] = f.read()
+                    total += len(datas[rel])
+            except OSError:
+                skipped.append(os.path.basename(real))
+                continue
+            stem = re.sub(r'[^\w.\- ]', '_', os.path.splitext(os.path.basename(real))[0]).strip(' .')[:60] or 'pagina'
+            base, k = stem, 2
+            while any(s == stem for s, _f in groups.values()):
+                stem = "%s (%d)" % (base, k)
+                k += 1
+            for rel, data in datas.items():
+                out['html/%s/%s' % (stem, rel)] = data
+            groups[real] = (stem, os.path.basename(real))
+
+        stem, fn = groups[real]
+        l2['content'] = '%s/html/%s/%s' % (DATA_DIRNAME, stem, fn)
+    return out, sorted(set(skipped))
+
+
+def media_count(imgs):
+    """Imagenes de un {'images/x.png': bytes} (sin contar los archivos de paginas web)."""
+    return sum(1 for k in (imgs or {}) if not str(k).startswith('html/'))
+
+
+def _ask_html_import(stems):
+    """Pregunta antes de traer paginas web (codigo que se ejecuta en el equipo) desde un archivo recibido."""
+    r = QMessageBox.warning(None, "P\u00e1ginas web en el archivo",
+                            "Este archivo trae %d p\u00e1gina(s) web (HTML) para sus widgets:\n\n%s\n\n"
+                            "Se ejecutan en tu equipo como cualquier p\u00e1gina de internet. Imp\u00f3rtalas solo si conf\u00edas en quien te lo ha enviado.\n\n"
+                            "\u00bfImportar tambi\u00e9n las p\u00e1ginas? (Si dices que no, los widgets se importan sin ellas.)"
+                            % (len(stems), "\n".join("   \u2022 " + s for s in stems[:8])), QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+    return r == QMessageBox.Yes
+
+
+HTML_IMPORT_CONFIRM = _ask_html_import
+
+
+def html_from_zip(zpath):
+    """Deja en html/ las paginas del .zip sin pisar nada: lo igual se salta y lo distinto con el mismo nombre entra en otra carpeta.
+    Pregunta antes (HTML_IMPORT_CONFIRM) si hay algo nuevo. Devuelve None si el .zip no trae paginas, o
+    {'new': carpetas nuevas, 'same': ya estaban, 'ren': {'html/a': 'html/a (2)'}, 'declined': bool}."""
+    import zipfile
+    groups, total = {}, 0
+    with zipfile.ZipFile(zpath) as z:
+        for n in z.namelist():
+            parts = [p for p in n.replace('\\', '/').split('/') if p]
+            if len(parts) < 3 or parts[0] != 'html' or '..' in parts or n.endswith('/') or any(':' in p for p in parts):
+                continue
+            size = z.getinfo(n).file_size
+            if size > TREE_MAX_FILE or total + size > TREE_MAX_TOTAL:
+                continue
+            total += size
+            groups.setdefault(parts[1], {})['/'.join(parts[2:])] = z.read(n)
+    if not groups:
+        return None
+
+    def same(d, files):
+        for rel, data in files.items():
+            try:
+                with open(os.path.join(d, *rel.split('/')), 'rb') as f:
+                    if f.read() != data:
+                        return False
+            except OSError:
+                return False
+        return True
+    plan = {}
+    for stem, files in groups.items():
+        target, k = stem, 2
+        while True:
+            d = os.path.join(HTML_DIR, target)
+            if not os.path.exists(d):
+                plan[stem] = (target, 'new')
+                break
+            if same(d, files):
+                plan[stem] = (target, 'same')
+                break
+            target = "%s (%d)" % (stem, k)
+            k += 1
+
+    pend = sorted(t for t, kind in plan.values() if kind == 'new')
+    res = {'new': 0, 'same': sum(1 for t, kind in plan.values() if kind == 'same'), 'ren': {}, 'declined': False}
+    if pend:
+        ok = True
+        if HTML_IMPORT_CONFIRM:
+            try:
+                ok = bool(HTML_IMPORT_CONFIRM(pend))
+            except Exception as e:
+                log_warn("Importar", "No se pudo preguntar por las p\u00e1ginas web: %s" % e)
+                ok = False
+        if not ok:
+            res['declined'] = True
+            return res
+        for stem, (target, kind) in plan.items():
+            if kind != 'new':
+                continue
+            root = os.path.normpath(os.path.join(HTML_DIR, target))
+            for rel, data in groups[stem].items():
+                dst = os.path.normpath(os.path.join(root, *rel.split('/')))
+                if not dst.startswith(root + os.sep):
+                    continue
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with open(dst, 'wb') as f:
+                    f.write(data)
+            res['new'] += 1
+
+    res['ren'] = {'html/%s' % s: 'html/%s' % t for s, (t, _k) in plan.items() if s != t}
+    return res
+
+
+def html_fix_paths(obj, ren, declined=False):
+    """Reapunta (en el sitio) las capas web que usan una pagina traida de un archivo cuando entro con otro nombre; si no se importaron las
+    paginas quita su estado guardado. Las demas capas web no se tocan."""
+    pre = DATA_DIRNAME + '/html/'
+
+    def walk(o):
+        if isinstance(o, dict):
+            c = o.get('content')
+            if o.get('type') == 'web' and isinstance(c, str) and c.replace('\\', '/').startswith(pre):
+                if declined:
+                    o.pop('web_state', None)
+                else:
+                    q = c.replace('\\', '/')[len(DATA_DIRNAME) + 1:].split('/')
+                    k = '/'.join(q[:2])
+                    if k in ren:
+                        o['content'] = '%s/%s/%s' % (DATA_DIRNAME, ren[k], '/'.join(q[2:]))
+            for v in o.values():
+                if isinstance(v, (dict, list)):
+                    walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(obj)
+
+
+# ---- [PACK163] estado de una pagina web (localStorage y cookies): se lee al exportar y se pone antes de que cargue la pagina, una sola vez
+WEB_STATE_CAPTURE_JS = ("(function(){try{var o={},i,k;for(i=0;i<localStorage.length;i++){k=localStorage.key(i);o[k]=localStorage.getItem(k);}"
+                        "return JSON.stringify({o:(location.protocol==='file:'?'file:':location.origin),ls:o,ck:document.cookie});}catch(e){return '';}})()")
+WEB_STATE_MAX = 400000
+
+
+def web_state_script(st):
+    """Codigo que pone el estado guardado de una pagina (solo si es de su mismo origen)."""
+    ls = st.get('ls') if isinstance(st.get('ls'), dict) else {}
+    d = json.dumps({'o': str(st.get('o') or ''), 'ls': {str(k): str(v) for k, v in ls.items()}, 'ck': str(st.get('ck') or '')})
+    return ("(function(){try{var S=" + d + ";var o=(location.protocol==='file:')?'file:':location.origin;if(o!==S.o)return;"
+            "for(var k in S.ls){try{localStorage.setItem(k,S.ls[k]);}catch(e){}}"
+            "if(S.ck){S.ck.split('; ').forEach(function(c){try{document.cookie=c+'; path=/; max-age=31536000';}catch(e){}});}}catch(e){}})();")
+
+
+def ask_export_personal(parent, n_web):
+    """Pregunta, al exportar widgets con pagina web, si se deja fuera la informacion personal. Devuelve True (dejarla fuera), False (incluirla)
+    o None si cancela."""
+    if not n_web:
+        return True
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Question)
+    box.setWindowTitle("Exportar widgets web")
+    box.setText("Hay %d widget(s) con p\u00e1gina web. Se guardar\u00e1 tambi\u00e9n su estado (por ejemplo el color que tenga el reloj) para que se vea igual al importarlo." % n_web)
+    box.setInformativeText("Con la casilla marcada, de las p\u00e1ginas de internet no se guarda nada (cookies, sesiones, datos del sitio).\n"
+                           "Si la desmarcas se incluyen: pueden llevar sesiones iniciadas y datos tuyos, as\u00ed que no compartas ese archivo con nadie.")
+    cb = QCheckBox("No incluir informaci\u00f3n personal")
+    cb.setChecked(True)
+    box.setCheckBox(cb)
+    box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+    if box.exec() != QMessageBox.Ok:
+        return None
+    return cb.isChecked()
 
 
 BACKUP_MAX_FILE = 120 * 1024 * 1024            # [PACK125] topes de las imagenes en una copia completa (una sola imagen / total)
@@ -14028,8 +14334,15 @@ def clip_take_images(zpath, objs):
     except Exception as e:
         log_warn("Portapapeles", "No se pudieron leer las im\u00e1genes copiadas: %s" % e)
         return None
+    try:                                                                     # [PACK163] paginas web que viajan en el archivo
+        hr = html_from_zip(zpath)
+    except Exception as e:
+        log_warn("Importar", "No se pudieron leer las p\u00e1ginas web del archivo: %s" % e)
+        hr = None
     for o in objs:
         import_fix_paths(o, ren)
+        if hr:
+            html_fix_paths(o, hr['ren'], hr['declined'])
     return new, same
 
 
@@ -14096,13 +14409,13 @@ def wa_file_write(path, kind, data, imgs=None):
     """Escribe un archivo propio. data: lo que iria en el .json; imgs: {'images/x.png': bytes}."""
     import zipfile
     man = {'format': WA_FILE_FORMAT, 'format_version': 1, 'kind': kind, 'app_pack': APP_PACK,
-           'created': datetime.datetime.now().isoformat(timespec='seconds'), 'images': len(imgs or {})}
+           'created': datetime.datetime.now().isoformat(timespec='seconds'), 'images': media_count(imgs), 'html_files': len(imgs or {}) - media_count(imgs)}
     tmp = str(path) + '.tmp'
     with zipfile.ZipFile(tmp, 'w') as z:
         z.writestr('wa.json', json.dumps(man, indent=2).encode('utf-8'), zipfile.ZIP_DEFLATED)
         z.writestr('data.json', json.dumps(data, indent=2, ensure_ascii=False, default=str).encode('utf-8'), zipfile.ZIP_DEFLATED)
         for k in sorted(imgs or {}):
-            z.writestr(k, imgs[k], zipfile.ZIP_STORED)
+            z.writestr(k, imgs[k], zipfile.ZIP_DEFLATED if (k.startswith('html/') and not _IMP_EXT.search(k)) else zipfile.ZIP_STORED)
     os.replace(tmp, str(path))
 
 
@@ -14151,9 +14464,9 @@ def wa_export_template(path, td, kind='widget', flt=''):
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(td, f, indent=4, ensure_ascii=False)
         return path, n, sk
-    imgs, sk = tree_collect_images({'x': {'template_data': td}})
+    imgs, sk = tree_collect_images({'x': {'template_data': td}}, with_html=True)          # [PACK163] y las paginas HTML de sus capas web
     wa_file_write(path, kind, td, imgs)
-    return path, len(imgs), sk
+    return path, media_count(imgs), sk
 
 
 def import_template_images(td):
@@ -23285,6 +23598,34 @@ class WidgetManager(QObject):
             td['base_note']['text'] = TPL_SAMPLE_TEXT
         return td
 
+    def _attach_web_state(self, widget_id, td, exclude_personal):
+        """[PACK163] Mete en la capa web de 'td' (una copia para exportar) el estado vivo de su pagina. Las paginas de internet solo si
+        no se excluye la informacion personal; las paginas locales (como el reloj) siempre. Devuelve True si metio algo."""
+        l2 = td.get('layer2') if isinstance(td, dict) else None
+        if not isinstance(l2, dict) or l2.get('type') != 'web':
+            return False
+        l2.pop('web_state', None)
+        cap = getattr(self.widgets.get(widget_id), 'web_state_capture', None)
+        st = cap() if cap else None
+        if not st or (exclude_personal and st.get('o') != 'file:'):
+            return False
+        l2['web_state'] = st
+        return True
+
+    def _export_web_prepare(self, parent, notes):
+        """[PACK163] Si entre estas notas ({id: estado}, copias para exportar) hay capas web: pregunta por la informacion personal y les pone su
+        estado. Devuelve False si se cancela."""
+        ids = [i for i, st in notes.items() if isinstance(st, dict) and isinstance(st.get('template_data'), dict)
+               and isinstance(st['template_data'].get('layer2'), dict) and st['template_data']['layer2'].get('type') == 'web']
+        if not ids:
+            return True
+        excl = ask_export_personal(parent, len(ids))
+        if excl is None:
+            return False
+        for i in ids:
+            self._attach_web_state(i, notes[i]['template_data'], excl)
+        return True
+
     def _export_widget_template(self, widget_id):
         parent_widget = self.widgets.get(widget_id) 
         template_data = self._sample_td(self.global_state[widget_id]['template_data'])          # [PACK151]
@@ -23292,6 +23633,8 @@ class WidgetManager(QObject):
 
         path, _flt = QFileDialog.getSaveFileName(parent_widget, "Exportar este widget", os.path.join(DATA_DIR, default_name), WA_FILTER['widget'])
         if not path:
+            return
+        if not self._export_web_prepare(parent_widget, {widget_id: {'template_data': template_data}}):          # [PACK163]
             return
 
         try:
@@ -26305,9 +26648,11 @@ class WidgetManager(QObject):
         path, _flt = QFileDialog.getSaveFileName(parent, "Exportar \u00e1rbol de widgets", os.path.join(DATA_DIR, safe + ".waset"), WA_FILTER['set'])
         if not path:
             return None
+        if not self._export_web_prepare(parent, notes):                  # [PACK163]
+            return None
         try:
             path, as_json = wa_out_path(path, 'set', _flt)
-            imgs, skipped = tree_collect_images(notes)
+            imgs, skipped = tree_collect_images(notes, with_html=not as_json)
             data = dict(notes)
             data['__config__'] = {"arbol": {"raiz": widget_id, "widgets": len(notes), "app_pack": APP_PACK}}
             if as_json:                                       # el .json de siempre: imagenes en base64
@@ -26324,13 +26669,13 @@ class WidgetManager(QObject):
             QMessageBox.critical(parent, "Exportar \u00e1rbol", "No se pudo guardar el archivo:\n%s" % e)
             return None
 
-        msg = "\u00c1rbol exportado: %d widgets, %d im\u00e1genes" % (len(notes), len(imgs))
+        msg = "\u00c1rbol exportado: %d widgets, %d im\u00e1genes" % (len(notes), media_count(imgs))
         if skipped:
             msg += "\nNo se pudieron incluir %d im\u00e1genes (no estaban en este equipo o son muy grandes): %s" % (len(skipped), ", ".join(skipped[:5]))
             QMessageBox.information(parent, "Exportar \u00e1rbol", msg)
         else:
             self._osd(msg, 2500)
-        return path, len(notes), len(imgs), skipped
+        return path, len(notes), media_count(imgs), skipped
 
     # ---- [PACK114] actualizaciones
     def show_updates(self, check=True):
@@ -27885,7 +28230,9 @@ class WidgetManager(QObject):
         try:
             path, _as_json = wa_out_path(path, 'set', _flt)
             data = copy.deepcopy({k: v for k, v in self.global_state.items() if isinstance(v, dict)})
-            imgs, skipped = tree_collect_images(data)                  # [PACK126] las imagenes viajan dentro del archivo
+            if not self._export_web_prepare(parent_widget, data):         # [PACK163]
+                return
+            imgs, skipped = tree_collect_images(data, with_html=not _as_json)                  # [PACK126] las imagenes viajan dentro del archivo
             if QMessageBox.question(parent_widget, "Exportar widgets",
                                     "\u00bfIncluir tambi\u00e9n la configuraci\u00f3n (atajos de teclado, cables, jerarqu\u00eda, matices...)?\n\n"
                                     "Al importar el archivo se podr\u00e1 elegir si cargarla. Nunca incluye datos de Telegram.",
@@ -27901,7 +28248,7 @@ class WidgetManager(QObject):
                     json.dump(data, f, indent=4)
             else:                                                 # [PACK130] .waset: comprimido, con las imagenes dentro
                 wa_file_write(path, 'set', data, imgs)
-            self._osd("Widgets exportados%s%s" % ((" (con %d im\u00e1genes)" % len(imgs)) if imgs else "",
+            self._osd("Widgets exportados%s%s" % ((" (con %d im\u00e1genes)" % media_count(imgs)) if media_count(imgs) else "",
                                                  ("; no se pudieron incluir: " + ", ".join(skipped[:4])) if skipped else ""), 2600)
         except Exception as e:
             print(f"ERROR: No se pudo exportar los widgets a {path}: {e}")
