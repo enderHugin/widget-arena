@@ -444,7 +444,7 @@ from PySide6.QtGui import (
     QTextDocument, QTextCursor, QTextCharFormat, QTextOption, QPainterPathStroker, QRegion
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineScript # <--- PARCHE WEB PERSISTENCIA: Importar QWebEngineProfile
+from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineScript, QWebEnginePage # <--- PARCHE WEB PERSISTENCIA: Importar QWebEngineProfile
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 # ----------------------------------------------------------------------
@@ -2228,6 +2228,28 @@ def _text_layer_draw(painter, html, w, h, family, size, center=False, fit=False)
     painter.restore()
 
 
+_WEB_CONSOLE_RX = re.compile(r"mixed content|blocked|not allowed|refused|cors|net::err|failed to load|insecure|csp|content security", re.I)
+
+
+class _WaWebPage(QWebEnginePage):
+    """[PACK164] Pagina del visor web que pasa al registro de la aplicacion lo que la pagina cuenta en su consola (los avisos que parecen
+    bloqueos o fallos de red como aviso; el resto, como depuracion). Asi se ve por que una pagina local no consigue hacer algo."""
+    def __init__(self, profile, parent, widget_id=''):
+        super().__init__(profile, parent)
+        self._wid = widget_id
+
+    def javaScriptConsoleMessage(self, level, message, line, source):
+        try:
+            lv = int(getattr(level, 'value', level))
+            txt = "Consola de la p\u00e1gina: %s (%s:%s)" % (str(message)[:400], os.path.basename(str(source)), line)
+            if lv >= 1 and _WEB_CONSOLE_RX.search(str(message)):
+                log_warn(self._wid, txt)
+            else:
+                log_debug(self._wid, txt)
+        except Exception:
+            pass
+
+
 class _WebZoomFilter(QObject):
     """[PACK161] Ctrl+rueda sobre la capa web cambia su zoom (y el widget lo recuerda). El visor web reparte los eventos entre widgets hijos
     que crea cuando quiere, as\u00ed que el filtro se pone tambi\u00e9n a cada hijo que aparezca."""
@@ -2463,6 +2485,11 @@ class StickerWindow(QMainWindow):
         self._web_zoom_filter = _WebZoomFilter(self, view)      # [PACK161]
         view.loadFinished.connect(lambda _ok: (self._web_zoom_filter.refresh(), self._web_zoom_apply()))
         view.loadFinished.connect(lambda _ok: self._web_state_done())          # [PACK163]
+        try:                                                                   # [PACK164] la consola de la pagina y los fallos de carga, al registro
+            view.setPage(_WaWebPage(self.manager.web_profile, view, self.widget_id))
+        except Exception as e_pg:
+            log_warn(self.widget_id, "No se pudo vigilar la consola de la p\u00e1gina web: %s" % e_pg)
+        view.loadFinished.connect(lambda ok: None if ok else log_warn(self.widget_id, "La p\u00e1gina web no termin\u00f3 de cargar: %s" % view.url().toString()))
         return view
 
     # ---- [PACK163] estado de la pagina web (localStorage y cookies) que viaja con el widget
@@ -12934,7 +12961,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 163                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 164                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -20838,6 +20865,11 @@ class WidgetManager(QObject):
         settings = self.web_profile.settings()
         settings.setAttribute(settings.WebAttribute.PlaybackRequiresUserGesture, False)
         settings.setAttribute(settings.WebAttribute.PluginsEnabled, True)
+        for _nom, _val in (("LocalContentCanAccessRemoteUrls", True), ("LocalContentCanAccessFileUrls", True)):          # [PACK164] una pagina local (un mando, un panel) puede hablar con la red
+            try:
+                settings.setAttribute(getattr(settings.WebAttribute, _nom), _val)
+            except Exception as e_set:
+                log_warn("Manager", "No se pudo activar %s: %s" % (_nom, e_set))
         
         self.setup_tray_icon()
         self._ensure_data_defaults()
