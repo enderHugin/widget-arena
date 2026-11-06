@@ -2549,6 +2549,12 @@ class StickerWindow(QMainWindow):
         self._web_zoom_filter = _WebZoomFilter(self, view)      # [PACK161]
         view.loadFinished.connect(lambda _ok: (self._web_zoom_filter.refresh(), self._web_zoom_apply()))
         view.loadFinished.connect(lambda _ok: self._web_state_done())          # [PACK163]
+        self._web_hit_cache = None                                             # [PACK169] zona que agarra la pagina, segun lo que dibuja
+        self._web_hit_timer = QTimer(view)
+        self._web_hit_timer.setInterval(2000)
+        self._web_hit_timer.timeout.connect(self._web_hit_tick)
+        self._web_hit_timer.start()
+        view.loadFinished.connect(lambda _ok: (QTimer.singleShot(700, self._web_hit_tick), QTimer.singleShot(2500, self._web_hit_tick)))
         try:                                                                   # [PACK164] la consola de la pagina y los fallos de carga, al registro
             view.setPage(_WaWebPage(self.manager.web_profile, view, self.widget_id))
         except Exception as e_pg:
@@ -2729,6 +2735,7 @@ class StickerWindow(QMainWindow):
             return
         view = self.layer2_web
         self._web_shim_script = None
+        self._web_hit_cache = None
         view.hide()
         view.setParent(None)
         view.deleteLater()
@@ -3582,11 +3589,7 @@ class StickerWindow(QMainWindow):
                 else:
                     painter.fillRect(l2_geom, Qt.black) 
             elif self.layer2_web.isVisible():
-                wm = self.layer2_web.mask()                     # [PACK166] una capa web recortada solo agarra por su forma
-                if wm.isEmpty():
-                    painter.fillRect(l2_geom, Qt.black)
-                else:
-                    self._mask_fill(painter, l2_geom, wm)
+                self._mask_fill(painter, l2_geom, self._web_hit_region())        # [PACK166] [PACK169] una capa web agarra por lo que dibuja y por su recorte
 
             if self.layer1_label.isVisible():
                 if (l1_is_image or l1_is_text) and not self.layer1_label.pixmap().isNull():
@@ -3606,6 +3609,61 @@ class StickerWindow(QMainWindow):
             log_error(f"{self.widget_id} Mask", f"Fallo al crear la mascara: {e}")
             self._hit_win = None
             self.clearMask()
+
+    def _web_hit_refresh(self):
+        """[PACK169] Mira lo que la pagina dibuja (una foto del visor) y guarda la zona que agarra: lo que se ve, con el interior de su contorno.
+        Devuelve la huella de la imagen. Si el visor no da una foto fiable (sin pagina todavia, en blanco), no hay zona y se usa el rectangulo entero."""
+        v = self.layer2_web
+        g = v.geometry()
+        if not getattr(self, '_web_is_real', False) or g.width() < 2 or g.height() < 2:
+            self._web_hit_cache = None
+            return None
+        sig, reg = None, None
+        try:
+            img = v.grab().toImage()
+            if not img.isNull():
+                if img.size() != g.size():
+                    img = img.scaled(g.size(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                a = _image_alpha(img)
+                sig = (g.width(), g.height(), hash(np.ascontiguousarray(a[::3, ::3]).tobytes()))
+                c = getattr(self, '_web_hit_cache', None)
+                if c is not None and c[0] == sig:
+                    return sig
+                r = _hit_region(img)
+                reg = r if not r.isEmpty() else None
+                log_debug(self.widget_id, "Zona que agarra la p\u00e1gina web: %s de %dx%d (%s)" % (r.boundingRect().getRect() if reg is not None else 'ninguna, se usa todo', g.width(), g.height(), 'foto' if reg is not None else 'foto en blanco'))
+        except Exception as e:
+            log_debug(self.widget_id, "No se pudo mirar lo que dibuja la p\u00e1gina: %s" % e)
+            sig, reg = None, None
+        self._web_hit_cache = (sig, reg)
+        return sig
+
+    def _web_hit_tick(self):
+        """[PACK169] Cada par de segundos (y tras cargar la pagina) vuelve a mirar; si lo dibujado cambio, se recalcula la zona que agarra."""
+        try:
+            if not USE_WINDOW_MASK or not getattr(self, '_web_is_real', False) or not self.isVisible() or not self.layer2_web.isVisible():
+                return
+            old = getattr(self, '_web_hit_cache', None)
+            self._web_hit_refresh()
+            new = getattr(self, '_web_hit_cache', None)
+            if (old[0] if old else None) != (new[0] if new else None):
+                self.update_window_mask()
+        except RuntimeError:
+            pass
+
+    def _web_hit_region(self):
+        """[PACK169] Zona (coordenadas del visor) que agarra la capa web: su recorte, si lo hay, y lo que la pagina dibuja."""
+        v = self.layer2_web
+        c = getattr(self, '_web_hit_cache', None)
+        if c is None or (c[0] is not None and c[0][:2] != (v.width(), v.height())):
+            self._web_hit_refresh()
+            c = getattr(self, '_web_hit_cache', None)
+        base = v.mask()
+        if base.isEmpty():
+            base = QRegion(0, 0, v.width(), v.height())
+        if c is not None and c[1] is not None:
+            base = base.intersected(c[1])
+        return base
 
     def _hit_at(self, p):
         """[PACK167] True si el punto (coordenadas de la ventana) cae en la zona que agarra el widget."""
@@ -13116,7 +13174,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 168                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 169                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
