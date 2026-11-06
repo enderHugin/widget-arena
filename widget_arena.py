@@ -3532,11 +3532,32 @@ class StickerWindow(QMainWindow):
                     painter.fillRect(_ch.geometry(), Qt.black)
             
             painter.end()
-            self.setMask(window_mask)
+            # [PACK167] la zona que agarra ya NO recorta la ventana (eso quitaba las sutilezas de los widgets translucidos): se guarda y se consulta
+            self._hit_win = QRegion(window_mask)
+            self.clearMask()
         
         except Exception as e:
             log_error(f"{self.widget_id} Mask", f"Fallo al crear la mascara: {e}")
+            self._hit_win = None
             self.clearMask()
+
+    def _hit_at(self, p):
+        """[PACK167] True si el punto (coordenadas de la ventana) cae en la zona que agarra el widget."""
+        r = getattr(self, '_hit_win', None)
+        return True if r is None else r.contains(p)
+
+    def nativeEvent(self, eventType, message):
+        """[PACK167] En Windows, sobre lo que no se ve del widget (fuera de su borde) el sistema pasa el clic a lo que haya debajo (HTTRANSPARENT)."""
+        if _IS_WIN:
+            try:
+                if bytes(eventType) == b'windows_generic_MSG':
+                    from ctypes import wintypes
+                    msg = wintypes.MSG.from_address(int(message))
+                    if msg.message == 0x0084 and not self._hit_at(self.mapFromGlobal(QCursor.pos())):         # WM_NCHITTEST
+                        return True, -1
+            except Exception:
+                pass
+        return super().nativeEvent(eventType, message)
 
     def set_always_on_top(self, checked):
         self.always_on_top = checked
@@ -13029,7 +13050,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 166                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 167                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -17465,6 +17486,9 @@ def _alpha_region(pm):
     return _bool_to_region(a >= max(8, min(48, int(amax * 0.6))))
 
 
+_IS_WIN = sys.platform == 'win32'
+
+
 def _hit_region(pm):
     """[PACK166] Region de una imagen que agarra el raton: solo lo que se ve de verdad. Los pixeles casi transparentes (halos de sombra, bordes
     difusos) no cuentan; si la imagen entera es translucida, el umbral baja con ella."""
@@ -17473,10 +17497,14 @@ def _hit_region(pm):
     amax = int(a.max()) if a.size else 0
     if amax <= 0:
         return QRegion()
-    return _bool_to_region(a >= max(8, min(HIT_ALPHA_MAX, int(amax * 0.6))))
+    ink = a >= max(8, min(HIT_ALPHA_MAX, int(amax * 0.6)))
+    # el borde manda: es zona del widget todo lo que queda encerrado por lo visible (un cuerpo casi transparente dentro de su contorno cuenta entero)
+    inside = (np.maximum.accumulate(ink, axis=1) & np.maximum.accumulate(ink[:, ::-1], axis=1)[:, ::-1]
+              & np.maximum.accumulate(ink, axis=0) & np.maximum.accumulate(ink[::-1], axis=0)[::-1])
+    return _bool_to_region(inside)
 
 
-HIT_ALPHA_MAX = 96
+HIT_ALPHA_MAX = 40
 
 
 def _clip_shape_image(mode, w, h, radius_pct=25):

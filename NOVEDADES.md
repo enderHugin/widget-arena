@@ -1,3 +1,7 @@
+## Pack 167 · 2026-11-06
+- **Se deshace el recorte de la ventana del Pack 166** (quitaba las sutilezas de los widgets translúcidos: el cuerpo casi transparente y el bloque del texto se veían distintos). La ventana vuelve a dibujarse entera.
+- **La zona que agarra el widget toma el borde como referencia:** es zona del widget todo lo que encierra su contorno visible (aunque dentro sea casi transparente), no los halos tenues de fuera ni las esquinas cortadas o redondeadas. En Windows, cuando el ratón está fuera de esa zona el sistema pasa el clic al widget (o ventana) de debajo; en otros sistemas no cambia nada.
+
 ## Pack 166 · 2026-11-06
 - **Cada widget agarra solo por lo que se ve.** La máscara que decide qué parte de la ventana recibe el ratón se rellenaba mal (`fill(Qt.transparent)` en un bitmap deja todos los bits puestos), así que en la práctica cada widget agarraba su rectángulo entero, y un vecino por encima te robaba el arrastre aunque su parte fuese transparente. Ahora la máscara es la forma real.
 - Los halos tenues (sombras, bordes difusos de menos de un tercio de opacidad) no cuentan como zona que agarra; una imagen translucida entera sí. Un texto agarra por todo su bloque, no solo por las letras. Una capa web recortada agarra por su forma, no por su rectángulo. El editor de texto y las insignias (plegar, campana, corona) siempre agarran.
