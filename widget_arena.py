@@ -2240,6 +2240,7 @@ class _WaWebPage(QWebEnginePage):
         self._net = None
         self._net_times = []
         self.state_sink = None                     # [PACK168] funcion que recibe el estado (localStorage/cookies) de la pagina local
+        self.state_token = ''                      # [PACK170] clave de los mensajes de estado (el origen que da el visor a un script inyectado no es fiable)
         try:                                       # [PACK165] marca para las paginas locales: "estoy dentro de Widget Arena" (window.__waApp)
             sc = QWebEngineScript()
             sc.setName('wa_app')
@@ -2294,9 +2295,10 @@ class _WaWebPage(QWebEnginePage):
     def javaScriptConsoleMessage(self, level, message, line, source):
         try:
             m = str(message)
-            if m.startswith("__WA_STATE__"):                                  # [PACK168] el estado de una pagina local (solo si lo dice una pagina local)
-                if str(source).startswith("file:") and self.state_sink is not None and len(m) <= WEB_STATE_MAX:
-                    self.state_sink(json.loads(m[len("__WA_STATE__"):]))
+            if m.startswith("__WA_STATE__"):                                  # [PACK168] [PACK170] el estado de una pagina local: solo con la clave del widget
+                pre = "__WA_STATE__%s:" % self.state_token
+                if self.state_token and m.startswith(pre) and self.state_sink is not None and len(m) <= WEB_STATE_MAX:
+                    self.state_sink(json.loads(m[len(pre):]))
                 return
             if m.startswith("__WA_HTTP_GET__"):
                 if str(source).startswith("file:"):                        # solo paginas locales (nunca una pagina de internet)
@@ -2561,6 +2563,12 @@ class StickerWindow(QMainWindow):
             log_warn(self.widget_id, "No se pudo vigilar la consola de la p\u00e1gina web: %s" % e_pg)
         try:
             view.page().state_sink = self._web_state_store                   # [PACK168]
+            self._web_token = __import__('secrets').token_hex(8)                           # [PACK170]
+            view.page().state_token = self._web_token
+            self._web_poll_timer = QTimer(view)
+            self._web_poll_timer.setInterval(2500)
+            self._web_poll_timer.timeout.connect(self._web_state_poll)
+            self._web_poll_timer.start()
         except Exception as e_sk:
             log_warn(self.widget_id, "No se pudo enlazar el estado de la p\u00e1gina web: %s" % e_sk)
         view.loadFinished.connect(lambda ok: None if ok else log_warn(self.widget_id, "La p\u00e1gina web no termin\u00f3 de cargar: %s" % view.url().toString()))
@@ -2617,6 +2625,23 @@ class StickerWindow(QMainWindow):
         except Exception as e:
             log_warn(self.widget_id, "No se pudo guardar el estado de la p\u00e1gina web: %s" % e)
 
+    def _web_state_poll(self):
+        """[PACK170] Cada par de segundos pregunta a la pagina local por su estado (red de seguridad por si el aviso por la consola no llega)."""
+        try:
+            if getattr(self, '_web_shim_script', None) is None or not getattr(self, '_web_is_real', False):
+                return
+            self.layer2_web.page().runJavaScript(WEB_SHIM_GET_JS, self._web_state_got)
+        except Exception as e:
+            log_debug(self.widget_id, "No se pudo consultar el estado de la p\u00e1gina: %s" % e)
+
+    def _web_state_got(self, res):
+        try:
+            if not isinstance(res, str) or not res or len(res) > WEB_STATE_MAX:
+                return
+            self._web_state_store(json.loads(res))
+        except Exception as e:
+            log_debug(self.widget_id, "Estado de la p\u00e1gina ilegible: %s" % e)
+
     def _web_shim_put(self, l2_data):
         """Pone (o renueva) el script que da a la pagina local su almacenamiento propio con el estado guardado."""
         self._web_shim_remove()
@@ -2624,7 +2649,7 @@ class StickerWindow(QMainWindow):
         try:
             sc = QWebEngineScript()
             sc.setName('wa_shim')
-            sc.setSourceCode(web_shim_script(st if isinstance(st, dict) and st.get('o') == 'file:' else {}))
+            sc.setSourceCode(web_shim_script(st if isinstance(st, dict) and st.get('o') == 'file:' else {}, getattr(self, '_web_token', '')))
             sc.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
             sc.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
             sc.setRunsOnSubFrames(False)
@@ -4186,6 +4211,7 @@ class StickerWindow(QMainWindow):
                 child_geom = child_window.current_template_data.setdefault('geometry', {})
                 child_geom['x'] = new_child_pos.x()
                 child_geom['y'] = new_child_pos.y()
+            self._req_pos = QPoint(new_pos)                      # [PACK170]
             self.move(new_pos)
             _t0 = time.perf_counter()
             self.manager.show_cables_for(self.widget_id, is_drag=True)
@@ -6389,6 +6415,13 @@ class StickerWindow(QMainWindow):
     # ---------------------------------------------------------------- [PACK136] velo bajo widgets transparentes y orden de apilamiento
     def moveEvent(self, event):
         super().moveEvent(event)
+        try:                                                 # [PACK170] el sistema (no la aplicacion) ha puesto el widget en otro sitio del pedido
+            rq = getattr(self, '_req_pos', None)
+            if rq is not None and getattr(self, "_is_window_dragging", False) and (self.pos() - rq).manhattanLength() > 3 and time.monotonic() - getattr(self, '_req_warn_t', 0.0) > 5.0:
+                self._req_warn_t = time.monotonic()
+                log_warn(self.widget_id, "El sistema ha colocado el widget en (%d, %d) y no en (%d, %d), que era lo pedido: limita su posici\u00f3n (p. ej. a la pantalla)." % (self.pos().x(), self.pos().y(), rq.x(), rq.y()))
+        except Exception:
+            pass
         try:
             self.manager.veil_schedule()
         except Exception:
@@ -13174,7 +13207,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 169                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 170                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -14413,6 +14446,7 @@ def html_fix_paths(obj, ren, declined=False):
 WEB_STATE_CAPTURE_JS = ("(function(){try{var o={},i,k;for(i=0;i<localStorage.length;i++){k=localStorage.key(i);o[k]=localStorage.getItem(k);}"
                         "return JSON.stringify({o:(location.protocol==='file:'?'file:':location.origin),ls:o,ck:document.cookie});}catch(e){return '';}})()")
 WEB_STATE_MAX = 400000
+WEB_SHIM_GET_JS = "(window.__waGetState&&window.__waGetState())||''"
 
 
 def _ck_to_dict(ck):
@@ -14431,12 +14465,13 @@ def _ck_to_str(ck):
     return '; '.join('%s=%s' % (k, v) for k, v in _ck_to_dict(ck).items())
 
 
-def web_shim_script(st):
-    """Codigo que da a una pagina local su propio localStorage y sus cookies (por widget), con el estado guardado, y avisa de cada cambio."""
+def web_shim_script(st, token=''):
+    """Codigo que da a una pagina local su propio localStorage y sus cookies (por widget), con el estado guardado, y avisa de cada cambio
+    (mensaje con la clave `token`, que solo conoce el propio script)."""
     st = st if isinstance(st, dict) else {}
     ls = st.get('ls') if isinstance(st.get('ls'), dict) else {}
     d = json.dumps({'ls': {str(k): str(v) for k, v in ls.items()}, 'ck': _ck_to_dict(st.get('ck'))})
-    return WEB_SHIM_JS.replace('@STATE@', d)
+    return WEB_SHIM_JS.replace('@STATE@', d).replace('@TOKEN@', re.sub(r'[^0-9a-zA-Z]', '', str(token)))
 
 
 def web_state_script(st):
@@ -14455,7 +14490,8 @@ var I=@STATE@,ls={},ck={},k,t=null;
 for(k in (I.ls||{}))ls[k]=String(I.ls[k]);
 for(k in (I.ck||{}))ck[k]=String(I.ck[k]);
 function has(o,p){return Object.prototype.hasOwnProperty.call(o,p);}
-function rep(){if(t)return;t=setTimeout(function(){t=null;try{console.log('__WA_STATE__'+JSON.stringify({ls:ls,ck:ck}));}catch(e){}},250);}
+function rep(){if(t)return;t=setTimeout(function(){t=null;try{console.log('__WA_STATE__@TOKEN@:'+JSON.stringify({ls:ls,ck:ck}));}catch(e){}},250);}
+try{Object.defineProperty(window,'__waGetState',{configurable:true,value:function(){return JSON.stringify({ls:ls,ck:ck});}});}catch(e){}
 var api={getItem:function(k){k=String(k);return has(ls,k)?ls[k]:null;},setItem:function(k,v){ls[String(k)]=String(v);rep();},removeItem:function(k){delete ls[String(k)];rep();},clear:function(){ls={};rep();},key:function(i){var a=Object.keys(ls);return i<a.length?a[i]:null;}};
 var px=new Proxy(api,{get:function(o,p){if(p==='length')return Object.keys(ls).length;if(p in o)return o[p];return(typeof p==='string'&&has(ls,p))?ls[p]:undefined;},
 set:function(o,p,v){ls[String(p)]=String(v);rep();return true;},deleteProperty:function(o,p){delete ls[String(p)];rep();return true;},
