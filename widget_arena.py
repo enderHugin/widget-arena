@@ -3462,14 +3462,24 @@ class StickerWindow(QMainWindow):
             timer.start()
 
     def _layer_pixmap_mask(self, slot, pixmap):
-        """pixmap.mask() convierte alfa->bitmap en CPU; se cachea por cacheKey del pixmap."""
+        """[PACK166] Region de la capa que agarra el raton (lo visible, sin halos tenues); se cachea por cacheKey del pixmap."""
         key = pixmap.cacheKey()
         cached = self._mask_cache.get(slot)
         if cached is not None and cached[0] == key:
             return cached[1]
-        m = pixmap.mask()
+        m = _hit_region(pixmap)
         self._mask_cache[slot] = (key, m)
         return m
+
+    @staticmethod
+    def _mask_fill(painter, geom, region, as_block=False):
+        """[PACK166] Pinta en la mascara de la ventana la parte de `region` (coordenadas de la capa) que cae en `geom`."""
+        if as_block:                                       # un texto agarra por todo su bloque (el rectangulo que ocupa), no solo por las letras
+            painter.fillRect(region.boundingRect().translated(geom.topLeft()), Qt.black)
+            return
+        painter.setClipRegion(region.translated(geom.topLeft()))
+        painter.fillRect(geom, Qt.black)
+        painter.setClipping(False)
 
     def _scaled_cached(self, slot, pixmap, size, aspect_mode):
         """Escalado suave cacheado: solo se recalcula si cambia el pixmap, el tamano o el modo."""
@@ -3487,7 +3497,7 @@ class StickerWindow(QMainWindow):
             
         try:
             window_mask = QBitmap(self.size())
-            window_mask.fill(Qt.transparent)
+            window_mask.fill(Qt.color0)                 # [PACK166] antes fill(Qt.transparent), que en un QBitmap deja TODOS los bits puestos: la ventana agarraba su rectangulo entero
             painter = QPainter(window_mask)
 
             l1_data = self.current_template_data.get('layer1', {})
@@ -3502,25 +3512,24 @@ class StickerWindow(QMainWindow):
             
             if self.layer2_label.isVisible():
                 if (l2_is_image or l2_is_text) and not self.layer2_label.pixmap().isNull():
-                    l2_mask = self._layer_pixmap_mask('l2', self.layer2_label.pixmap())
-                    if not l2_mask.isNull():
-                        painter.drawPixmap(l2_geom.topLeft(), l2_mask)
-                    else:
-                        painter.fillRect(l2_geom, Qt.black) 
+                    self._mask_fill(painter, l2_geom, self._layer_pixmap_mask('l2', self.layer2_label.pixmap()), l2_is_text)
                 else:
                     painter.fillRect(l2_geom, Qt.black) 
             elif self.layer2_web.isVisible():
-                painter.fillRect(l2_geom, Qt.black) 
+                wm = self.layer2_web.mask()                     # [PACK166] una capa web recortada solo agarra por su forma
+                if wm.isEmpty():
+                    painter.fillRect(l2_geom, Qt.black)
+                else:
+                    self._mask_fill(painter, l2_geom, wm)
 
             if self.layer1_label.isVisible():
                 if (l1_is_image or l1_is_text) and not self.layer1_label.pixmap().isNull():
-                    l1_mask = self._layer_pixmap_mask('l1', self.layer1_label.pixmap())
-                    if not l1_mask.isNull():
-                        painter.drawPixmap(l1_geom.topLeft(), l1_mask)
-                    else:
-                        painter.fillRect(l1_geom, Qt.black) 
+                    self._mask_fill(painter, l1_geom, self._layer_pixmap_mask('l1', self.layer1_label.pixmap()), l1_is_text)
                 else:
                     painter.fillRect(l1_geom, Qt.black) 
+            for _ch in (self.layer1_editor, self.fold_badge, self.bell_badge, self.crown_badge):          # [PACK166] lo que se pulsa dentro de la ventana siempre agarra
+                if _ch.isVisible():
+                    painter.fillRect(_ch.geometry(), Qt.black)
             
             painter.end()
             self.setMask(window_mask)
@@ -13020,7 +13029,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 165                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 166                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -17454,6 +17463,20 @@ def _alpha_region(pm):
     if amax <= 0:
         return QRegion()
     return _bool_to_region(a >= max(8, min(48, int(amax * 0.6))))
+
+
+def _hit_region(pm):
+    """[PACK166] Region de una imagen que agarra el raton: solo lo que se ve de verdad. Los pixeles casi transparentes (halos de sombra, bordes
+    difusos) no cuentan; si la imagen entera es translucida, el umbral baja con ella."""
+    img = pm.toImage() if isinstance(pm, QPixmap) else pm
+    a = _image_alpha(img)
+    amax = int(a.max()) if a.size else 0
+    if amax <= 0:
+        return QRegion()
+    return _bool_to_region(a >= max(8, min(HIT_ALPHA_MAX, int(amax * 0.6))))
+
+
+HIT_ALPHA_MAX = 96
 
 
 def _clip_shape_image(mode, w, h, radius_pct=25):

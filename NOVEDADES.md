@@ -1,3 +1,7 @@
+## Pack 166 · 2026-11-06
+- **Cada widget agarra solo por lo que se ve.** La máscara que decide qué parte de la ventana recibe el ratón se rellenaba mal (`fill(Qt.transparent)` en un bitmap deja todos los bits puestos), así que en la práctica cada widget agarraba su rectángulo entero, y un vecino por encima te robaba el arrastre aunque su parte fuese transparente. Ahora la máscara es la forma real.
+- Los halos tenues (sombras, bordes difusos de menos de un tercio de opacidad) no cuentan como zona que agarra; una imagen translucida entera sí. Un texto agarra por todo su bloque, no solo por las letras. Una capa web recortada agarra por su forma, no por su rectángulo. El editor de texto y las insignias (plegar, campana, corona) siempre agarran.
+
 ## Pack 165 · 2026-11-06
 - **Puente de red para páginas locales.** Una página HTML guardada en tu equipo (como el mando de la TV) puede pedir a Widget Arena que haga una petición GET por ella: escribe en su consola `__WA_HTTP_GET__<dirección>`, la aplicación hace la petición y le contesta llamando a `window.__waNet({url, ok, status, error})`. Así funciona aunque el visor web bloquee las peticiones de la página. Solo vale para páginas locales (nunca para páginas de internet), solo `http`/`https`, con un máximo de 20 peticiones cada 5 segundos.
 - Las páginas locales encuentran `window.__waApp` definido cuando están dentro de Widget Arena, para poder elegir el puente por sí solas.
