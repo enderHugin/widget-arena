@@ -5530,10 +5530,27 @@ class StickerWindow(QMainWindow):
         else:
             self._update_bell_badge()
 
+    def _paper_src(self):
+        """[PACK172] Imagen sobre la que se mide el papel (borde superior, inclinacion, zona visible): la ORIGINAL de la capa 2, sin efectos. La medida
+        usa el brillo de los pixeles; con el tono, la saturacion o el brillo cambiados esa medida variaba y la corona (y el anclaje de los cables)
+        se desplazaba al girar la rueda. Sin imagen original (capa que no es imagen), la imagen que se muestra."""
+        try:
+            oi = getattr(self, 'layer2_original_image', None)
+            if oi is not None and not oi.isNull():
+                k = oi.cacheKey()
+                c = getattr(self, '_paper_src_cache', None)
+                if c is None or c[0] != k:
+                    c = (k, QPixmap.fromImage(oi))
+                    self._paper_src_cache = c
+                return c[1]
+        except Exception:
+            pass
+        return getattr(self, 'layer2_base_pixmap', None)
+
     def _detect_upright_angle(self):
         """Inclinacion (grados, sentido horario) con la que viene dibujada la imagen de la capa 2."""
         try:
-            pm = getattr(self, 'layer2_base_pixmap', None)
+            pm = self._paper_src()          # [PACK172]
             if pm is None or pm.isNull() or self.current_template_data.get('layer2', {}).get('type') != 'png':
                 return 0.0
             pts, _w, _h = _paper_valid_points(pm)
@@ -5559,7 +5576,7 @@ class StickerWindow(QMainWindow):
     def _get_paper_frame(self, u):
         """Centro del borde superior del papel medido en SU sistema de ejes (inclinado u grados), en coordenadas de la
         geometria original de la capa 2 sin rotar. None si no se puede calcular. Cacheado por imagen y angulo."""
-        pm = getattr(self, 'layer2_base_pixmap', None)
+        pm = self._paper_src()          # [PACK172]
         l2 = self.current_template_data.get('layer2', {})
         if pm is None or pm.isNull() or l2.get('type') != 'png':
             return None
@@ -5611,7 +5628,7 @@ class StickerWindow(QMainWindow):
     def _paper_fractions(self):
         """[PACK102] (x0, y0, x1, y1) del papel visible como fraccion (0-1) de la imagen de la capa 2. Se calcula sobre una copia
         reducida (160 px como mucho) y se guarda por imagen: ~1 ms en vez de escanear la imagen entera."""
-        pm = getattr(self, 'layer2_base_pixmap', None)
+        pm = self._paper_src()          # [PACK172]
         if pm is None or pm.isNull():
             return (0.0, 0.0, 1.0, 1.0)
         key = pm.cacheKey()
@@ -5709,7 +5726,7 @@ class StickerWindow(QMainWindow):
         orig_w = orig_geom.get('w', l2_geom.width())
         orig_h = orig_geom.get('h', l2_geom.height())
 
-        pixmap = getattr(self, 'layer2_base_pixmap', None)
+        pixmap = self._paper_src()          # [PACK172]
         if pixmap is None or pixmap.isNull():
             self._cached_paper_bounds = QRect(0, 0, orig_w, orig_h)
             return self._cached_paper_bounds
@@ -13220,7 +13237,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 171                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 172                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")

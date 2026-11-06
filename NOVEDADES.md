@@ -1,3 +1,7 @@
+## Pack 172 · 2026-11-06
+- **La corona ya no se mueve al cambiar el tono (Ctrl+rueda).** El borde superior del papel, su inclinación y su zona visible (de donde salen la posición de la corona, el anclaje de los cables y el rectángulo del papel) se medían sobre la imagen *ya con efectos*, buscando píxeles opacos y con brillo; al cambiar el tono (o la saturación, el brillo…) cambiaba el brillo de los píxeles y, con él, lo que se detectaba como papel (en papeles oscuros con un filo claro, el filo cambiaba de sitio). Ahora se mide sobre la imagen original de la capa 2, sin efectos, que no cambia con la rueda. Sin imagen original (capas que no son imagen) se usa la que se muestra, como antes.
+- Esto vale también para el resto de lo que usa esa medida (cables de la nota, zona del papel para las teclas globales) con tono, saturación, brillo y contraste.
+
 ## Pack 171 · 2026-11-06
 - **Notas: el texto alineado a la izquierda se respeta.** En una nota el texto sin alineación propia se centra; pero Qt, al guardar el texto del editor, *no escribe* la alineación cuando es a la izquierda (es la de por defecto), así que un párrafo que habías alineado a la izquierda volvía a dibujarse centrado al terminar de editar. Ahora, al guardar, la alineación izquierda se escribe de forma explícita (`align="left"`), y el texto solo se centra automáticamente en vertical.
 - Las notas que ya tenías guardadas con un párrafo «perdido» en el centro no se pueden recuperar solas (no se sabe si estaba a la izquierda o sin alineación): hay que volver a alinearlas una vez.
