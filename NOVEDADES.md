@@ -1,3 +1,6 @@
+## Pack 179 · 2026-11-07
+- **«Iniciar con el sistema»** en *Ajustes* de la bandeja (casilla): Widget Arena se abre solo al iniciar sesión en el equipo. Windows: entrada en el registro del usuario (*Run*, sin consola); macOS: un *LaunchAgent* en `~/Library/LaunchAgents`; Linux: un `.desktop` en `~/.config/autostart`. La casilla refleja lo que hay realmente en el sistema; desmarcarla lo quita. Si no se puede (permisos), avisa.
+
 ## Pack 178 · 2026-11-07
 - **Tu autor y tu familia «predeterminados», a un clic.** En el Navegador de widgets, pestaña *Widget elegido*: junto a **Autor** hay una casilla **[x] predeterminado** (ese es tu nombre de autor) y junto a **Familias** otra, **[x] predeterminada** (esas familias se ponen solas). Si la marcas, los widgets **nuevos** y los que **guardes en Mis widgets** llevan esa familia y tu firma, siempre que no traigan familia propia; los de otros autores no se tocan. Desmarcarla la quita. Si editas el campo mientras está marcada, la predeterminada se mantiene al día.
 - **Tu nombre también en *Ajustes* de la bandeja:** «Mi nombre de autor…» (y sigue en *Mis widgets ▸ Gestionar*).

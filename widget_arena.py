@@ -13533,7 +13533,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 178                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 179                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -13754,6 +13754,57 @@ def update_spawn_restart(delay=3):
     subprocess.Popen([sys.executable, '-c', code] + cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      close_fds=True, **kw)
     return cmd
+
+
+def _autostart_write(path, plat, cmd):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    wd = os.path.dirname(os.path.abspath(APP_FILE))
+    if plat == 'mac':
+        from xml.sax.saxutils import escape
+        args = ''.join('        <string>%s</string>\n' % escape(a) for a in cmd)
+        txt = ('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+               '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n'
+               '    <key>Label</key>\n    <string>com.widgetarena.app</string>\n'
+               '    <key>ProgramArguments</key>\n    <array>\n' + args + '    </array>\n'
+               '    <key>WorkingDirectory</key>\n    <string>' + escape(wd) + '</string>\n'
+               '    <key>RunAtLoad</key>\n    <true/>\n</dict>\n</plist>\n')
+    else:
+        txt = ('[Desktop Entry]\nType=Application\nName=Widget Arena\nComment=Widgets y notas en el escritorio\n'
+               'Exec=' + ' '.join(_autostart_quote(a) for a in cmd) + '\nPath=' + wd + '\nTerminal=false\n'
+               'X-GNOME-Autostart-enabled=true\n')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(txt)
+
+
+def autostart_set(on):
+    """Activa o desactiva el arranque con el sistema. Devuelve True si queda como se pidio."""
+    try:
+        plat = _autostart_platform()
+        cmd = autostart_command()
+        if plat == 'win':
+            import winreg
+            import subprocess
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run") as k:
+                if on:
+                    winreg.SetValueEx(k, _AUTOSTART_NAME, 0, winreg.REG_SZ, subprocess.list2cmdline(cmd))
+                else:
+                    try:
+                        winreg.DeleteValue(k, _AUTOSTART_NAME)
+                    except FileNotFoundError:
+                        pass
+            return autostart_is_on() == bool(on)
+        path = _autostart_file()
+        if on:
+            _autostart_write(path, plat, cmd)
+        elif os.path.exists(path):
+            os.remove(path)
+        return os.path.exists(path) == bool(on)
+    except Exception as e:
+        try:
+            log_warn("Autostart", "No se pudo %s el arranque con el sistema: %s" % ("activar" if on else "desactivar", e))
+        except Exception:
+            pass
+        return False
 
 
 class _UpdateWorker(QObject):
@@ -21486,6 +21537,53 @@ class ConnectorOverlayGroup:
             self.hide_overlay(ov)
 
 
+# ---- [PACK179] Iniciar con el sistema ------------------------------------------------------------------------------------------------
+_AUTOSTART_NAME = "WidgetArena"
+
+
+def _autostart_platform():
+    return 'win' if os.name == 'nt' else ('mac' if sys.platform == 'darwin' else 'linux')
+
+
+def autostart_command():
+    """Orden que arranca el programa al iniciar sesion: el mismo Python (sin consola en Windows) y este mismo archivo."""
+    if getattr(sys, 'frozen', False):
+        return [sys.executable]
+    py = sys.executable
+    if os.name == 'nt':
+        pw = os.path.join(os.path.dirname(py), 'pythonw.exe')
+        if os.path.exists(pw):
+            py = pw
+    return [py, APP_FILE]
+
+
+def _autostart_quote(s):
+    return '"' + str(s).replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`') + '"'
+
+
+def _autostart_file():
+    """Archivo que activa el arranque (Linux y macOS); None en Windows (usa el registro)."""
+    plat = _autostart_platform()
+    if plat == 'mac':
+        return os.path.join(os.path.expanduser('~'), 'Library', 'LaunchAgents', 'com.widgetarena.app.plist')
+    if plat == 'linux':
+        base = os.environ.get('XDG_CONFIG_HOME') or os.path.join(os.path.expanduser('~'), '.config')
+        return os.path.join(base, 'autostart', 'widget-arena.desktop')
+    return None
+
+
+def autostart_is_on():
+    try:
+        if _autostart_platform() == 'win':
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run") as k:
+                winreg.QueryValueEx(k, _AUTOSTART_NAME)
+            return True
+        return os.path.exists(_autostart_file())
+    except Exception:
+        return False
+
+
 class WidgetManager(QObject):
     
     def __init__(self, app, console_hwnd=None):
@@ -22264,6 +22362,12 @@ class WidgetManager(QObject):
         child_cfg_action = QAction("Tipo de hijo al crear con el rat\u00f3n...", self)            # [PACK62]
         child_cfg_action.triggered.connect(self.edit_child_types)
         cfg_menu.insertAction(integ_menu.menuAction(), child_cfg_action)
+        auto_action = QAction("Iniciar con el sistema", self)          # [PACK179]
+        auto_action.setCheckable(True)
+        auto_action.setChecked(autostart_is_on())
+        auto_action.setToolTip("Abre Widget Arena solo al iniciar sesi\u00f3n en el equipo")
+        auto_action.toggled.connect(self.set_autostart)
+        cfg_menu.insertAction(integ_menu.menuAction(), auto_action)
         me_action = QAction("Mi nombre de autor...", self)          # [PACK178]
         me_action.triggered.connect(lambda _c=False: self.ask_user_name())
         cfg_menu.insertAction(integ_menu.menuAction(), me_action)
@@ -23049,6 +23153,12 @@ class WidgetManager(QObject):
 
     def _menu_style_on(self):
         return bool(self.global_state.get('menu_style', True))
+
+    def set_autostart(self, on):
+        """[PACK179] Iniciar con el sistema (se lee del sistema, no se guarda aparte: lo que ves es lo que hay)."""
+        if not autostart_set(bool(on)):
+            self._osd("No se pudo %s el arranque con el sistema" % ("activar" if on else "desactivar"), 2500)
+        self.build_tray_menu()
 
     def set_menu_style(self, on):
         """[PACK53] Interruptor: secciones, colores e iconos en los menus (apagarlo = menus planos, como antes)."""
