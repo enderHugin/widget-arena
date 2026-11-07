@@ -1,3 +1,8 @@
+## Pack 175 · 2026-11-07
+- **«Modelo» pasa a llamarse «widget» en todos los textos de la aplicación.** La biblioteca se llama ahora **«Mis widgets»** (como ya existen «Mis marcos» y «Mis formas de papel»): pestaña del Navegador, ventana, botones, avisos, ayudas, packs, importar y exportar. Donde se cambiaba un widget por otro, la acción es **«Sustituir widget»** (botón «Sustituir "nombre"» y aviso «Sustituyendo…»).
+- Los atajos y teclas de menú que ya tenías asignados se migran solos (por ejemplo, «Exportar todos mis modelos a un archivo…» de la bandeja pasa a «…mis widgets…»). Tus archivos y packs no cambian: siguen siendo los mismos.
+- En el menú del widget, el submenú «Modelo» (dentro de «Aspecto») conserva aún su nombre; se reorganiza entero en el Pack 176 (menú por función).
+
 ## Pack 174 · 2026-11-07
 - **Familias de modelos y widgets (primera parte).** Cada modelo puede llevar un **autor** y una o varias **familias** («Relojes modernos», «Transparentes»…): un modelo puede estar en varias a la vez. Se guardan en un bloque propio del modelo (`wa_meta`: `author` y `groups`), pensado para ampliarse (registro de autores, concursos…). Los widgets creados desde un modelo llevan esa marca, y también la conservan al clonarlos o guardarlos como modelo.
 - **Dónde se ve y se edita:** en *Modelos*, campos «Autor» y «Familias» (separadas por comas), un filtro por familia («Todas», «Sin familia», cada familia) y la casilla «Agrupar por familia» (un modelo que está en varias sale en cada una; las familias se indican bajo su nombre). En *Navegador de widgets*, una entrada «Familia: X» en el filtro por cada familia de los widgets que hay, y las familias y el autor en el aviso de cada widget. En el menú del widget, *Modelo ▸ Familias y autor de este widget…*.

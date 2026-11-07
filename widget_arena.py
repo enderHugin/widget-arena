@@ -8875,7 +8875,7 @@ HOTKEY_PROFILES_DIR = os.path.join(DATA_DIR, "hotkey_profiles")
 HOTKEY_COMMANDS = [
     ("open_browser", "Abrir el navegador de widgets", "Ctrl+Alt+B", True, False),
     ("toggle_all", "Mostrar / ocultar todos los widgets", "", False, False),
-    ("add_widget", "Agregar nuevo widget (elegir un modelo)", "", False, False),
+    ("add_widget", "Agregar nuevo widget (elegir uno de Mis widgets)", "", False, False),
     ("new_default", "Nuevo widget con el predeterminado", "", False, False),
     ("toggle_collapse_all", "Plegar / desplegar todos los hijos", "", False, False),
     ("reload_all", "Recargar todos los widgets", "", False, False),
@@ -8991,6 +8991,10 @@ _WIDGET_PATH_MOVES = tuple(_WIDGET_PATH_MOVES_A + [mv for n in (1, 2) for mv in 
     ("widget/Transformar capas/Capa %d" % n, "widget/Capas/Capa %d/Transformar" % n),
     ("widget/Contenido y capas/Capa %d" % n, "widget/Capas/Capa %d" % n))]
   + [("widget/Contenido y capas", "widget/Capas"), ("widget/Transformar capas", "widget/Capas")])
+# [PACK175] "modelo" pasa a "widget": rutas de menu con la palabra antigua (se aplican DESPUES de todas las anteriores)
+_MOVES_175 = (
+    ("tray/Ajustes/Importar y exportar/Exportar todos mis modelos a un archivo...", "tray/Ajustes/Importar y exportar/Exportar todos mis widgets a un archivo..."),
+)
 # [PACK121] Rutas del menu que cambiaron de nombre o de sitio al unificar el vocabulario (se aplican DESPUES de las anteriores;
 # lo especifico antes). Los atajos y teclas de menu que el usuario ya tenia asignados se traducen solos.
 _MOVES_121 = tuple([
@@ -9600,6 +9604,10 @@ class HotkeyManager(QObject):
                     break
             for old_, new_ in _MOVES_121:            # [PACK121]
                 if p_ == old_ or p_.startswith(old_ + "/"):
+                    p_ = new_ + p_[len(old_):]
+                    break
+            for old_, new_ in _MOVES_175:            # [PACK175]
+                if p_ == old_ or p_.startswith(old_ + "/"):
                     return new_ + p_[len(old_):]
             return p_
         hk = {}
@@ -10029,11 +10037,11 @@ class WidgetBrowserWindow(QMainWindow):
         self.templates = TemplateBrowser(manager)
         self.templates.on_done = lambda: self.tabs.setCurrentIndex(0)
         manager.template_browser = self.templates
-        self.tabs.addTab(self.templates, "Modelos")
+        self.tabs.addTab(self.templates, "Mis widgets")
         self.glob = self._scroll_tab("Ajustes globales")
         self.keys_tab = QWidget()
         self.tabs.addTab(self.keys_tab, "Atajos y teclas de men\u00fa")
-        for _i, _t in enumerate(("Widget elegido", "Crear desde un modelo", "Ajustes y acciones", "Atajos de teclado")):     # [PACK66]
+        for _i, _t in enumerate(("Widget elegido", "Mis widgets", "Ajustes y acciones", "Atajos de teclado")):     # [PACK66]
             self.tabs.setTabText(_i, _t)
         for _i in (2, 3):
             self.tabs.tabBar().setTabTextColor(_i, QColor("#9aa0aa"))       # las pestanas de configuracion, mas discretas
@@ -10157,7 +10165,7 @@ class WidgetBrowserWindow(QMainWindow):
             self.tabs.setCurrentWidget(self.templates)
             self.templates.status.setText("Importado: " + ", ".join(n[:-5] if n.lower().endswith('.json') else n for n in done))
             try:
-                self.m._osd("Modelo importado: " + done[-1][:-5], 2000)
+                self.m._osd("Importado a Mis widgets: " + done[-1][:-5], 2000)
             except Exception:
                 pass
         return done
@@ -10360,16 +10368,16 @@ class WidgetBrowserWindow(QMainWindow):
         v.addLayout(head)
 
         # ---- template
-        lay = self._gbox(v, "Modelo")
+        lay = self._gbox(v, "Widget")
         row = QHBoxLayout()
         cur = QLabel("Actual: " + str(st.get('template_name') or "-"))
         f = cur.font()
         f.setBold(True)
         cur.setFont(f)
         row.addWidget(cur, 1)
-        button(row, "Cambiar el modelo de este widget...", lambda: m.show_template_chooser(apply_to=wid))
+        button(row, "Sustituir widget...", lambda: m.show_template_chooser(apply_to=wid))
         button(row, "Guardar este widget...", lambda: m.save_widget_as_template(wid))
-        button(row, "Editar modelos...", lambda: m.show_template_chooser(select=st.get('template_name')))
+        button(row, "Editar mis widgets...", lambda: m.show_template_chooser(select=st.get('template_name')))
         lay.addLayout(row)
 
         # ---- visibilidad
@@ -10971,7 +10979,7 @@ class SimpleAddDialog(QDialog):
         try:
             names = list(manager.template_files())
         except Exception as e:
-            log_warn("Manager", "No se pudo listar los modelos: %s" % e)
+            log_warn("Manager", "No se pudo listar los widgets: %s" % e)
             names = []
         dflt = manager.default_template_name()
         sel = None
@@ -11108,7 +11116,7 @@ class SimpleAddDialog(QDialog):
             else:
                 self.m.add_new_widget(template_name=name)
         except Exception as e:
-            log_error("Manager", "No se pudo usar el modelo %s: %s" % (name, e))
+            log_error("Manager", "No se pudo usar el widget %s: %s" % (name, e))
         self.accept()
 
 
@@ -11167,7 +11175,7 @@ class TemplateBrowser(QWidget):
         self.m = manager
         self._loading, self._data, self._name, self._f = False, {}, None, {}
         self._target, self.on_done = None, None
-        self.setWindowTitle("Modelos")
+        self.setWindowTitle("Mis widgets")
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self.resize(940, 620)
         left = QWidget()
@@ -11177,19 +11185,19 @@ class TemplateBrowser(QWidget):
         self.banner.setStyleSheet("background:#3b4f7a;color:white;padding:6px;border-radius:4px;")
         self.banner.hide()
         ll.addWidget(self.banner)
-        self.hint = QLabel("Elige un modelo (doble clic = crear el widget):")
+        self.hint = QLabel("Elige un widget (doble clic = crear uno igual):")
         ll.addWidget(self.hint)
         self.chk_keep = QCheckBox("Al aplicarlo a un widget existente, conservar su contenido")       # [PACK71]
         self.chk_keep.setChecked(self.m.keep_content_on_apply())
-        self.chk_keep.setToolTip("Cambiar el modelo solo cambia el aspecto: el texto (con su formato) del widget se mantiene.")
+        self.chk_keep.setToolTip("Sustituir un widget solo cambia el aspecto: el texto (con su formato) del widget se mantiene.")
         self.chk_keep.toggled.connect(lambda on: self.m.set_keep_content_on_apply(on))
         ll.addWidget(self.chk_keep)
         frow = QHBoxLayout()          # [PACK174] filtrar / agrupar por familia
         self.fam_filter = QComboBox()
-        self.fam_filter.setToolTip("Muestra solo los modelos de una familia (un modelo puede estar en varias)")
+        self.fam_filter.setToolTip("Muestra solo los widgets de una familia (un widget puede estar en varias)")
         self.chk_group = QCheckBox("Agrupar por familia")
         self.chk_group.setChecked(bool(self.m.global_state.get('tpl_group_by_family', False)))
-        self.chk_group.setToolTip("Una secci\u00f3n por familia; un modelo que est\u00e1 en varias sale en cada una")
+        self.chk_group.setToolTip("Una secci\u00f3n por familia; un widget que est\u00e1 en varias sale en cada una")
         frow.addWidget(self.fam_filter, 1)
         frow.addWidget(self.chk_group)
         ll.addLayout(frow)
@@ -11211,9 +11219,9 @@ class TemplateBrowser(QWidget):
             row.addWidget(b)
             if text.startswith("Editar"):
                 self.btn_edit_base = b
-                b.setToolTip("Abre el editor de forma de papel con la de este modelo y lo guarda con el mismo nombre")
+                b.setToolTip("Abre el editor de forma de papel con la de este widget y lo guarda con el mismo nombre")
         for text, items in (("Gestionar \u25be", (("Renombrar", self._rename), ("Eliminar", self._delete), None,
-                                                              ("Importar...", self._import), ("Exportar...", self._export), ("Exportar todos los modelos...", self._export_all), ("Exportar una familia...", self._export_family), None,
+                                                              ("Importar...", self._import), ("Exportar...", self._export), ("Exportar todos los widgets...", self._export_all), ("Exportar una familia...", self._export_family), None,
                                                               ("Criterio de aspectos en uso...", self.m.edit_type_criteria), ("Mi nombre de autor...", lambda: self.m.ask_user_name(self)))),
                             ("Con un widget \u25be", (("Guardar un widget de la pantalla...", self._from_widget),
                                                       ("Aplicar a un widget...", self._to_widget)))):
@@ -11235,7 +11243,7 @@ class TemplateBrowser(QWidget):
         self.preview.setMinimumHeight(170)
         self.preview.setStyleSheet("background:#2b2b2f;border-radius:6px;")
         rl.addWidget(self.preview)
-        self.chk_default = QCheckBox("Este modelo ser\u00e1 el predeterminado (May\u00fas + doble clic en el icono de bandeja)")
+        self.chk_default = QCheckBox("Este widget ser\u00e1 el predeterminado (May\u00fas + doble clic en el icono de bandeja)")
         rl.addWidget(self.chk_default)
         self.tabs = QTabWidget()
         self.form_host = QWidget()
@@ -11245,16 +11253,16 @@ class TemplateBrowser(QWidget):
         self.tabs.addTab(self.json_edit, "JSON")
         rl.addWidget(self.tabs, 1)
         brow = QHBoxLayout()
-        self.btn_save = QPushButton("Guardar cambios del modelo")
+        self.btn_save = QPushButton("Guardar cambios del widget")
         self.btn_revert = QPushButton("Descartar cambios")
         brow.addWidget(self.btn_save)
         brow.addWidget(self.btn_revert)
         rl.addLayout(brow)
         xrow = QHBoxLayout()                 # [PACK96] exportar / copiar el JSON del template seleccionado
         self.btn_export_json = QPushButton("Exportar a JSON...")
-        self.btn_export_json.setToolTip("Guarda el modelo seleccionado (tal como est\u00e1 guardado) en un archivo .json")
+        self.btn_export_json.setToolTip("Guarda el widget seleccionado (tal como est\u00e1 guardado) en un archivo .json")
         self.btn_copy_json = QPushButton("Copiar JSON")
-        self.btn_copy_json.setToolTip("Copia al portapapeles el JSON del modelo seleccionado (tal como est\u00e1 guardado)")
+        self.btn_copy_json.setToolTip("Copia al portapapeles el JSON del widget seleccionado (tal como est\u00e1 guardado)")
         xrow.addWidget(self.btn_export_json)
         xrow.addWidget(self.btn_copy_json)
         rl.addLayout(xrow)
@@ -11314,7 +11322,7 @@ class TemplateBrowser(QWidget):
         self.f_author.setPlaceholderText("vac\u00edo = ti (%s)" % self.m.user_name())
         self.f_groups = QLineEdit()
         self.f_groups.setPlaceholderText("varias, separadas por comas (ej.: Relojes modernos, Transparentes)")
-        self.f_groups.setToolTip("Un modelo puede estar en varias familias a la vez. Con familias, el modelo siempre lleva autor.")
+        self.f_groups.setToolTip("Un widget puede estar en varias familias a la vez. Con familias, el widget siempre lleva autor.")
         top.addRow("Autor:", self.f_author)
         top.addRow("Familias:", self.f_groups)
         v.addLayout(top)
@@ -11552,7 +11560,7 @@ class TemplateBrowser(QWidget):
             self._family_sections(order, add_names, fam_sel, fams)
         if rest_names:
             if show_hdr:
-                self.list.addItem(self._hdr_item("MODELOS  (%d)" % len(rest_names), "#8a8a90"))
+                self.list.addItem(self._hdr_item("MIS WIDGETS  (%d)" % len(rest_names), "#8a8a90"))
             add_names(rest_names)
         self.list.blockSignals(False)
         self._loading = False
@@ -11601,7 +11609,7 @@ class TemplateBrowser(QWidget):
         elif self._name != "default.json":
             self.m.set_default_template("default.json")
         else:
-            self.status.setText("default.json es el predeterminado de reserva: marca otro modelo para cambiarlo.")
+            self.status.setText("default.json es el predeterminado de reserva: marca otro widget para cambiarlo.")
         self.reload(self._name)
 
     # ---- acciones -------------------------------------------------------
@@ -11648,14 +11656,14 @@ class TemplateBrowser(QWidget):
         self._target = wid if (wid and wid in self.m.global_state) else None
         if self._target:
             nm = self.m._get_widget_display_name(self._target)
-            self.banner.setText(f"Cambiando el modelo de <b>{nm}</b>: elige uno y pulsa Aplicar "
+            self.banner.setText(f"Sustituyendo <b>{nm}</b>: elige un widget y pulsa Sustituir "
                                 "(se conservan su posici\u00f3n y su jerarqu\u00eda).")
             self.banner.show()
-            self.hint.setText("Elige el modelo (doble clic = aplicar):")
-            self.btn_create.setText(f"Aplicar a \u00ab{nm}\u00bb")
+            self.hint.setText("Elige el widget que pondr\u00e1s en su lugar (doble clic = sustituir):")
+            self.btn_create.setText(f"Sustituir \u00ab{nm}\u00bb")
         else:
             self.banner.hide()
-            self.hint.setText("Elige un modelo (doble clic = crear el widget):")
+            self.hint.setText("Elige un widget (doble clic = crear uno igual):")
             self.btn_create.setText("Crear widget a partir de este")
 
     def hide(self):
@@ -11666,7 +11674,7 @@ class TemplateBrowser(QWidget):
             self.on_done()
 
     def _ask_name(self, title, text=""):
-        name, ok = QInputDialog.getText(self, title, "Nombre del modelo:", text=text)
+        name, ok = QInputDialog.getText(self, title, "Nombre del widget:", text=text)
         n = self.m._tpl_safe_name(name) if ok else None
         if ok and not n:
             self.status.setText("Nombre no v\u00e1lido.")
@@ -11681,7 +11689,7 @@ class TemplateBrowser(QWidget):
         return cand
 
     def _new(self):
-        n = self._ask_name("Nuevo modelo")
+        n = self._ask_name("Nuevo widget")
         if n:
             n = self._unique(n)
             self.m.save_template(n, self.m.get_default_template_data())
@@ -11690,7 +11698,7 @@ class TemplateBrowser(QWidget):
     def _duplicate(self):
         ty = self._cur_type()
         if ty:        # [PACK67] un tipo en uso: se guarda como template
-            n = self._ask_name("Guardar este aspecto como modelo", ty['name'])
+            n = self._ask_name("Guardar este aspecto como widget", ty['name'])
             if n:
                 n = self._unique(n)
                 self.m.save_template(n, self.m._sample_td(self.m.state_for_type(ty)['template_data']))          # [PACK151]
@@ -11708,11 +11716,11 @@ class TemplateBrowser(QWidget):
         if old == "default.json":
             self.status.setText("default.json no se puede renombrar.")
             return
-        n = self._ask_name("Renombrar modelo", old[:-5])
+        n = self._ask_name("Renombrar widget", old[:-5])
         if not n or n == old:
             return
         if os.path.exists(os.path.join(TEMPLATES_DIR, n)):
-            self.status.setText("Ya existe un modelo con ese nombre.")
+            self.status.setText("Ya existe un widget con ese nombre.")
             return
         try:
             os.rename(os.path.join(TEMPLATES_DIR, old), os.path.join(TEMPLATES_DIR, n))
@@ -11733,9 +11741,9 @@ class TemplateBrowser(QWidget):
         if not name:
             return
         if name == "default.json" or name == self.m.default_template_name():
-            self.status.setText("No se puede eliminar el modelo predeterminado (marca otro como predeterminado antes).")
+            self.status.setText("No se puede eliminar el widget predeterminado (marca otro como predeterminado antes).")
             return
-        if QMessageBox.question(self, "Eliminar modelo", f"Eliminar '{name}'? Los widgets ya creados no se ven afectados.",
+        if QMessageBox.question(self, "Eliminar widget", f"Eliminar '{name}'? Los widgets ya creados no se ven afectados.",
                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         try:
@@ -11747,7 +11755,7 @@ class TemplateBrowser(QWidget):
         self.reload()
 
     def _import(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Importar modelo", DATA_DIR,
+        path, _ = QFileDialog.getOpenFileName(self, "Importar widget", DATA_DIR,
                                               "Widgets y formas de papel (*.wawidget *.wapaper *.json);;Todos (*)")
         if path:
             self.import_path(path)
@@ -11757,7 +11765,7 @@ class TemplateBrowser(QWidget):
         try:
             _k, d = read_file_any(path)
             if not isinstance(d, dict):
-                raise ValueError("no es un modelo (la ra\u00edz debe ser un objeto)")
+                raise ValueError("no es un widget (la ra\u00edz debe ser un objeto)")
         except Exception as e:
             self.status.setText(f"No se pudo importar: {e}")
             return None
@@ -11771,7 +11779,7 @@ class TemplateBrowser(QWidget):
         if not self._data:
             return
         base = wa_stem(self._name or "aspecto_en_uso") + ".wawidget"
-        path, _flt = QFileDialog.getSaveFileName(self, "Exportar modelo", os.path.join(DATA_DIR, base), WA_FILTER['widget'])
+        path, _flt = QFileDialog.getSaveFileName(self, "Exportar widget", os.path.join(DATA_DIR, base), WA_FILTER['widget'])
         if path:
             try:
                 path, n_img, _sk = wa_export_template(path, self._data, 'widget', _flt)          # [PACK130] .wawidget: comprimido, con sus imagenes
@@ -11823,7 +11831,7 @@ class TemplateBrowser(QWidget):
         """[PACK174] Todos los modelos de una familia a un pack."""
         fams = self.m.template_families()
         if not fams:
-            self.status.setText("Todav\u00eda no hay familias: ponles una en el campo \u00abFamilias\u00bb de un modelo.")
+            self.status.setText("Todav\u00eda no hay familias: ponles una en el campo \u00abFamilias\u00bb de un widget.")
             return
         names = sorted(fams, key=str.lower)
         cur = self.fam_filter.currentData()
@@ -11838,7 +11846,7 @@ class TemplateBrowser(QWidget):
         """[PACK151] Todos los modelos a un archivo."""
         p = self.m.export_all_templates(self)
         if p:
-            self.status.setText("Exportados todos los modelos a %s" % p)
+            self.status.setText("Exportados todos los widgets a %s" % p)
 
     def _copy_json(self):
         """[PACK96] Copia al portapapeles el JSON del template seleccionado."""
@@ -11853,7 +11861,7 @@ class TemplateBrowser(QWidget):
         QApplication.clipboard().setText(txt)
         self.status.setText(f"JSON copiado al portapapeles ({len(txt)} caracteres{', %d im\u00e1genes' % n_img if n_img else ''}).")
         try:
-            self.m._osd("JSON del modelo copiado")
+            self.m._osd("JSON del widget copiado")
         except Exception:
             pass
 
@@ -11879,7 +11887,7 @@ class TemplateBrowser(QWidget):
     def _to_widget(self):
         if not self._name:
             return
-        wid = self._pick_widget("Aplicar el modelo a un widget")
+        wid = self._pick_widget("Sustituir un widget por este")
         if wid:
             self.m.apply_template_to_widget(wid, self._name)
             self.status.setText(f"'{self._name}' aplicado a {self.m._get_widget_display_name(wid)}.")
@@ -12768,7 +12776,7 @@ class BackupRestoreDialog(QDialog):
             self.lst_prof.addItem(it)
 
         miss = [t for t in d['templates'] if not os.path.exists(os.path.join(TEMPLATES_DIR, t))]
-        self.chk_tpl.setText("Modelos que faltan (%d)" % len(miss))
+        self.chk_tpl.setText("Widgets que faltan (%d)" % len(miss))
         self.chk_tpl.setEnabled(bool(miss))
         self.chk_tpl.setChecked(bool(miss))
         media = d.get('media') or []                      # [PACK125] imagenes que lleva la copia y no estan en esta instalacion
@@ -13443,7 +13451,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 174                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 175                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -13996,8 +14004,8 @@ class PacksDialog(QDialog):
         tl = QVBoxLayout()
         t1 = QLabel("Packs de widgets")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        t2 = QLabel("Un pack es un archivo .wapack con modelos y sets de widgets listos para usar. "
-                    "Arrastra aqu\u00ed un .wapack para instalarlo. Al agregar un modelo o un set se copia a los tuyos y el pack no se toca.")
+        t2 = QLabel("Un pack es un archivo .wapack con widgets y sets de widgets listos para usar. "
+                    "Arrastra aqu\u00ed un .wapack para instalarlo. Al agregar un widget o un set se copia a los tuyos y el pack no se toca.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
 
@@ -14026,7 +14034,7 @@ class PacksDialog(QDialog):
         self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.info.setStyleSheet("background:#2b2b2f;border-radius:6px;padding:8px;")
         panel.addWidget(self.info)
-        panel.addWidget(QLabel("Modelos (elige uno o varios)"))
+        panel.addWidget(QLabel("Widgets (elige uno o varios)"))
         self.styles = QListWidget()
         self.styles.setViewMode(QListView.IconMode)
         self.styles.setResizeMode(QListView.Adjust)
@@ -14043,12 +14051,12 @@ class PacksDialog(QDialog):
         panel.addWidget(self.sets, 1)
         row = QHBoxLayout()
         self.b_style, self.b_note, self.b_set, self.b_open, self.b_del = (QPushButton(t) for t in (
-            "Agregar a mis modelos", "Crear una nota con este modelo", "Agregar a mis sets", "Abrir el set ahora", "Quitar este pack"))
-        self.b_style.setToolTip("Guarda los modelos elegidos entre los tuyos (los ves en Modelos y en 'Nuevo con un aspecto')")
-        self.b_note.setToolTip("Crea una nota nueva con el primer modelo elegido")
+            "Agregar a mis widgets", "Crear una nota con este widget", "Agregar a mis sets", "Abrir el set ahora", "Quitar este pack"))
+        self.b_style.setToolTip("Guarda los widgets elegidos entre los tuyos (los ves en Mis widgets y en 'Nuevo con un aspecto')")
+        self.b_note.setToolTip("Crea una nota nueva con el primer widget elegido")
         self.b_set.setToolTip("Guarda el set elegido en tu lista de sets, sin cambiar los widgets que tienes ahora")
         self.b_open.setToolTip("Lo agrega a tus sets y lo abre; tu set actual se guarda antes")
-        self.b_del.setToolTip("Elimina el archivo del pack. Lo que ya agregaste a tus modelos y sets se queda")
+        self.b_del.setToolTip("Elimina el archivo del pack. Lo que ya agregaste a tus widgets y sets se queda")
         self.b_style.clicked.connect(lambda: self.add_styles(False))
         self.b_note.clicked.connect(lambda: self.add_styles(True))
         self.b_set.clicked.connect(lambda: self.add_set(False))
@@ -14076,7 +14084,7 @@ class PacksDialog(QDialog):
         from PySide6.QtWidgets import QListWidgetItem
         row = 0
         for i, pk in enumerate(self.packs):
-            sub = " \u00b7 ".join(x for x in (pk.author, "v" + pk.version, "%d modelos" % len(pk.styles) + (", %d sets" % len(pk.sets) if pk.sets else "")) if x)
+            sub = " \u00b7 ".join(x for x in (pk.author, "v" + pk.version, "%d widgets" % len(pk.styles) + (", %d sets" % len(pk.sets) if pk.sets else "")) if x)
             it = QListWidgetItem(pk.name + "\n" + sub)
             it.setSizeHint(QSize(250, 48))
             self.nav.addItem(it)
@@ -14169,7 +14177,7 @@ class PacksDialog(QDialog):
                         continue
                 new = pack_install(p)
                 last = new.id
-                self.status.setText("Instalado: \u00ab%s\u00bb v%s (%d modelos, %d sets)." % (new.name, new.version, len(new.styles), len(new.sets)))
+                self.status.setText("Instalado: \u00ab%s\u00bb v%s (%d widgets, %d sets)." % (new.name, new.version, len(new.styles), len(new.sets)))
             except PackError as e:
                 QMessageBox.warning(self, "Instalar pack", "%s\n\n%s" % (os.path.basename(p), e))
             except Exception as e:
@@ -14183,7 +14191,7 @@ class PacksDialog(QDialog):
         pk = self._cur()
         sel = [i.data(Qt.UserRole) for i in self.styles.selectedItems()]
         if pk is None or not sel:
-            self.status.setText("Elige uno o varios modelos.")
+            self.status.setText("Elige uno o varios widgets.")
             return
         names = []
         try:
@@ -14195,11 +14203,11 @@ class PacksDialog(QDialog):
             QMessageBox.warning(self, "Packs de widgets", str(e))
             return
         except Exception as e:
-            log_error("Packs", "No se pudo agregar el modelo: %s" % e)
-            QMessageBox.warning(self, "Packs de widgets", "No se pudo agregar el modelo:\n%s" % e)
+            log_error("Packs", "No se pudo agregar el widget: %s" % e)
+            QMessageBox.warning(self, "Packs de widgets", "No se pudo agregar el widget:\n%s" % e)
             return
 
-        self.status.setText(("Nota creada. " if create_note else "") + "Agregado a tus modelos: " + ", ".join(n[:-5] for n in names))
+        self.status.setText(("Nota creada. " if create_note else "") + "Agregado a tus widgets: " + ", ".join(n[:-5] for n in names))
 
     def add_set(self, open_now):
         pk = self._cur()
@@ -14224,7 +14232,7 @@ class PacksDialog(QDialog):
         pk = self._cur()
         if pk is None:
             return
-        if QMessageBox.question(self, "Quitar pack", "\u00bfQuitar el pack \u00ab%s\u00bb?\n\nLos modelos y sets que ya agregaste a los tuyos "
+        if QMessageBox.question(self, "Quitar pack", "\u00bfQuitar el pack \u00ab%s\u00bb?\n\nLos widgets y sets que ya agregaste a los tuyos "
                                 "se quedan y siguen funcionando." % pk.name) != QMessageBox.Yes:
             return
         try:
@@ -14920,7 +14928,7 @@ def embed_images_b64(td):
 WA_FILE_FORMAT = "widget-arena-file"
 WA_FILE_EXT = {'set': '.waset', 'widget': '.wawidget', 'paper': '.wapaper', 'frame': '.waframe'}
 WA_FILTER = {'set': "Widgets de Widget Arena (*.waset);;JSON antiguo (*.json)",
-             'widget': "Modelo de widget (*.wawidget);;JSON antiguo (*.json)",
+             'widget': "Widget (*.wawidget);;JSON antiguo (*.json)",
              'paper': "Forma de papel (*.wapaper);;JSON antiguo (*.json)",
              'frame': "Marco (*.waframe);;JSON (*.json)"}
 WA_OPEN_FILTER = "Archivos de Widget Arena (*.waset *.wawidget *.wapaper *.waframe);;JSON (*.json);;Todos (*)"
@@ -15154,7 +15162,7 @@ class ImportDataDialog(QDialog):
         lay = QVBoxLayout(self)
         t1 = QLabel("Importar datos de otra instalaci\u00f3n")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        t2 = QLabel("Trae tus widgets, sets, modelos, im\u00e1genes y ajustes de una versi\u00f3n anterior o de otro equipo. Elige la carpeta "
+        t2 = QLabel("Trae tus widgets, sets, im\u00e1genes y ajustes de una versi\u00f3n anterior o de otro equipo. Elige la carpeta "
                     "\u00abwidget_arena_data\u00bb que usaba esa versi\u00f3n (suele estar junto al programa), la carpeta que la contiene, o una copia completa .zip.\n"
                     "Antes de tocar nada se guarda una copia completa de lo que tienes, y nunca se pisa un archivo que ya exista con otro contenido: "
                     "entra con otro nombre.")
@@ -15255,7 +15263,7 @@ class ImportDataDialog(QDialog):
                 raise ValueError("No existe esa carpeta.")
             root = import_find_root(src)
             if not root:
-                raise ValueError("No encuentro datos de Widget Arena ah\u00ed (busco data/widget_set.json, profiles, modelos, sticky...).")
+                raise ValueError("No encuentro datos de Widget Arena ah\u00ed (busco data/widget_set.json, profiles, widgets, sticky...).")
             if os.path.abspath(root) == os.path.abspath(ROOT_DATA_DIR):
                 raise ValueError("Esa es la carpeta de datos de esta misma instalaci\u00f3n.")
             self.root, self.info = root, import_scan(root)
@@ -15278,7 +15286,7 @@ class ImportDataDialog(QDialog):
         nm = sum(i["media"].values()) if i else 0
         rows = {"notes": ("Mis widgets (%d)" % i["notes"] if i else "Mis widgets", bool(i and i["notes"])),
                 "profiles": ("Sets (%d)" % (len(i["profiles"]) + len(i["resident"])) if i else "Sets", bool(i and (i["profiles"] or i["resident"]))),
-                "templates": ("Modelos (%d)" % len(i["templates"]) if i else "Modelos", bool(i and i["templates"])),
+                "templates": ("Widgets (%d)" % len(i["templates"]) if i else "Widgets", bool(i and i["templates"])),
                 "media": ("Im\u00e1genes, marcos y formas de papel (%d archivos)" % nm if i else "Im\u00e1genes, marcos y formas de papel", nm > 0),
                 "settings": ("Ajustes generales (%d)" % i["settings"] if i else "Ajustes generales", bool(i and i["settings"])),
                 "hotkeys": ("Atajos de teclado", bool(i and i["hotkeys"])),
@@ -15495,7 +15503,7 @@ class FontExportDialog(QDialog):
         root = QVBoxLayout(self)
         t1 = QLabel("\u00bfExportar fuentes?")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        t2 = QLabel("Estas son las fuentes que usan los modelos y sets elegidos. Las que se incluyen van dentro del pack y funcionan en "
+        t2 = QLabel("Estas son las fuentes que usan los widgets y sets elegidos. Las que se incluyen van dentro del pack y funcionan en "
                     "Windows, macOS y Linux. Las dem\u00e1s no se pueden o no hace falta incluirlas: si faltan, se ver\u00e1 una fuente parecida.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
@@ -15740,13 +15748,13 @@ class PackExportDialog(QDialog):
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self.resize(760, 700)
         root = QVBoxLayout(self)
-        intro = QLabel("Crea un archivo .wapack con lo que elijas. Las im\u00e1genes que usan tus modelos y sets se incluyen solas; "
+        intro = QLabel("Crea un archivo .wapack con lo que elijas. Las im\u00e1genes que usan tus widgets y sets se incluyen solas; "
                        "la imagen de las formas de papel no hace falta (se vuelve a dibujar y se pueden seguir editando).")
         intro.setWordWrap(True)
         intro.setStyleSheet("color:#9aa0aa;")
         root.addWidget(intro)
         form = QFormLayout()
-        self.f_name = QLineEdit("Mis modelos")
+        self.f_name = QLineEdit("Mis widgets")
         self.f_author = QLineEdit(os.environ.get('USERNAME') or os.environ.get('USER') or "")
         self.f_ver = QLineEdit("1.0.0")
 
@@ -15760,7 +15768,7 @@ class PackExportDialog(QDialog):
                        ("Descripci\u00f3n", self.f_desc)):
             form.addRow(lab, w)
         root.addLayout(form)
-        root.addWidget(QLabel("Modelos"))
+        root.addWidget(QLabel("Widgets"))
         self.l_styles = QListWidget()
         root.addWidget(self.l_styles, 2)
         dflt = os.path.basename(DEFAULT_TEMPLATE_FILE)
@@ -15798,9 +15806,9 @@ class PackExportDialog(QDialog):
 
         frow = QHBoxLayout()
         bf = QPushButton("Agregar otras fuentes (.ttf / .otf)...")
-        bf.setToolTip("Las fuentes que usan tus modelos se te preguntan al exportar; esto es para agregar alguna m\u00e1s. Solo si su licencia permite redistribuirlas.")
+        bf.setToolTip("Las fuentes que usan tus widgets se te preguntan al exportar; esto es para agregar alguna m\u00e1s. Solo si su licencia permite redistribuirlas.")
         bf.clicked.connect(self._add_fonts)
-        self.l_fonts = QLabel("Al exportar se te preguntar\u00e1 por las fuentes que usan tus modelos.")
+        self.l_fonts = QLabel("Al exportar se te preguntar\u00e1 por las fuentes que usan tus widgets.")
         self.l_fonts.setStyleSheet("color:#9aa0aa;")
         frow.addWidget(bf)
         frow.addWidget(self.l_fonts, 1)
@@ -15858,7 +15866,7 @@ class PackExportDialog(QDialog):
                 sets.append((nm, notes))
 
         if not styles and not sets:
-            QMessageBox.information(self, "Exportar pack", "Marca al menos un modelo o un set.")
+            QMessageBox.information(self, "Exportar pack", "Marca al menos un widget o un set.")
             return
         used = set()
         for _n, _td in styles:
@@ -15884,7 +15892,7 @@ class PackExportDialog(QDialog):
             if fdlg.exec() != QDialog.Accepted:
                 return
             font_files, fscope = fdlg.paths(), fdlg.scope()
-        name = self.f_name.text().strip() or "Mis modelos"
+        name = self.f_name.text().strip() or "Mis widgets"
         path, _ = QFileDialog.getSaveFileName(self, "Guardar el pack", os.path.join(os.path.expanduser("~"), _pack_slug(name) + PACK_EXT),
                                               "Pack de widgets (*%s)" % PACK_EXT)
         if not path:
@@ -15900,7 +15908,7 @@ class PackExportDialog(QDialog):
             QMessageBox.warning(self, "Exportar pack", "No se pudo crear el pack:\n%s" % e)
             return
 
-        txt = "Pack guardado:\n%s\n\n%d modelos, %d sets, %d im\u00e1genes (%.1f MB)." % (path, r['styles'], r['sets'], r['assets'], r['bytes'] / 1048576.0)
+        txt = "Pack guardado:\n%s\n\n%d widgets, %d sets, %d im\u00e1genes (%.1f MB)." % (path, r['styles'], r['sets'], r['assets'], r['bytes'] / 1048576.0)
         if r['missing']:
             txt += "\n\nNo se encontraron estas im\u00e1genes y quedaron sin ellas: " + ", ".join(r['missing'][:8]) + ("..." if len(r['missing']) > 8 else "")
         free = [f for f in r['fonts_used'] if f not in r['font_families']]
@@ -15928,7 +15936,7 @@ class DataHubWindow(QDialog):
         t1 = QLabel("Guardar y cargar")
         t1.setStyleSheet("font-size:18px;font-weight:bold;")
         t2 = QLabel("Todo lo que la aplicaci\u00f3n guarda, y d\u00f3nde vive cada cosa. Elige a la izquierda lo que buscas.\n"
-                    "Tambi\u00e9n puedes arrastrar aqu\u00ed cualquier archivo (set, modelo, configuraci\u00f3n, pack .wapack o copia .zip) y se detecta solo.")
+                    "Tambi\u00e9n puedes arrastrar aqu\u00ed cualquier archivo (set, widget, configuraci\u00f3n, pack .wapack o copia .zip) y se detecta solo.")
         t2.setWordWrap(True)
         t2.setStyleSheet("color:#9aa0aa;")
         tl.addWidget(t1)
@@ -15936,7 +15944,7 @@ class DataHubWindow(QDialog):
         tl.addWidget(t2)
         head.addLayout(tl, 1)
         for text, fn, tip in (("Guardar todo ahora", self._save_all, "Guarda el set activo, la configuraci\u00f3n, el historial y hace una copia completa"),
-                              ("Cargar un archivo...", lambda: self.m.load_anything_dialog(), "Elige un archivo: se detecta si es un set, un modelo, una configuraci\u00f3n o una copia")):
+                              ("Cargar un archivo...", lambda: self.m.load_anything_dialog(), "Elige un archivo: se detecta si es un set, un widget, una configuraci\u00f3n o una copia")):
             b = QPushButton(text)
             b.setToolTip(tip)
             b.setStyleSheet("QPushButton{font-weight:bold;padding:8px 14px;}")
@@ -15958,10 +15966,10 @@ class DataHubWindow(QDialog):
         root.addWidget(self.status)
         self._sections = [
             ("sets", "Mis sets", "Sets de widgets que alternas (Alt+1\u2026)", self._sec_sets),
-            ("templates", "Modelos y formas de papel", "Tus modelos y las formas de papel editables", self._sec_templates),
+            ("templates", "Mis widgets y formas de papel", "Tus widgets y las formas de papel editables", self._sec_templates),
             ("config", "Configuraci\u00f3n y atajos", "Ajustes, cables, tonos y teclas", self._sec_config),
             ("files", "Archivos (exportar / importar)", "Para llevar o compartir widgets", self._sec_files),
-            ("packs", "Packs de widgets", "Modelos y sets para compartir o estrenar", self._sec_packs),
+            ("packs", "Packs de widgets", "Widgets y sets para compartir o estrenar", self._sec_packs),
             ("backups", "Copias de seguridad", "Se hacen solas; aqu\u00ed se recuperan", self._sec_backups),
             ("undo", "Deshacer (historial)", "Ctrl+Alt+Z / Ctrl+Alt+Y, tambi\u00e9n entre sesiones", self._sec_undo),
         ]
@@ -16093,17 +16101,17 @@ class DataHubWindow(QDialog):
         m = self.m
         n_all = self._count(TEMPLATES_DIR)
         n_base = len(m.base_note_templates())
-        return ("Un modelo es el aspecto de un widget (capas, fondo, tama\u00f1o). Las formas de papel creadas con el editor se guardan tambi\u00e9n como modelos "
+        return ("Mis widgets es tu biblioteca: el aspecto de cada widget (capas, fondo, tama\u00f1o) para crear otros iguales. Las formas de papel creadas con el editor se guardan tambi\u00e9n aqu\u00ed, como widgets "
                 "editables, en su propia lista.",
-                TEMPLATES_DIR, ["%d modelos, %d de ellos son formas de papel editables" % (n_all, n_base)],
-                [("Ver, elegir, crear y editar modelos...", lambda: m.show_template_chooser(), "Primero salen los aspectos en uso y las formas de papel", "Ver y editar",
-                  "Abre la lista de modelos (primero los aspectos en uso y las formas de papel) para crear widgets nuevos a partir de ellos, editarlos o duplicarlos."),
+                TEMPLATES_DIR, ["%d widgets, %d de ellos son formas de papel editables" % (n_all, n_base)],
+                [("Ver, elegir, crear y editar widgets...", lambda: m.show_template_chooser(), "Primero salen los aspectos en uso y las formas de papel", "Ver y editar",
+                  "Abre la lista de widgets (primero los aspectos en uso y las formas de papel) para crear widgets nuevos a partir de ellos, editarlos o duplicarlos."),
                  ("Nueva nota && forma de papel...", lambda: m.show_base_note_dialog(), "Puedes guardar el resultado como forma de papel", "Ver y editar",
-                  "Dibuja una nota con el editor de formas de papel; el resultado se puede guardar como forma de papel (un modelo editable)."),
-                 ("Guardar un widget que ya tienes como modelo...", lambda: (m.show_template_chooser(), m.browser.templates._from_widget()), None, "Guardar",
-                  "Guarda el aspecto de uno de los widgets que ves (capas, fondo, tama\u00f1o) como un archivo .json en la carpeta de modelos."),
-                 ("Importar un modelo desde un archivo...", lambda: (m.show_template_chooser(), m.browser.templates._import()), None, "Meter en la aplicaci\u00f3n",
-                  "Copia un archivo .json de modelo a tu carpeta de modelos (si trae im\u00e1genes dentro, las deja en la carpeta de datos sin pisar nada)."),
+                  "Dibuja una nota con el editor de formas de papel; el resultado se puede guardar como forma de papel (un widget editable)."),
+                 ("Guardar en Mis widgets uno que ya tienes en pantalla...", lambda: (m.show_template_chooser(), m.browser.templates._from_widget()), None, "Guardar",
+                  "Guarda el aspecto de uno de los widgets que ves (capas, fondo, tama\u00f1o) como un archivo .json en la carpeta de widgets."),
+                 ("Importar un widget desde un archivo...", lambda: (m.show_template_chooser(), m.browser.templates._import()), None, "Meter en la aplicaci\u00f3n",
+                  "Copia un archivo .json de widget a tu carpeta de widgets (si trae im\u00e1genes dentro, las deja en la carpeta de datos sin pisar nada)."),
                  self._folder(TEMPLATES_DIR)])
 
     def _sec_config(self):
@@ -16127,20 +16135,20 @@ class DataHubWindow(QDialog):
     def _sec_files(self):
         m = self.m
         return ("Para llevar tus widgets a otro PC o compartirlos: se exportan a un archivo .waset (comprimido, con sus im\u00e1genes dentro) y se importan agreg\u00e1ndolos o reemplazando todo. "
-                "Los modelos van en .wawidget, las formas de papel en .wapaper, los marcos en .waframe y varios a la vez en un pack .wapack. Los .json de antes tambi\u00e9n se leen.",
+                "Los widgets van en .wawidget, las formas de papel en .wapaper, los marcos en .waframe y varios a la vez en un pack .wapack. Los .json de antes tambi\u00e9n se leen.",
                 DATA_DIR, ["Archivo de trabajo actual: " + GLOBAL_STATE_FILE],
                 [("Exportar todos los widgets a un archivo...", m.export_state, "Puede incluir la configuraci\u00f3n", "Sacar de la aplicaci\u00f3n",
                   "Crea un archivo .waset con los widgets del set activo y sus im\u00e1genes dentro; puede incluir tambi\u00e9n la configuraci\u00f3n."),
-                 ("Exportar todos mis modelos a un archivo...", m.export_all_templates, "Un solo archivo .wapack", "Sacar de la aplicaci\u00f3n",
-                  "Crea un archivo .wapack con todos tus modelos (con las im\u00e1genes que usan). Se abre con \u00abCargar un archivo\u00bb o en Packs de widgets."),
+                 ("Exportar todos mis widgets a un archivo...", m.export_all_templates, "Un solo archivo .wapack", "Sacar de la aplicaci\u00f3n",
+                  "Crea un archivo .wapack con todos tus widgets (con las im\u00e1genes que usan). Se abre con \u00abCargar un archivo\u00bb o en Packs de widgets."),
                  ("Agregar widgets desde un archivo...", lambda: m.import_state(replace=False), None, "Meter en la aplicaci\u00f3n",
                   "Suma los widgets del archivo a los que ya tienes en el set activo."),
                  ("Reemplazar todos los widgets desde un archivo...", lambda: m.import_state(replace=True), None, "Meter en la aplicaci\u00f3n",
                   "Elimina los widgets del set activo y pone los del archivo (se puede deshacer)."),
-                 ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Set, modelo, configuraci\u00f3n o copia .zip", "Meter en la aplicaci\u00f3n",
-                  "Elige cualquier archivo (.json de widgets, modelo o configuraci\u00f3n; .zip de copia; .wapack) y el programa averigua qu\u00e9 es y c\u00f3mo cargarlo."),
-                 ("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", m.show_import_data, "Widgets, sets, modelos, im\u00e1genes y ajustes de una versi\u00f3n anterior", "Meter en la aplicaci\u00f3n",
-                  "Trae widgets, sets, modelos, im\u00e1genes y ajustes desde la carpeta widget_arena_data de otra versi\u00f3n o desde una copia completa .zip."),
+                 ("Cargar un archivo (se detecta solo)...", lambda: m.load_anything_dialog(), "Set, widget, configuraci\u00f3n o copia .zip", "Meter en la aplicaci\u00f3n",
+                  "Elige cualquier archivo (.json de widgets o de configuraci\u00f3n; .zip de copia; .wapack) y el programa averigua qu\u00e9 es y c\u00f3mo cargarlo."),
+                 ("Importar datos de otra instalaci\u00f3n (carpeta o .zip)...", m.show_import_data, "Widgets, sets, im\u00e1genes y ajustes de una versi\u00f3n anterior", "Meter en la aplicaci\u00f3n",
+                  "Trae widgets, sets, im\u00e1genes y ajustes desde la carpeta widget_arena_data de otra versi\u00f3n o desde una copia completa .zip."),
                  ("Buscar las im\u00e1genes que faltan (en otra carpeta)...", m.recover_images_dialog, "Si al cargar una copia vieja alguna nota se queda sin su base o su imagen", "Meter en la aplicaci\u00f3n",
                   "Si tras cargar una copia vieja alguna nota se queda sin su imagen, las busca en la carpeta de datos de otra instalaci\u00f3n."),
                  self._folder(DATA_DIR)])
@@ -16148,15 +16156,15 @@ class DataHubWindow(QDialog):
     def _sec_packs(self):
         m = self.m
         n = len(pack_list())
-        return ("Un pack es un archivo .wapack (un .zip) con modelos y sets de widgets, con las im\u00e1genes que usan, para compartir o para estrenar. "
-                "Aqu\u00ed instalas uno, ves sus modelos con vista previa y los agregas a los tuyos. Tambi\u00e9n puedes crear el tuyo con lo que ya tienes.",
+        return ("Un pack es un archivo .wapack (un .zip) con widgets y sets de widgets, con las im\u00e1genes que usan, para compartir o para estrenar. "
+                "Aqu\u00ed instalas uno, ves sus widgets con vista previa y los agregas a los tuyos. Tambi\u00e9n puedes crear el tuyo con lo que ya tienes.",
                 PACKS_DIR, [("%d pack instalado" if n == 1 else "%d packs instalados") % n, "Tambi\u00e9n puedes arrastrar un .wapack a esta ventana para instalarlo."],
                 [("Abrir los packs de widgets...", lambda: m.show_packs(), "Cat\u00e1logo con vista previa", "Usar",
-                  "Cat\u00e1logo de los packs instalados, con vista previa de sus modelos y sets, para agregarlos a los tuyos."),
+                  "Cat\u00e1logo de los packs instalados, con vista previa de sus widgets y sets, para agregarlos a los tuyos."),
                  ("Instalar un pack desde un archivo...", m.pack_install_dialog, None, "Usar",
                   "A\u00f1ade un archivo .wapack al cat\u00e1logo. No toca tus widgets hasta que uses algo del pack."),
                  ("Exportar mis widgets y sets como pack...", m.pack_export_dialog, "Incluye las im\u00e1genes; la de las formas de papel no hace falta", "Crear",
-                  "Crea un archivo .wapack (un .zip) con los modelos y los sets que elijas, con sus im\u00e1genes (las formas de papel se redibujan solas)."),
+                  "Crea un archivo .wapack (un .zip) con los widgets y los sets que elijas, con sus im\u00e1genes (las formas de papel se redibujan solas)."),
                  self._folder(PACKS_DIR)])
 
     def _sec_backups(self):
@@ -16164,15 +16172,15 @@ class DataHubWindow(QDialog):
         bl = m.list_backups()
         full = [b for b in bl if b['kind'] == 'Completa']
         auto = [b for b in bl if b['kind'] != 'Completa']
-        info = ["%d copias completas (todos los sets y modelos)%s" % (len(full), ("; la \u00faltima: " + full[0]['label'].split('\u00b7')[1].strip()) if full else ""),
+        info = ["%d copias completas (todos los sets y widgets)%s" % (len(full), ("; la \u00faltima: " + full[0]['label'].split('\u00b7')[1].strip()) if full else ""),
                 "%d copias autom\u00e1ticas del set activo%s" % (len(auto), ("; la \u00faltima: " + auto[0]['label'].split('\u00b7')[1].strip()) if auto else "")]
-        return ("Las copias se hacen solas mientras trabajas. Desde aqu\u00ed recuperas el set activo, sets eliminados o modelos. "
+        return ("Las copias se hacen solas mientras trabajas. Desde aqu\u00ed recuperas el set activo, sets eliminados o widgets. "
                 "Antes de restaurar el set activo se guarda una copia de lo actual y se puede deshacer.",
                 FULL_BACKUP_DIR + "   (y " + BACKUP_DIR + ")", info,
                 [("Restaurar una copia de seguridad...", lambda: m.show_backup_restore(), None, "Recuperar",
-                  "Elige una copia (completa .zip o autom\u00e1tica del set activo) y qu\u00e9 traer de ella: el set activo, sets, modelos e im\u00e1genes. No pisa nada sin avisar."),
+                  "Elige una copia (completa .zip o autom\u00e1tica del set activo) y qu\u00e9 traer de ella: el set activo, sets, widgets e im\u00e1genes. No pisa nada sin avisar."),
                  ("Hacer una copia completa ahora", m._full_backup_now, None, "Guardar",
-                  "Crea un .zip en la carpeta de copias completas con el set activo, todos los sets, los modelos, los atajos y las im\u00e1genes que usan."),
+                  "Crea un .zip en la carpeta de copias completas con el set activo, todos los sets, los widgets, los atajos y las im\u00e1genes que usan."),
                  self._folder(FULL_BACKUP_DIR)])
 
     def _sec_undo(self):
@@ -19472,7 +19480,7 @@ class AboutDialog(QDialog):
                           "color:#d9d5ff;font:500 14px 'Segoe UI';"))
         chip = ("background:rgba(255,255,255,28);border:1px solid rgba(255,255,255,50);border-radius:11px;"
                 "padding:4px 10px;color:#f1eeff;font:600 11px 'Segoe UI';")
-        for row in (("Widgets enlazados", "Corona", "Modelos"), ("Sets al instante", "Atajos globales", "Telegram")):
+        for row in (("Widgets enlazados", "Corona", "Mis widgets"), ("Sets al instante", "Atajos globales", "Telegram")):
             hl = QHBoxLayout()
             hl.setSpacing(8)
             hl.addStretch(1)
@@ -20433,7 +20441,7 @@ class BaseNoteDialog(QDialog):
         xrow_ = QHBoxLayout()                # [PACK97] copiar / pegar el template o el estilo (JSON) y exportar el template
         xrow_.addWidget(QLabel("JSON:"))
         for txt, fn, tip in (("Copiar widget", self._tpl_copy, "Copia al portapapeles el widget completo de esta nota (JSON): forma, colores, texto e imagen"),
-                             ("Pegar widget", self._tpl_paste, "Aplica aqu\u00ed un widget copiado (tambi\u00e9n vale el JSON copiado en la ventana de modelos), con su texto"),
+                             ("Pegar widget", self._tpl_paste, "Aplica aqu\u00ed un widget copiado (tambi\u00e9n vale el JSON copiado en Mis widgets), con su texto"),
                              ("Copiar forma de papel", self._style_copy, "Copia al portapapeles solo la forma de papel (JSON): forma, colores y esquinas, sin el texto"),
                              ("Pegar forma de papel", self._style_paste, "Aplica una forma de papel copiada a esta nota, manteniendo su texto"),
                              ("Exportar...", self._tpl_export, "Guarda esta forma de papel en un archivo .wapaper (comprimido); tambi\u00e9n se puede guardar como .json")):
@@ -20815,7 +20823,7 @@ class BaseNoteDialog(QDialog):
         trow.addWidget(spin('font_size', 6, 120, " pt"))
         tf.addRow("Color y tama\u00f1o del texto", trow)
 
-        self.chk_tpl = QCheckBox("Guardar tambi\u00e9n como modelo:")
+        self.chk_tpl = QCheckBox("Guardar tambi\u00e9n en Mis widgets:")
         self.ed_tpl = _LE("nota_base")
         self.ed_tpl.setEnabled(False)
         self.chk_tpl.toggled.connect(self.ed_tpl.setEnabled)
@@ -22303,7 +22311,7 @@ class WidgetManager(QObject):
 
     SORT_MODES = (("created", "Orden de creaci\u00f3n"), ("created_desc", "M\u00e1s nuevos primero"),
                   ("name", "Nombre (A-Z)"), ("enabled", "Visibles primero"),
-                  ("template", "Modelo"), ("pos", "Posici\u00f3n en pantalla"))
+                  ("template", "Widget de origen"), ("pos", "Posici\u00f3n en pantalla"))
 
     def get_sort_mode(self):
         mode = self.global_state.get('widget_sort', 'created')
@@ -22359,7 +22367,7 @@ class WidgetManager(QObject):
             with open(self._tpl_settings_path(), 'w', encoding='utf-8') as f:
                 json.dump({"default": os.path.basename(name)}, f, indent=2)
         except OSError as e:
-            log_warn("Manager", f"No se pudo guardar el modelo predeterminado: {e}")
+            log_warn("Manager", f"No se pudo guardar el widget predeterminado: {e}")
 
     TYPE_CRITERIA_DEFAULT = {'hue': False, 'font': False, 'size': False}
 
@@ -22682,13 +22690,13 @@ class WidgetManager(QObject):
             if isinstance(d, dict):
                 return d
         except Exception as e:
-            log_warn("Manager", f"No se pudo leer el modelo {name}: {e}")
+            log_warn("Manager", f"No se pudo leer el widget {name}: {e}")
         seen = self.__dict__.setdefault('_tpl_missing_seen', set())
         if name and os.path.basename(str(name)) != os.path.basename(DEFAULT_TEMPLATE_FILE) and str(name) not in seen:                           # [PACK154] una sola vez por modelo y sesi\u00f3n
             seen.add(str(name))
-            log_warn("Manager", f"Falta el modelo \u00ab{name}\u00bb: se usa el predeterminado (carpeta {TEMPLATES_DIR})")
+            log_warn("Manager", f"Falta el widget \u00ab{name}\u00bb: se usa el predeterminado (carpeta {TEMPLATES_DIR})")
             try:
-                self._osd("No encuentro el modelo \u00ab%s\u00bb: uso el predeterminado" % os.path.splitext(os.path.basename(str(name)))[0], 2600)
+                self._osd("No encuentro el widget \u00ab%s\u00bb: uso el predeterminado" % os.path.splitext(os.path.basename(str(name)))[0], 2600)
             except Exception:
                 pass
         return self.get_default_template_data()
@@ -23631,9 +23639,9 @@ class WidgetManager(QObject):
         tpl_menu = QMenu("Modelo", aspect_menu)
         add(tpl_menu, "Cambiar el modelo de este widget...", lambda: self._change_widget_template(widget_id))
         add(tpl_menu, "Guardar este widget como modelo...", lambda: self.save_widget_as_template(widget_id),
-            tip="Lo a\u00f1ade a tus modelos, para crear m\u00e1s widgets iguales a este")          # [PACK150] nombres: 'guardar' = a tu lista; 'exportar' = a un archivo
+            tip="Lo a\u00f1ade a tus widgets, para crear m\u00e1s widgets iguales a este")          # [PACK150] nombres: 'guardar' = a tu lista; 'exportar' = a un archivo
         add(tpl_menu, "Familias y autor de este widget...", lambda: self.edit_widget_meta(widget_id),          # [PACK174]
-            tip="Las familias agrupan modelos y widgets (puede estar en varias a la vez); el autor firma el modelo")
+            tip="Las familias agrupan widgets (puede estar en varias a la vez); el autor firma el widget")
         add(tpl_menu, "Exportar este widget a un archivo...", lambda: self._export_widget_template(widget_id),
             tip="Guarda este widget en un archivo .wawidget (comprimido, con sus im\u00e1genes) para llevarlo a otro equipo o compartirlo")
         tpl_menu.addSeparator()
@@ -23895,7 +23903,7 @@ class WidgetManager(QObject):
                     d['geometry'] = d.get('geometry') or {"x": 100, "y": 100}
                     with open(tp, 'w', encoding='utf-8') as f:
                         json.dump(d, f, indent=4, ensure_ascii=False)
-                    log_info("Manager", "El modelo Reloj LED ahora lleva marco")
+                    log_info("Manager", "El widget Reloj LED ahora lleva marco")
             with open(marker, 'w', encoding='utf-8') as f:
                 f.write("ok\n")
         except Exception as e156:
@@ -24146,7 +24154,7 @@ class WidgetManager(QObject):
 
     def _change_widget_template_from_file(self, widget_id):
         parent_widget = self.widgets.get(widget_id) 
-        path, _ = QFileDialog.getOpenFileName(parent_widget, "Seleccionar modelo", DATA_DIR,
+        path, _ = QFileDialog.getOpenFileName(parent_widget, "Seleccionar widget", DATA_DIR,
                                               "Widgets y formas de papel (*.wawidget *.wapaper *.json);;Todos (*)")
         if not path:
             return
@@ -24171,8 +24179,8 @@ class WidgetManager(QObject):
             self.build_tray_menu()
             
         except Exception as e:
-            print(f"ERROR: No se pudo cargar el modelo desde {path}: {e}")
-            QMessageBox.critical(parent_widget, "No se pudo cargar el modelo", f"No se pudo cargar o leer el archivo JSON:\n{e}")
+            print(f"ERROR: No se pudo cargar el widget desde {path}: {e}")
+            QMessageBox.critical(parent_widget, "No se pudo cargar el widget", f"No se pudo cargar o leer el archivo JSON:\n{e}")
 
     def export_all_templates(self, parent=None, family=None):
         """[PACK151] Todos mis modelos en un solo archivo .wapack (con las imagenes que usan; la imagen de las formas de papel
@@ -24186,29 +24194,29 @@ class WidgetManager(QObject):
             try:
                 styles.append((n[:-5], self.load_template_by_name(n)))
             except Exception as e:
-                log_warn("Packs", "No se pudo leer el modelo %s: %s" % (n, e))
+                log_warn("Packs", "No se pudo leer el widget %s: %s" % (n, e))
         if not styles:
-            QMessageBox.information(parent, "Exportar modelos", "Todav\u00eda no tienes modelos.")
+            QMessageBox.information(parent, "Exportar widgets", "Todav\u00eda no tienes widgets.")
             return None
-        path, _flt = QFileDialog.getSaveFileName(parent, "Exportar todos mis modelos", os.path.join(DATA_DIR, (wa_stem(family) if family else "mis_modelos") + PACK_EXT),
+        path, _flt = QFileDialog.getSaveFileName(parent, "Exportar todos mis widgets", os.path.join(DATA_DIR, (wa_stem(family) if family else "mis_widgets") + PACK_EXT),
                                                  "Pack de widgets (*%s)" % PACK_EXT)
 
         if not path:
             return None
         if not path.lower().endswith(PACK_EXT):
             path += PACK_EXT
-        meta = {'name': family or "Mis modelos", 'author': self.user_name(), 'version': "1.0.0",
-                'license': "Uso personal; no redistribuir", 'description': ("Familia \u00ab%s\u00bb." % family) if family else "Todos mis modelos.", 'fonts_scope': 'personal'}
+        meta = {'name': family or "Mis widgets", 'author': self.user_name(), 'version': "1.0.0",
+                'license': "Uso personal; no redistribuir", 'description': ("Familia \u00ab%s\u00bb." % family) if family else "Todos mis widgets.", 'fonts_scope': 'personal'}
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             r = pack_build(path, meta, styles, [], [])
         except Exception as e:
-            log_error("Packs", "No se pudieron exportar los modelos: %s" % e)
-            QMessageBox.warning(parent, "Exportar modelos", "No se pudo crear el archivo:\n%s" % e)
+            log_error("Packs", "No se pudieron exportar los widgets: %s" % e)
+            QMessageBox.warning(parent, "Exportar widgets", "No se pudo crear el archivo:\n%s" % e)
             return None
         finally:
             QApplication.restoreOverrideCursor()
-        txt = "%d modelos exportados a %s%s" % (r['styles'], os.path.basename(path), (" (con %d im\u00e1genes)" % r['assets']) if r['assets'] else "")
+        txt = "%d widgets exportados a %s%s" % (r['styles'], os.path.basename(path), (" (con %d im\u00e1genes)" % r['assets']) if r['assets'] else "")
         if r.get('missing'):
             txt += "; no se encontraron: " + ", ".join(r['missing'][:4])
 
@@ -24738,8 +24746,8 @@ class WidgetManager(QObject):
         QTimer.singleShot(700, lambda: window._set_hierarchy_highlighted(False))
 
     CHILD_KINDS = (("clone", "Clon exacto del padre (contenido y aspecto)"),
-                   ("default", "Modelo predeterminado"),
-                   ("template", "Un modelo concreto"))
+                   ("default", "Widget predeterminado"),
+                   ("template", "Un widget concreto"))
 
     def child_gesture_cfg(self, with_win):
         """[PACK62] Tipo de hija que crea el gesto Ctrl+Alt+Mayus (+Win): (clase, plantilla)."""
@@ -25906,13 +25914,13 @@ class WidgetManager(QObject):
         if not isinstance(st, dict):
             return None
         if name is None:
-            name, ok = QInputDialog.getText(self.dialog_parent, "Guardar como modelo", "Nombre del modelo:",
+            name, ok = QInputDialog.getText(self.dialog_parent, "Guardar widget", "Nombre del widget:",
                                             text=self._get_widget_display_name(widget_id, st))
             if not ok:
                 return None
         n = self._tpl_safe_name(name)
         if not n:
-            self._osd("Nombre de modelo no v\u00e1lido")
+            self._osd("Nombre de widget no v\u00e1lido")
             return None
         cand, i = n, 1
         while os.path.exists(os.path.join(TEMPLATES_DIR, cand)):
@@ -25926,7 +25934,7 @@ class WidgetManager(QObject):
         tb = getattr(self, 'template_browser', None)
         if tb is not None:
             tb.reload()
-        self._osd("Modelo guardado: " + cand[:-5])
+        self._osd("Guardado en Mis widgets: " + cand[:-5])
         return cand
 
     def _template_for_widget(self, widget_id):
@@ -25972,7 +25980,7 @@ class WidgetManager(QObject):
 
     def ask_user_name(self, parent=None):
         n, ok = QInputDialog.getText(parent if isinstance(parent, QWidget) else self.dialog_parent, "Mi nombre de autor",
-                                     "Nombre con el que firmas tus modelos y familias:", text=self.user_name())
+                                     "Nombre con el que firmas tus widgets y familias:", text=self.user_name())
         if ok:
             self.set_user_name(n)
         return ok
@@ -26621,7 +26629,7 @@ class WidgetManager(QObject):
         self.build_tray_menu()
         
     def reload_all_widgets(self):
-        log_info("Manager", f"Recargando modelos para {len(self.widgets)} widgets...")
+        log_info("Manager", f"Recargando widgets para {len(self.widgets)} widgets...")
         for widget in self.widgets.values():
             try:
                 widget._force_web_reload = True
@@ -26875,7 +26883,7 @@ class WidgetManager(QObject):
                     with open(p, 'w', encoding='utf-8') as f:
                         f.write(raw)
                     n += 1
-            msg.append("modelos: %d" % n)
+            msg.append("widgets: %d" % n)
 
         if config and (data.get('settings') or data.get('hotkeys')):       # [PACK129] configuracion y atajos de la copia
             try:
@@ -26925,7 +26933,7 @@ class WidgetManager(QObject):
         export_action = QAction("Exportar todos los widgets a un archivo...", self)
         export_action.triggered.connect(self.export_state)
         data_menu.addAction(export_action)
-        export_tpl_action = QAction("Exportar todos mis modelos a un archivo...", self)          # [PACK151]
+        export_tpl_action = QAction("Exportar todos mis widgets a un archivo...", self)          # [PACK151]
         export_tpl_action.triggered.connect(lambda _c=False: self.export_all_templates())
         data_menu.addAction(export_tpl_action)
         restore_cfg_action = QAction("Restaurar configuraci\u00f3n previa...", self)
@@ -27097,7 +27105,7 @@ class WidgetManager(QObject):
                         k += 1
                 self.save_template(dest, raw)
                 done.append(dest)
-            rep.append("Modelos: %d nuevos%s" % (len(done), (", %d ya estaban" % skip) if skip else ""))
+            rep.append("Widgets: %d nuevos%s" % (len(done), (", %d ya estaban" % skip) if skip else ""))
 
         self.build_tray_menu()
         tb = getattr(self, 'template_browser', None)
@@ -27885,7 +27893,7 @@ class WidgetManager(QObject):
                 i += 1
             self.save_template(dest, raw)
             self.show_template_chooser(select=dest)
-            self._osd("Modelo cargado: " + dest[:-5])
+            self._osd("Cargado en Mis widgets: " + dest[:-5])
             return 'template'
         if kind == 'config':
             if QMessageBox.question(parent, "Cargar configuraci\u00f3n",
@@ -27931,7 +27939,7 @@ class WidgetManager(QObject):
                 self._osd("Set reemplazado (se puede deshacer)")
             return 'set'
 
-        QMessageBox.warning(parent, "Cargar archivo", "No reconozco este archivo: no parece un set, un modelo, una configuraci\u00f3n ni una copia.")
+        QMessageBox.warning(parent, "Cargar archivo", "No reconozco este archivo: no parece un set, un widget, una configuraci\u00f3n ni una copia.")
         return None
 
     def show_backup_restore(self):
@@ -29008,17 +29016,17 @@ class WidgetManager(QObject):
                     return data
                 nice = self._nice_default_note()                 # [PACK156] el predeterminado era la nota antigua de emergencia: se cambia por la normal
                 if nice is not None:
-                    log_info("Manager", "El modelo predeterminado era la nota antigua con textos superpuestos: se sustituye por la nota normal")
+                    log_info("Manager", "El widget predeterminado era la nota antigua con textos superpuestos: se sustituye por la nota normal")
                     try:
                         with open(_dp, 'w', encoding='utf-8') as f:
                             json.dump(nice, f, indent=4, ensure_ascii=False)
                     except OSError as e_w:
-                        log_warn("Manager", "No se pudo guardar el modelo predeterminado nuevo: %s" % e_w)
+                        log_warn("Manager", "No se pudo guardar el widget predeterminado nuevo: %s" % e_w)
                     return copy.deepcopy(nice)
                 return data
         except Exception as e:
             log_warn("Manager", f"No se pudo leer {_dp}. {e}")
-        log_warn("Manager", "No hay modelo predeterminado (%s): se crea el de f\u00e1brica" % _dp)
+        log_warn("Manager", "No hay widget predeterminado (%s): se crea el de f\u00e1brica" % _dp)
         default_data = self._nice_default_note()
         if default_data is None:
             default_geom = {"x": 0, "y": 0, "w": 250, "h": 250}
@@ -29034,7 +29042,7 @@ class WidgetManager(QObject):
             with open(DEFAULT_TEMPLATE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(default_data, f, indent=4, ensure_ascii=False)
         except Exception as e:
-            print(f"ADVERTENCIA: No se pudo guardar el modelo predeterminado en {DEFAULT_TEMPLATE_FILE}. {e}")
+            print(f"ADVERTENCIA: No se pudo guardar el widget predeterminado en {DEFAULT_TEMPLATE_FILE}. {e}")
         return copy.deepcopy(default_data)
 
     def force_save_all_states(self):
