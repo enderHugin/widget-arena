@@ -2387,6 +2387,7 @@ class StickerWindow(QMainWindow):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         
+        self.setAcceptDrops(True)          # [PACK181] un archivo de Widget Arena soltado encima cambia su estilo
         self.always_on_top = initial_state.get('always_on_top', True)
         if self.always_on_top:
             self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
@@ -2564,6 +2565,7 @@ class StickerWindow(QMainWindow):
         self._web_zoom_filter = _WebZoomFilter(self, view)      # [PACK161]
         view.loadFinished.connect(lambda _ok: (self._web_zoom_filter.refresh(), self._web_zoom_apply()))
         view.loadFinished.connect(lambda _ok: self._web_state_done())          # [PACK163]
+        view.loadFinished.connect(lambda _ok: (self._web_no_drops(), QTimer.singleShot(1500, self._web_no_drops)))          # [PACK181]
         self._web_hit_cache = None                                             # [PACK169] zona que agarra la pagina, segun lo que dibuja
         self._web_hit_timer = QTimer(view)
         self._web_hit_timer.setInterval(2000)
@@ -3765,6 +3767,39 @@ class StickerWindow(QMainWindow):
         self.setWindowFlags(flags)
         self.show() 
         
+    # ---- [PACK181] soltar un archivo de Widget Arena sobre el widget: cambia su estilo (conserva su texto y su sitio)
+    @staticmethod
+    def _drop_path(e):
+        for u in e.mimeData().urls():
+            if u.isLocalFile() and u.toLocalFile().lower().endswith(WA_DROP_EXTS):
+                return u.toLocalFile()
+        return None
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls() and self._drop_path(e):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if e.mimeData().hasUrls() and self._drop_path(e):
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        p = self._drop_path(e)
+        if p:
+            e.acceptProposedAction()
+            QTimer.singleShot(0, lambda: self.manager.apply_dropped_file(self.widget_id, p))
+
+    def _web_no_drops(self):
+        """[PACK181] La pagina web de la capa 2 no se queda los archivos soltados (si no, navegaria al archivo): los recoge el widget."""
+        try:
+            v = self.layer2_web
+            if hasattr(v, 'page'):
+                v.setAcceptDrops(False)
+                for w in v.findChildren(QWidget):
+                    w.setAcceptDrops(False)
+        except RuntimeError:
+            pass
+
     def showEvent(self, event):
         super().showEvent(event)
         wh = self.windowHandle()
@@ -10008,6 +10043,31 @@ class HotkeyManager(QObject):
 
 
 
+def wa_nodrop_texts(root):
+    """[PACK181] Un campo de texto acepta de serie cualquier arrastre: al soltar un archivo encima, Qt se lo da a el (que no lo entiende) y no a la
+    ventana. Se les quita el aceptar arrastres; la ventana recoge entonces el archivo sea cual sea el sitio donde se suelte."""
+    from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit
+    try:
+        for w in root.findChildren(QWidget):
+            if isinstance(w, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                if w.acceptDrops():
+                    w.setAcceptDrops(False)
+                if isinstance(w, (QTextEdit, QPlainTextEdit)) and w.viewport().acceptDrops():
+                    w.viewport().setAcceptDrops(False)
+    except RuntimeError:
+        pass
+
+
+def wa_keep_file_drops(win):
+    """[PACK181] Aplica wa_nodrop_texts a la ventana ahora y mientras este visible (sus paneles se reconstruyen al elegir otro widget, cambiar de pestana...)."""
+    t = QTimer(win)
+    t.setInterval(700)
+    t.timeout.connect(lambda: wa_nodrop_texts(win) if win.isVisible() else None)
+    t.start()
+    win._nodrop_timer = t
+    wa_nodrop_texts(win)
+
+
 class WidgetBrowserWindow(QMainWindow):
     """Navegador de widgets: arbol con miniaturas a la izquierda; a la derecha, las opciones del widget
     elegido, los ajustes globales (los mismos del menu tray) y los atajos de teclado."""
@@ -10099,6 +10159,7 @@ class WidgetBrowserWindow(QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Delete), self.tree, activated=self.delete_selected, context=Qt.WidgetShortcut)          # [PACK162]
         self._build_keys_tab()
         self.refresh()
+        wa_keep_file_drops(self)          # [PACK181]
 
     def _scroll_tab(self, title):
         from PySide6.QtWidgets import QScrollArea
@@ -11043,6 +11104,7 @@ class SimpleAddDialog(QDialog):
         lbl.setWordWrap(True)
         lay.addWidget(lbl)
         self.setAcceptDrops(True)                                          # [PACK162]
+        wa_keep_file_drops(self)                                           # [PACK181]
         self.list = QListWidget()
         self.list.setViewMode(QListWidget.IconMode)
         self.list.setIconSize(self.ICON)
@@ -13533,12 +13595,13 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 180                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 181                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
 APP_FILE = os.path.abspath(_a0)
 UPDATE_FILES = ("widget_arena.py", "herramientas.py")
+WA_DROP_EXTS = ('.wawidget', '.wapaper', '.waframe', '.json')          # [PACK181] lo que un widget acepta que le suelten encima
 _UPDATE_ST = {}
 
 
@@ -14131,6 +14194,7 @@ class PacksDialog(QDialog):
         self.setWindowTitle("Packs de widgets")
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self.setAcceptDrops(True)
+        wa_keep_file_drops(self)          # [PACK181]
         self.resize(1020, 660)
         root = QVBoxLayout(self)
         head = QHBoxLayout()
@@ -16066,6 +16130,7 @@ class DataHubWindow(QDialog):
         self.setWindowTitle("Guardar y cargar")
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self.setAcceptDrops(True)
+        wa_keep_file_drops(self)          # [PACK181]
         self.resize(1060, 700)
         root = QVBoxLayout(self)
         head = QHBoxLayout()
@@ -25828,6 +25893,45 @@ class WidgetManager(QObject):
             QMessageBox.warning(self.dialog_parent, "Mis marcos", "No se pudo leer el marco:\n%s" % e)
             return False
         return self.apply_frame_params(widget_id, p)
+
+    def apply_dropped_file(self, widget_id, path):
+        """[PACK181] Un archivo soltado sobre un widget cambia su estilo, sin importarlo antes: .wawidget / .wapaper (como Sustituir widget: el texto y el sitio se
+        conservan segun el ajuste) o .waframe (pone el marco con el tamano actual); un .json vale si es de widget o de marco. Se puede deshacer."""
+        if widget_id not in self.widgets or not isinstance(self.global_state.get(widget_id), dict):
+            return False
+        path = os.path.abspath(path)
+        try:
+            kind = wa_file_kind(path)
+            data = frame = None
+            if kind == 'frame':
+                frame = frame_read_any(path)[1]
+            elif kind in ('widget', 'paper'):
+                data = read_file_any(path)[1]
+            elif kind is None and path.lower().endswith('.json'):
+                with open(path, 'r', encoding='utf-8') as f:
+                    d = json.load(f)
+                if isinstance(d, dict) and any(isinstance(d.get(k), dict) for k in ('layer1', 'layer2', 'base_note')):
+                    data = d
+                else:
+                    try:
+                        frame = frame_read_any(path)[1]
+                    except ValueError:
+                        raise ValueError("no es un widget ni un marco")
+            else:
+                raise ValueError("este archivo no sirve para un widget")
+            if data is not None:
+                if not any(isinstance(data.get(k), dict) for k in ('layer1', 'layer2', 'base_note')):
+                    raise ValueError("no parece un widget")
+                ok = self._paste_widget_data(widget_id, not self.keep_content_on_apply(), data=data)
+            else:
+                ok = self.apply_frame_params(widget_id, frame)
+        except Exception as e:
+            log_warn("Soltar", "No se pudo aplicar %s: %s" % (os.path.basename(path), e))
+            self._osd("No se pudo aplicar %s: %s" % (os.path.basename(path), e), 3500)
+            return False
+        if ok:
+            self._osd("Estilo cambiado: %s (Ctrl+Alt+Z lo deshace)" % wa_stem(path), 2800)
+        return ok
 
     def apply_frame_from_file(self, widget_id):
         path, _f = QFileDialog.getOpenFileName(self.widgets.get(widget_id) or self.dialog_parent, "Poner un marco desde un archivo", DATA_DIR,
