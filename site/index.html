@@ -55,6 +55,9 @@
   .cta:active { transform: translateY(4px); box-shadow: 0 0 0 var(--yellow-edge); }
   .cta svg { width: 24px; height: 24px; flex: none; }
   .fine { color: var(--desk-muted); font-size: 14.5px; margin: 14px 0 0; }
+  .fine a { color: inherit; }
+  .dlc { opacity: .8; font-variant-numeric: tabular-nums; }
+  #tg-comments { margin-top: 16px; min-height: 40px; }
   .others a { color: var(--desk-ink); }
   .others { margin: 6px 0 0; }
 
@@ -268,6 +271,7 @@
         <p class="fine" id="fine"></p>
         <p class="fine others" id="others"></p>
         <p class="fine" id="ver"></p>
+        <p class="fine" id="dlstat" hidden></p>
       </div>
       <div class="stage">
         <div class="board" id="hero-board" role="group" aria-label="Tablero de ejemplo: arrastra los widgets">
@@ -406,6 +410,7 @@
         <h2 data-i="h_share">Llévatelo a otro equipo o compártelo</h2>
         <p data-i="p_share">Lo que creas (widgets, sets enlazados, formas de papel, marcos, packs) se guarda en un archivo comprimido con sus imágenes dentro. Se abre arrastrándolo a la ventana «Guardar y cargar» (menú del icono de la bandeja) o con «Cargar un archivo»: el programa averigua qué es.</p>
         <a class="btn2 mk" href="dl/notas-de-colores.wapack" download data-i="b_example">Descargar un pack de ejemplo</a>
+        <p class="fine" id="pack-meta" hidden></p>
       </div>
     </div>
   </section>
@@ -447,6 +452,15 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h13v6a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5V8z"/><path d="M16 9h2a3 3 0 0 1 0 6h-2"/><path d="M7 2v2M11 2v2"/></svg>
         <span data-i="kofi_b">Apoyar</span>
       </a>
+    </div>
+  </section>
+
+  <section class="block" id="comments" hidden>
+    <div class="comm">
+      <h2 data-i="h_cmt">Comentarios</h2>
+      <p data-i="p_cmt">Pregunta, cuenta lo que has hecho o lo que falla. Los comentarios son de un canal público de Telegram: para escribir hace falta una cuenta de Telegram.</p>
+      <button class="btn2" id="cmt-show" type="button" data-i="b_cmt">Mostrar comentarios</button>
+      <div id="tg-comments"></div>
     </div>
   </section>
 
@@ -525,7 +539,11 @@
             "El código es abierto: puedes leer exactamente lo que hace el instalador en el repositorio de GitHub antes de ejecutarlo.",
             "Windows: «Más información» → «Ejecutar de todas formas». macOS: clic derecho sobre el archivo → «Abrir»."],
       kofi_t: "¿Te resulta útil? Es gratis y sin anuncios; si quieres apoyar su desarrollo, puedes hacerlo desde aquí.",
-      kofi_b: "Apoyar", ver: "Versión actual", foot: "Software libre con licencia MIT."
+      kofi_b: "Apoyar", ver: "Versión actual", foot: "Software libre con licencia MIT.",
+      dl_total: "Descargas", dl_stats: "estadísticas por país, sistema y procedencia", dl_priv: "Contadas sin cookies (GoatCounter): solo cifras agregadas.",
+      pk_author: "Autor", pk_version: "versión", pk_dl: "descargas",
+      h_cmt: "Comentarios", p_cmt: "Pregunta, cuenta lo que has hecho o lo que falla. Los comentarios son de un canal público de Telegram: para escribir hace falta una cuenta de Telegram.",
+      b_cmt: "Mostrar comentarios"
     },
     en: {
       n_layers: "Widgets", n_ropes: "Hierarchies", n_paper: "Paper shapes", n_share: "Share", n_install: "Install",
@@ -591,11 +609,79 @@
             "The code is open source: you can read exactly what the installer does in the GitHub repository before running it.",
             "Windows: “More info” → “Run anyway”. macOS: right-click the file → “Open”."],
       kofi_t: "Find it useful? It is free and ad-free; if you want to support its development, you can do it from here.",
-      kofi_b: "Support", ver: "Current version", foot: "Free software under the MIT license."
+      kofi_b: "Support", ver: "Current version", foot: "Free software under the MIT license.",
+      dl_total: "Downloads", dl_stats: "statistics by country, system and referrer", dl_priv: "Counted without cookies (GoatCounter): aggregate figures only.",
+      pk_author: "Author", pk_version: "version", pk_dl: "downloads",
+      h_cmt: "Comments", p_cmt: "Ask a question, tell us what you made or what is broken. Comments live in a public Telegram channel: you need a Telegram account to write.",
+      b_cmt: "Show comments"
     }
   };
   var FILES = { win: "dl/install-windows.cmd", mac: "dl/install-macos.zip", linux: "dl/install-linux.sh" };
   var NAMES = { win: "Windows", mac: "macOS", linux: "Linux" };
+
+  /* ================= [WEB1] descargas, autor y comentarios =================
+     SITE.goatcounter: codigo de tu sitio en goatcounter.com (si es "https://abc.goatcounter.com", el codigo es "abc"). Vacio = no se carga nada externo.
+     SITE.telegram: "canal/numero" de la publicacion de un canal publico de Telegram con grupo de debate enlazado (ej. "widgetarena/5"). Vacio = sin comentarios. */
+  var SITE = { goatcounter: "enderhugin", telegram: "" };
+  var CNT = { win: 0, mac: 0, linux: 0, pack: 0, loaded: false };
+  var PACKS = {};
+  var DNT = navigator.doNotTrack === "1" || window.doNotTrack === "1";
+  function track(name) { try { if (window.goatcounter && window.goatcounter.count) window.goatcounter.count({ path: name, title: name, event: true }); } catch (e) {} }
+  function gcCount(name) {
+    return fetch("https://" + SITE.goatcounter + ".goatcounter.com/counter/" + encodeURIComponent(name) + ".json", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : (r.status === 404 ? { count: "0" } : null); })
+      .then(function (j) { return j ? (parseInt(String(j.count).replace(/\D/g, ""), 10) || 0) : null; }, function () { return null; });
+  }
+  function loadCounts() {
+    if (!SITE.goatcounter) return;
+    var names = ["dl-install-windows.cmd", "dl-install-macos.zip", "dl-install-linux.sh", "dl-curl-mac", "dl-curl-linux", "dl-notas-de-colores.wapack"];
+    Promise.all(names.map(gcCount)).then(function (v) {
+      if (v.some(function (x) { return x === null; })) return;          // contador publico apagado en GoatCounter (o sin red): no se enseña nada, ni ceros falsos
+      CNT.win = v[0]; CNT.mac = v[1] + v[3]; CNT.linux = v[2] + v[4]; CNT.pack = v[5]; CNT.loaded = true; paintCounts();
+    });
+  }
+  function paintCounts() {
+    var t = T[lang], el = $("#dlstat");
+    if (SITE.goatcounter && CNT.loaded) {
+      var total = CNT.win + CNT.mac + CNT.linux;
+      el.textContent = t.dl_total + ": " + total + " (Windows " + CNT.win + " · macOS " + CNT.mac + " · Linux " + CNT.linux + ") · ";
+      var a = document.createElement("a"); a.href = "https://" + SITE.goatcounter + ".goatcounter.com"; a.target = "_blank"; a.rel = "noopener"; a.textContent = t.dl_stats;
+      el.appendChild(a); el.appendChild(document.createTextNode(". " + t.dl_priv)); el.hidden = false;
+    }
+    var pm = $("#pack-meta"), pk = PACKS["notas-de-colores.wapack"], bits = [];
+    if (pk) {
+      if (pk.author) bits.push(t.pk_author + ": " + pk.author);
+      if (pk.version) bits.push(t.pk_version + " " + pk.version);
+      if (pk.license) bits.push(pk.license);
+    }
+    if (SITE.goatcounter && CNT.loaded) bits.push(CNT.pack + " " + t.pk_dl);
+    if (bits.length) { pm.textContent = bits.join(" · "); pm.hidden = false; }
+  }
+  function initSite() {
+    if (SITE.goatcounter && !DNT) {
+      var s = document.createElement("script"); s.async = true; s.src = "https://gc.zgo.at/count.js";
+      s.setAttribute("data-goatcounter", "https://" + SITE.goatcounter + ".goatcounter.com/count"); document.head.appendChild(s);
+    }
+    document.addEventListener("click", function (e) {
+      var a = e.target && e.target.closest ? e.target.closest("a[download]") : null;
+      if (a && !DNT) track("dl-" + String(a.getAttribute("href") || "").split("/").pop());
+    });
+    try {
+      fetch("dl/packs.json").then(function (r) { return r.ok ? r.json() : []; }).then(function (l) {
+        (l || []).forEach(function (k) { PACKS[k.file] = k; }); paintCounts();
+      }, function () {});
+    } catch (e) {}
+    loadCounts();
+    if (SITE.telegram) {
+      $("#comments").hidden = false;
+      $("#cmt-show").addEventListener("click", function () {
+        var box = $("#tg-comments"); if (box.firstChild) return;
+        var s = document.createElement("script"); s.async = true; s.src = "https://telegram.org/js/telegram-widget.js?22";
+        s.setAttribute("data-telegram-discussion", SITE.telegram); s.setAttribute("data-comments-limit", "10"); s.setAttribute("data-colorful", "1");
+        box.appendChild(s); this.hidden = true;
+      });
+    }
+  }
   var lang = (navigator.language || "es").toLowerCase().indexOf("es") === 0 ? "es" : "en";
   try { var saved = localStorage.getItem("wa-lang"); if (saved === "es" || saved === "en") lang = saved; } catch (e) {}
   var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -861,15 +947,18 @@
       var b = document.createElement("button"); b.type = "button"; b.className = "copybtn"; b.textContent = t.copy;
       b.onclick = function () {
         var done = function () { b.textContent = t.copied; setTimeout(function () { b.textContent = t.copy; }, 1500); };
+        if (!DNT) track("dl-curl-" + shown);
         if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd()).then(done, function () {});
       };
       pre.appendChild(b); box.appendChild(pre);
     }
+    paintCounts();
     hero.fit(); tree.fit();
   }
   $("#lang").addEventListener("click", function () { lang = lang === "es" ? "en" : "es"; try { localStorage.setItem("wa-lang", lang); } catch (e) {} render(); });
   $$("#tabs button").forEach(function (b) { b.addEventListener("click", function () { shown = b.getAttribute("data-os"); render(); }); });
   render();
+  initSite();
 })();
 </script>
 </body>

@@ -30,5 +30,10 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
   - línea de registro del Pack 170 «El sistema ha colocado el widget en…» (cable desajustado en la VM; el usuario prefiere que el widget pueda salirse de la pantalla);
   - rotación de la capa web con el marco (Ctrl+Alt+Shift): viable pero no barata; aparcada.
 
+## Página web (GitHub Pages)
+- [x] Contador de descargas (GoatCounter, sitio `enderhugin`), por sistema, con enlace a las estadísticas (país, sistema, procedencia); autor/versión/licencia del pack de ejemplo (`dl/packs.json`).
+- [ ] En GoatCounter (Settings → Site): activar «Allow adding visitor counts on your website» (si no, la página no enseña cifras) y «Allow public view» (para el enlace a las estadísticas).
+- [ ] Comentarios con Telegram: crear un canal público con grupo de debate enlazado, publicar un mensaje y poner `canal/número` en `SITE.telegram` de `site/index.html`.
+
 ## Otros temas del usuario
 - «Necesito varias cosas»: el usuario las dirá al terminar esta lista.

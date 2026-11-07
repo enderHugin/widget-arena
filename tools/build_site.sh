@@ -35,6 +35,20 @@ cp assets/icon.png assets/icon.ico assets/icon.icns "$OUT/dl/"
 # notas de bienvenida y perfil de ejemplo (se copian en el primer arranque): defaults.zip con carpeta "defaults/" en la raiz
 zip -qrX "$OUT/dl/defaults.zip" defaults
 cp defaults/packs/*.wapack "$OUT/dl/" 2>/dev/null || true       # packs de ejemplo para descargar
+# dl/packs.json: nombre, autor, version y licencia de cada pack de ejemplo (la pagina los muestra junto a la descarga)
+python3 - "$OUT/dl" <<'PYEOF2'
+import json, os, sys, zipfile
+d, out = sys.argv[1], []
+for f in sorted(os.listdir(d)):
+    if f.endswith('.wapack'):
+        try:
+            with zipfile.ZipFile(os.path.join(d, f)) as z:
+                m = json.loads(z.read('pack.json').decode('utf-8'))
+            out.append({'file': f, 'name': m.get('name', ''), 'author': m.get('author', ''), 'version': m.get('version', ''), 'license': m.get('license', '')})
+        except Exception as e:
+            print('aviso: sin metadatos en', f, e, file=sys.stderr)
+json.dump(out, open(os.path.join(d, 'packs.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+PYEOF2
 # fuentes libres (OFL): el programa las descarga solo desde aqui si no las encuentra (con su huella sha256 fijada en el codigo)
 mkdir -p "$OUT/dl/fonts"; cp defaults/fonts/*.ttf defaults/fonts/OFL-*.txt "$OUT/dl/fonts/"
 sub installers/install-windows.cmd | sed -e 's/\r$//' -e 's/$/\r/' > "$OUT/dl/install-windows.cmd"
