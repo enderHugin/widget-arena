@@ -17,6 +17,9 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
 - [ ] 6. **Grupos/familias de widgets** con subordinación («transparentes», «bordes redondeados», «reloj y calendarios modernos»…): navegables visualmente en el navegador de widgets y en un nuevo elemento del menú contextual de la bandeja para crear widgets; exportar packs por grupo (hoy solo «los de mi perfil» o individuales); los widgets conservan el flag de pertenencia al grupo (autor: X Smith).
   - Pack 174 (hecho): autor + familias (varias a la vez) en cada modelo, filtro/agrupación en Modelos y Navegador, submenú de bandeja, exportar familia, nombre de autor. **Falta:** registro/verificación de autores y de quién puede añadir a una familia (concursos), carpetas de familias en el modo usuario, ordenar/ver familias en más sitios.
 
+## Nuevo (propuesto por ti, a diseñar)
+- [ ] 8. **Crear y transformar widgets desde una interfaz («constructor»)**: hoy crear uno de cero es una odisea (elegir capa, navegar por el disco…). Y en una nota (capa 1 = texto) no se puede poner un marco generado en la capa 1 («Marco» sale desactivado). Idea: ventana con vista previa en vivo y pasos (fondo, marco, contenido, forma) que sirva para crear uno nuevo y para cambiar uno existente.
+
 ## Pendientes del asistente (al final; no bloquean lo anterior)
 - [ ] 7a. Pedir las líneas de registro de Linux `Ctrl+Alt+rueda: evento=… fisicas=…` (rotación fina).
 - [ ] 7b. Probar los packs 167–170 con QtWebEngine real y en Windows:

@@ -1,3 +1,6 @@
+## Pack 177 · 2026-11-07
+- **Autor y familias del widget elegido, en el Navegador de widgets.** En la pestaña *Widget elegido*, dentro del recuadro «Widget», hay ahora los campos **Autor** y **Familias** (varias, separadas por comas) y un botón **Añadir ▾** con las familias que ya existen. Se guardan al salir del campo o pulsar Intro, y el filtro «Familia: X» del Navegador se actualiza solo. Si pones familias y no autor, se firma con tu nombre de autor. (Antes solo se podía por el menú del widget, *Widget ▸ Familias y autor…*.)
+
 ## Pack 176 · 2026-11-07
 - **Menú del widget por función.** Desaparecen «Capas» y «Aspecto»; ahora hay: **Widget** (guardar widget, exportar widget a un archivo, copiar y pegar widget, sustituir widget, familias y autor), **Contenido** (tipo de capa, texto, zoom de la web, estirar imagen), **Forma y borde** (forma de papel, marco, recorte de la capa 2), **Color y efectos** (efectos de imagen y tono, por capa), **Posición y tamaño** (por capa: seleccionar, posición, girar, inclinar, tamaño; y girar el widget entero) y **Corona**. Cuando hay dos capas, cada función tiene una entrada por capa.
 - **Tus atajos y teclas de menú se migran solos** a su nuevo sitio (también los de versiones anteriores). Las opciones hacen exactamente lo mismo que antes.

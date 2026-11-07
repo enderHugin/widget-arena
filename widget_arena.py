@@ -10406,6 +10406,34 @@ class WidgetBrowserWindow(QMainWindow):
         button(row, "Guardar este widget...", lambda: m.save_widget_as_template(wid))
         button(row, "Editar mis widgets...", lambda: m.show_template_chooser(select=st.get('template_name')))
         lay.addLayout(row)
+        _td = st.get('template_data')          # [PACK177] autor y familias de este widget, aqui mismo
+        au = QLineEdit(tpl_author(_td))
+        au.setPlaceholderText("vac\u00edo = ti (%s)" % m.user_name())
+        fa = QLineEdit(", ".join(tpl_groups(_td)))
+        fa.setPlaceholderText("varias, separadas por comas")
+        fa.setToolTip("Un widget puede estar en varias familias a la vez. Con familias, siempre lleva autor.")
+        known = {}
+        for _g in list(m.template_families()) + [g_ for o_ in m.global_state for g_ in m.widget_groups(o_)]:
+            known.setdefault(_g.lower(), _g)
+        pick = QToolButton()
+        pick.setText("A\u00f1adir  \u25be")
+        pick.setPopupMode(QToolButton.InstantPopup)
+        pick.setToolTip("Familias que ya existen")
+        pm_ = QMenu(pick)
+        for _g in sorted(known.values(), key=str.lower):
+            pm_.addAction(_g, lambda g=_g: (fa.setText(", ".join(parse_groups(fa.text() + "," + g))), self._apply_meta(wid, au.text(), fa.text())))
+        if not known:
+            pm_.addAction("(todav\u00eda no hay familias: escribe la primera)").setEnabled(False)
+        pick.setMenu(pm_)
+        frow = QHBoxLayout()
+        frow.addWidget(fa, 1)
+        frow.addWidget(pick)
+        fl_ = QFormLayout()
+        fl_.addRow("Autor:", au)
+        fl_.addRow("Familias:", frow)
+        lay.addLayout(fl_)
+        au.editingFinished.connect(lambda: self._apply_meta(wid, au.text(), fa.text()))
+        fa.editingFinished.connect(lambda: self._apply_meta(wid, au.text(), fa.text()))
 
         # ---- visibilidad
         lay = self._gbox(v, "Visibilidad")
@@ -10509,6 +10537,16 @@ class WidgetBrowserWindow(QMainWindow):
         c.toggled.connect(lambda checked: QTimer.singleShot(0, lambda: fn(checked)))
         form.addRow("", c)
         return c
+
+    def _apply_meta(self, wid, author, groups_text):
+        """[PACK177] Guarda el autor y las familias escritos en el detalle del widget (solo si cambian)."""
+        st = self.m.global_state.get(wid)
+        if not isinstance(st, dict):
+            return
+        td, g, a = st.get('template_data'), parse_groups(groups_text), ' '.join(str(author).split())
+        if g == tpl_groups(td) and a == tpl_author(td):
+            return
+        self.m.set_widget_meta(wid, a, g)
 
     def _apply_name(self, wid, text):
         st = self.m.global_state.get(wid)
@@ -13476,7 +13514,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 176                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 177                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
