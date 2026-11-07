@@ -10428,8 +10428,20 @@ class WidgetBrowserWindow(QMainWindow):
         frow = QHBoxLayout()
         frow.addWidget(fa, 1)
         frow.addWidget(pick)
+        achk = QCheckBox("predeterminado")          # [PACK178] mi nombre de autor, a un clic
+        achk.setToolTip("Es mi nombre de autor: firma lo que cree o guarde (tambi\u00e9n en Ajustes de la bandeja > Mi nombre de autor...)")
+        achk.setChecked(bool(tpl_author(_td)) and tpl_author(_td) == m.user_name())
+        achk.toggled.connect(lambda on: m.set_user_name(au.text() if on else ""))
+        arow = QHBoxLayout()
+        arow.addWidget(au, 1)
+        arow.addWidget(achk)
+        dchk = QCheckBox("predeterminada")
+        dchk.setToolTip("Estas familias se ponen solas en los widgets nuevos y en los que guardes en Mis widgets (si no traen familia propia)")
+        dchk.setChecked(bool(m.user_groups()) and m.user_groups() == tpl_groups(_td))
+        dchk.toggled.connect(lambda on: m.set_user_groups(parse_groups(fa.text()) if on else []))
+        frow.addWidget(dchk)
         fl_ = QFormLayout()
-        fl_.addRow("Autor:", au)
+        fl_.addRow("Autor:", arow)
         fl_.addRow("Familias:", frow)
         lay.addLayout(fl_)
         au.editingFinished.connect(lambda: self._apply_meta(wid, au.text(), fa.text()))
@@ -10546,7 +10558,14 @@ class WidgetBrowserWindow(QMainWindow):
         td, g, a = st.get('template_data'), parse_groups(groups_text), ' '.join(str(author).split())
         if g == tpl_groups(td) and a == tpl_author(td):
             return
-        self.m.set_widget_meta(wid, a, g)
+        m = self.m
+        was_g = bool(m.user_groups()) and m.user_groups() == tpl_groups(td)          # [PACK178] si era la predeterminada, sigue siendolo
+        was_a = bool(tpl_author(td)) and tpl_author(td) == m.user_name()
+        m.set_widget_meta(wid, a, g)
+        if was_g:
+            m.set_user_groups(g)
+        if was_a and a:
+            m.set_user_name(a)
 
     def _apply_name(self, wid, text):
         st = self.m.global_state.get(wid)
@@ -13514,7 +13533,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 177                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 178                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22245,6 +22264,9 @@ class WidgetManager(QObject):
         child_cfg_action = QAction("Tipo de hijo al crear con el rat\u00f3n...", self)            # [PACK62]
         child_cfg_action.triggered.connect(self.edit_child_types)
         cfg_menu.insertAction(integ_menu.menuAction(), child_cfg_action)
+        me_action = QAction("Mi nombre de autor...", self)          # [PACK178]
+        me_action.triggered.connect(lambda _c=False: self.ask_user_name())
+        cfg_menu.insertAction(integ_menu.menuAction(), me_action)
         cfg_menu.addMenu(data_menu_)
         menu.addMenu(cfg_menu)
         guide_action = QAction("Gu\u00eda de gestos y atajos...", self)
@@ -24343,6 +24365,8 @@ class WidgetManager(QObject):
             l1['content'] = self._blank_keep_format(l1.get('content'), TPL_SAMPLE_TEXT) or TPL_SAMPLE_TEXT
         if isinstance(td.get('base_note'), dict) and 'text' in td['base_note']:
             td['base_note']['text'] = TPL_SAMPLE_TEXT
+        if not tpl_groups(td) and self.user_groups():          # [PACK178] mi familia por defecto
+            tpl_set_meta(td, groups=self.user_groups())
         if tpl_groups(td) and not tpl_author(td):          # [PACK174] una familia siempre lleva firma
             tpl_set_meta(td, author=self.user_name())
         return td
@@ -26084,6 +26108,14 @@ class WidgetManager(QObject):
         n = ' '.join(str(self.global_state.get('user_name') or '').split())
         return n[:80] or ' '.join(str(os.environ.get('USERNAME') or os.environ.get('USER') or '').split())[:80]
 
+    def user_groups(self):
+        """[PACK178] Familia(s) que llevan por defecto mis widgets nuevos y los que guardo en Mis widgets (si no traen familia propia)."""
+        return parse_groups(self.global_state.get('user_groups') or [])
+
+    def set_user_groups(self, groups):
+        self.global_state['user_groups'] = parse_groups(groups)
+        self.save_global_state(record_history=False)
+
     def set_user_name(self, name):
         self.global_state['user_name'] = ' '.join(str(name or '').split())[:80]
         self.save_global_state(record_history=False)
@@ -26561,6 +26593,8 @@ class WidgetManager(QObject):
             widget_id = widget_id_base
             tname = template_name if (isinstance(template_name, str) and template_name) else self.default_template_name()
             tdata = self.load_template_by_name(tname)
+            if self.user_groups() and not tpl_groups(tdata) and not tpl_author(tdata):          # [PACK178] un widget nuevo sin dueno lleva mi familia
+                tpl_set_meta(tdata, author=self.user_name(), groups=self.user_groups())
             state = {
                 "enabled": True,
                 "always_on_top": self._default_always_on_top(),

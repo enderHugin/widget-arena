@@ -1,3 +1,7 @@
+## Pack 178 · 2026-11-07
+- **Tu autor y tu familia «predeterminados», a un clic.** En el Navegador de widgets, pestaña *Widget elegido*: junto a **Autor** hay una casilla **[x] predeterminado** (ese es tu nombre de autor) y junto a **Familias** otra, **[x] predeterminada** (esas familias se ponen solas). Si la marcas, los widgets **nuevos** y los que **guardes en Mis widgets** llevan esa familia y tu firma, siempre que no traigan familia propia; los de otros autores no se tocan. Desmarcarla la quita. Si editas el campo mientras está marcada, la predeterminada se mantiene al día.
+- **Tu nombre también en *Ajustes* de la bandeja:** «Mi nombre de autor…» (y sigue en *Mis widgets ▸ Gestionar*).
+
 ## Pack 177 · 2026-11-07
 - **Autor y familias del widget elegido, en el Navegador de widgets.** En la pestaña *Widget elegido*, dentro del recuadro «Widget», hay ahora los campos **Autor** y **Familias** (varias, separadas por comas) y un botón **Añadir ▾** con las familias que ya existen. Se guardan al salir del campo o pulsar Intro, y el filtro «Familia: X» del Navegador se actualiza solo. Si pones familias y no autor, se firma con tu nombre de autor. (Antes solo se podía por el menú del widget, *Widget ▸ Familias y autor…*.)
 
