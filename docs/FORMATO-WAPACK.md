@@ -9,10 +9,10 @@ conjuntos de widgets colocados y las imágenes que usan. Sirve para compartir, v
 
 - **Instalar:** arrastra el `.wapack` a la ventana *Guardar y cargar* o a *Packs de widgets* (menú del icono → *Guardar y cargar* → *Packs de widgets...*), o usa *Cargar un archivo*.
   Se copia a la carpeta `packs/` de tus datos. No se extrae nada.
-- **Usar un estilo:** *Packs de widgets* → elige uno o varios → *Agregar a mis modelos* o *Crear una nota con este modelo*.
+- **Usar un estilo:** *Packs de widgets* → elige uno o varios → *Agregar a mis widgets* o *Crear una nota con este widget*.
   Solo se copian las imágenes que ese estilo necesita, y lo que queda son archivos normales: no dependen del pack.
 - **Usar un set:** *Agregar a mis sets* o *Abrir el set ahora*. Nunca pisa uno tuyo con el mismo nombre.
-- **Quitar un pack:** borra el archivo; lo que ya agregaste a tus modelos y sets sigue funcionando.
+- **Quitar un pack:** borra el archivo; lo que ya agregaste a tus widgets y sets sigue funcionando.
 - **Crear el tuyo:** *Packs de widgets* → *Exportar mis widgets y sets...*. Eliges qué entra y las imágenes se meten solas.
 
 ## Estructura

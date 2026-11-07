@@ -1,3 +1,9 @@
+## Pack 176 · 2026-11-07
+- **Menú del widget por función.** Desaparecen «Capas» y «Aspecto»; ahora hay: **Widget** (guardar widget, exportar widget a un archivo, copiar y pegar widget, sustituir widget, familias y autor), **Contenido** (tipo de capa, texto, zoom de la web, estirar imagen), **Forma y borde** (forma de papel, marco, recorte de la capa 2), **Color y efectos** (efectos de imagen y tono, por capa), **Posición y tamaño** (por capa: seleccionar, posición, girar, inclinar, tamaño; y girar el widget entero) y **Corona**. Cuando hay dos capas, cada función tiene una entrada por capa.
+- **Tus atajos y teclas de menú se migran solos** a su nuevo sitio (también los de versiones anteriores). Las opciones hacen exactamente lo mismo que antes.
+- En el Navegador de widgets, el recuadro «Contenido (capas)» pasa a «Editar», con un botón por función.
+- Ya no queda la palabra «modelo» en ningún menú; README y documentos de formatos actualizados.
+
 ## Pack 175 · 2026-11-07
 - **«Modelo» pasa a llamarse «widget» en todos los textos de la aplicación.** La biblioteca se llama ahora **«Mis widgets»** (como ya existen «Mis marcos» y «Mis formas de papel»): pestaña del Navegador, ventana, botones, avisos, ayudas, packs, importar y exportar. Donde se cambiaba un widget por otro, la acción es **«Sustituir widget»** (botón «Sustituir "nombre"» y aviso «Sustituyendo…»).
 - Los atajos y teclas de menú que ya tenías asignados se migran solos (por ejemplo, «Exportar todos mis modelos a un archivo…» de la bandeja pasa a «…mis widgets…»). Tus archivos y packs no cambian: siguen siendo los mismos.

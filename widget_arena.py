@@ -8995,6 +8995,27 @@ _WIDGET_PATH_MOVES = tuple(_WIDGET_PATH_MOVES_A + [mv for n in (1, 2) for mv in 
 _MOVES_175 = (
     ("tray/Ajustes/Importar y exportar/Exportar todos mis modelos a un archivo...", "tray/Ajustes/Importar y exportar/Exportar todos mis widgets a un archivo..."),
 )
+# [PACK176] El menu del widget se reparte por funcion (Widget / Contenido / Forma y borde / Color y efectos / Posici\u00f3n y tama\u00f1o / Corona):
+# de lo especifico a lo general; lo que no cambia de sitio no esta aqui.
+_MOVES_176 = tuple([
+    ("widget/Aspecto/Modelo/Cambiar el modelo de este widget...", "widget/Widget/Sustituir widget..."),
+    ("widget/Aspecto/Modelo/Guardar este widget como modelo...", "widget/Widget/Guardar widget..."),
+    ("widget/Aspecto/Modelo/Familias y autor de este widget...", "widget/Widget/Familias y autor..."),
+    ("widget/Aspecto/Modelo/Exportar este widget a un archivo...", "widget/Widget/Exportar widget a un archivo..."),
+    ("widget/Aspecto/Modelo/Copiar este widget (json)", "widget/Widget/Copiar widget (json)"),
+    ("widget/Aspecto/Modelo/Pegar un widget copiado (json)", "widget/Widget/Pegar widget (json)"),
+    ("widget/Aspecto/Modelo", "widget/Widget"),
+    ("widget/Aspecto/Forma de papel", "widget/Forma y borde/Forma de papel"),
+    ("widget/Aspecto/Marco", "widget/Forma y borde/Marco"),
+    ("widget/Aspecto/Corona", "widget/Corona"),
+    ("widget/Aspecto/Girar widget", "widget/Posici\u00f3n y tama\u00f1o/Girar widget"),
+] + [mv for n in (1, 2) for mv in (
+    ("widget/Capas/Capa %d/Transformar" % n, "widget/Posici\u00f3n y tama\u00f1o/Capa %d" % n),
+    ("widget/Capas/Capa %d/Contenido/Efectos de imagen (tono, color base, brillo...)" % n, "widget/Color y efectos/Capa %d/Efectos de imagen (tono, color base, brillo...)" % n),
+    ("widget/Capas/Capa %d/Contenido/Tono" % n, "widget/Color y efectos/Capa %d/Tono" % n),
+    ("widget/Capas/Capa %d/Contenido" % n, "widget/Contenido/Capa %d" % n),
+    ("widget/Capas/Capa %d/Tipo de capa" % n, "widget/Contenido/Capa %d/Tipo de capa" % n),
+    ("widget/Capas/Capa %d/Recorte de la capa" % n, "widget/Forma y borde/Recorte de la capa %d" % n))])
 # [PACK121] Rutas del menu que cambiaron de nombre o de sitio al unificar el vocabulario (se aplican DESPUES de las anteriores;
 # lo especifico antes). Los atajos y teclas de menu que el usuario ya tenia asignados se traducen solos.
 _MOVES_121 = tuple([
@@ -9089,7 +9110,7 @@ def _widget_kind(state):
 
 _MENU_GROUPS_W = (
     ("este", "", "~#94a3b8"),                      # su titulo se calcula: TIPO y nombre del widget
-    ("aspecto", "CAPAS Y ASPECTO", "~#94a3b8"),
+    ("aspecto", "EDITAR EL WIDGET", "~#94a3b8"),
     ("familia", "RELACIONES", "~#94a3b8"),
     ("copia", "CLONAR", "~#94a3b8"),
     ("gestion", "GESTI\u00d3N DE WIDGETS", "~#94a3b8"),
@@ -9099,8 +9120,9 @@ _MENU_GROUPS_W = (
 _MENU_RULES_W = (
     ("Renombrar", "este"), ("Cancelar temporizador", "este"), ("Establecer temporizador", "este"),
     ("Copiar \u00e1rbol", "gestion"), ("Pegar \u00e1rbol", "gestion"), ("Exportar \u00e1rbol", "gestion"), ("Mover \u00e1rbol", "gestion"), ("Usar como predeterminado", "gestion"),
-    ("Ocultar", "este"), ("Mostrar", "este"), ("Siempre encima", "este"), ("Ver en el navegador", "este"),
-    ("Capas", "aspecto"), ("Aspecto", "aspecto"), ("Relaciones", "familia"), ("Clonar", "copia"), ("Eliminar", "peligro"),
+    ("Ocultar", "este"), ("Mostrar", "este"), ("Siempre encima", "este"), ("Ver en el navegador", "este"), ("Widget", "este"),
+    ("Contenido", "aspecto"), ("Forma y borde", "aspecto"), ("Color y efectos", "aspecto"), ("Posici\u00f3n y tama\u00f1o", "aspecto"), ("Corona", "aspecto"),
+    ("Relaciones", "familia"), ("Clonar", "copia"), ("Eliminar", "peligro"),
 )
 _MENU_GROUPS_T = (
     ("pantalla", "MOSTRAR Y OCULTAR", "~#94a3b8"),
@@ -9116,10 +9138,11 @@ _MENU_RULES_T = (
     ("Ajustes", "app"), ("Gu\u00eda", "app"), ("Mostrar u ocultar", "app"), ("Modo creativo", "app"), ("Acerca", "app"), ("Salir", "app"),
 )
 # Solo estas opciones (las mas usadas) llevan icono y negrita; sin colores ni franjas.
-_MENU_KEYS_W = ("Capas", "Relaciones", "Clonar", "Eliminar")
+_MENU_KEYS_W = ("Contenido", "Forma y borde", "Color y efectos", "Posici\u00f3n y tama\u00f1o", "Relaciones", "Clonar", "Eliminar")
 _MENU_KEYS_T = ("Nuevo widget...", "Navegador", "Sets de widgets", "Guardar y cargar", "Ajustes", "Salir")
 _MENU_ICONS = (
-    ("Capas", "\U0001f6e0"), ("Relaciones", "\U0001f331"), ("Clonar", "\U0001f4cb"),
+    ("Widget", "\U0001f9e9"), ("Contenido", "\U0001f4dd"), ("Forma y borde", "\U0001f532"), ("Color y efectos", "\U0001f3a8"),
+    ("Posici\u00f3n y tama\u00f1o", "\U0001f4d0"), ("Corona", "\U0001f451"), ("Relaciones", "\U0001f331"), ("Clonar", "\U0001f4cb"),
     ("Eliminar", "\U0001f5d1"), ("Nuevo widget...", "\u2795"), ("Navegador", "\U0001f50d"),
     ("Sets de widgets", "\U0001f464"), ("Guardar y cargar", "\U0001f4be"), ("Ajustes", "\u2699"), ("Salir", "\U0001f6aa"),
 )
@@ -9247,8 +9270,8 @@ _UI_T_SUB = {      # submenus: (lo que se conserva, lo que se quita), por el pri
     "Ajustes": (("Apariencia", "Atajos de teclado", "Importar y exportar"), None),
     "Apariencia": (("Cables (opacidad", "Fuente predeterminada", "Mostrar ayuda de gestos"), None),
 }
-_UI_W_DROP = ("Capas", "Copiar \u00e1rbol", "Pegar \u00e1rbol", "Exportar \u00e1rbol", "Mover \u00e1rbol", "Usar como predeterminado")
-_UI_W_SUB = {"Aspecto": (("Modelo", "Girar widget"), None)}
+_UI_W_DROP = ("Contenido", "Forma y borde", "Color y efectos", "Posici\u00f3n y tama\u00f1o", "Copiar \u00e1rbol", "Pegar \u00e1rbol", "Exportar \u00e1rbol", "Mover \u00e1rbol", "Usar como predeterminado")
+_UI_W_SUB = {"Widget": (None, None)}
 
 
 def _ui_prune(menu, drop=(), sub=None):
@@ -9607,6 +9630,10 @@ class HotkeyManager(QObject):
                     p_ = new_ + p_[len(old_):]
                     break
             for old_, new_ in _MOVES_175:            # [PACK175]
+                if p_ == old_ or p_.startswith(old_ + "/"):
+                    p_ = new_ + p_[len(old_):]
+                    break
+            for old_, new_ in _MOVES_176:            # [PACK176]
                 if p_ == old_ or p_.startswith(old_ + "/"):
                     return new_ + p_[len(old_):]
             return p_
@@ -10436,18 +10463,16 @@ class WidgetBrowserWindow(QMainWindow):
         ctx = m.build_widget_context_menu(wid, from_tray=True)
         m.hotkeys.decorate(ctx, "widget")
         self._ctx_menu = ctx
-        lay = self._gbox(v, "Contenido (capas)")
+        lay = self._gbox(v, "Editar")
         row = QHBoxLayout()
         for a in ctx.actions():
             sub = a.menu()
-            if sub is not None and _hk_norm_label(a.text()).startswith("Capas"):
-                for la in sub.actions():
-                    if la.menu() is not None:
-                        tb = QToolButton()
-                        tb.setText(_hk_norm_label(la.text()) + "  \u25be")
-                        tb.setPopupMode(QToolButton.InstantPopup)
-                        tb.setMenu(la.menu())
-                        row.addWidget(tb, 1)
+            if sub is not None and _hk_norm_label(a.text()).startswith(("Contenido", "Forma y borde", "Color y efectos", "Posici")):          # [PACK176]
+                tb = QToolButton()
+                tb.setText(_hk_norm_label(a.text()) + "  \u25be")
+                tb.setPopupMode(QToolButton.InstantPopup)
+                tb.setMenu(sub)
+                row.addWidget(tb, 1)
         lay.addLayout(row)
 
         # ---- mas acciones
@@ -13451,7 +13476,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 175                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 176                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -23311,6 +23336,53 @@ class WidgetManager(QObject):
         i = names.index(cur) if cur in names else (-1 if step > 0 else 0)
         self._load_profile(names[(i + step) % len(names)])
 
+    def _regroup_widget_menu(self, menu, lmenus, aspect_menu, tpl_menu, sty_menu, fr_menu, crown_menu):
+        """[PACK176] Reparte el menu del widget por FUNCION (lo que quiero cambiar), no por estructura: Widget (guardar, exportar, sustituir...),
+        Contenido, Forma y borde, Color y efectos, Posicion y tamano y Corona. Las piezas (acciones y submenus) son las que construyen
+        "Capas" y "Aspecto", que quedan sin mostrar; cuando hay dos capas, cada funcion tiene una entrada por capa."""
+        def sub(title):
+            m_ = QMenu(title, menu)
+            m_.setToolTipsVisible(True)
+            return m_
+        cont, form, color, pos = sub("Contenido"), sub("Forma y borde"), sub("Color y efectos"), sub("Posici\u00f3n y tama\u00f1o")
+        clips = []
+        for n in (1, 2):
+            lm_ = lmenus.get(n)
+            if lm_ is None:
+                continue
+            cl, kl = QMenu(lm_.title(), cont), QMenu(lm_.title(), color)
+            cl.setToolTipsVisible(True)
+            kl.setToolTipsVisible(True)
+            for a in lm_.actions():
+                sm, t = a.menu(), _hk_norm_label(a.text())
+                if sm is None:
+                    continue
+                if t == "Tipo de capa":
+                    cl.addAction(a)
+                elif t == "Contenido":
+                    for b in sm.actions():
+                        (kl if _hk_norm_label(b.text()).startswith(("Efectos de imagen", "Tono")) else cl).addAction(b)
+                elif t.startswith("Recorte"):
+                    sm.setTitle("Recorte de la capa %d" % n)
+                    clips.append(a)
+                elif t == "Transformar":
+                    sm.setTitle(lm_.title())
+                    pos.addAction(a)
+            if cl.actions():
+                cont.addMenu(cl)
+            if kl.actions():
+                color.addMenu(kl)
+        form.addAction(sty_menu.menuAction())
+        form.addAction(fr_menu.menuAction())
+        for a in clips:
+            form.addAction(a)
+        for a in aspect_menu.actions():
+            if a.menu() is not None and _hk_norm_label(a.text()) == "Girar widget":
+                pos.addAction(a)
+        for m_ in (tpl_menu, cont, form, color, pos, crown_menu):
+            if m_.actions():
+                menu.addMenu(m_)
+
     def _add_gesture_menus(self, menu, aspect_menu, widget_id, layer_menus, full=False):
         """Todo lo que se hace con Ctrl / Alt / Mayus / Win + click, rueda o flechas, tambien desde el menu
         ([PACK104] "Transformar" cuelga de cada capa de "Capas"; "Girar widget" de "Aspecto")."""
@@ -23632,22 +23704,22 @@ class WidgetManager(QObject):
             add(lm_, "Posici\u00f3n y tama\u00f1o (X, Y, ancho, alto)...", lambda k=n_: self._edit_widget_geometry(widget_id, k))
             layers_menu.addMenu(lm_)
             lmenus[n_] = lm_
-        menu.addMenu(layers_menu)
+        # [PACK176] (el menu "Capas" ya no se muestra: sus piezas se reparten por funcion en _regroup_widget_menu)
 
         # ---- Aspecto: template, estilo (nota base), corona y giro del widget
         aspect_menu = QMenu("Aspecto", menu)
-        tpl_menu = QMenu("Modelo", aspect_menu)
-        add(tpl_menu, "Cambiar el modelo de este widget...", lambda: self._change_widget_template(widget_id))
-        add(tpl_menu, "Guardar este widget como modelo...", lambda: self.save_widget_as_template(widget_id),
+        tpl_menu = QMenu("Widget", aspect_menu)
+        add(tpl_menu, "Sustituir widget...", lambda: self._change_widget_template(widget_id))
+        add(tpl_menu, "Guardar widget...", lambda: self.save_widget_as_template(widget_id),
             tip="Lo a\u00f1ade a tus widgets, para crear m\u00e1s widgets iguales a este")          # [PACK150] nombres: 'guardar' = a tu lista; 'exportar' = a un archivo
-        add(tpl_menu, "Familias y autor de este widget...", lambda: self.edit_widget_meta(widget_id),          # [PACK174]
+        add(tpl_menu, "Familias y autor...", lambda: self.edit_widget_meta(widget_id),          # [PACK174]
             tip="Las familias agrupan widgets (puede estar en varias a la vez); el autor firma el widget")
-        add(tpl_menu, "Exportar este widget a un archivo...", lambda: self._export_widget_template(widget_id),
+        add(tpl_menu, "Exportar widget a un archivo...", lambda: self._export_widget_template(widget_id),
             tip="Guarda este widget en un archivo .wawidget (comprimido, con sus im\u00e1genes) para llevarlo a otro equipo o compartirlo")
         tpl_menu.addSeparator()
-        add(tpl_menu, "Copiar este widget (json)", lambda: self._copy_widget_template(widget_id),       # [PACK96]
+        add(tpl_menu, "Copiar widget (json)", lambda: self._copy_widget_template(widget_id),       # [PACK96]
             tip="Copia al portapapeles el JSON de este widget: forma, colores, texto e imagen")
-        add(tpl_menu, "Pegar un widget copiado (json)", lambda: self._paste_widget_data(widget_id, True),         # [PACK98]
+        add(tpl_menu, "Pegar widget (json)", lambda: self._paste_widget_data(widget_id, True),         # [PACK98]
             tip="Sustituye el aspecto y el contenido de este widget por el widget copiado (JSON)",
             enabled=self._clip_widget_data() is not None)
         aspect_menu.addMenu(tpl_menu)
@@ -23709,7 +23781,7 @@ class WidgetManager(QObject):
         add(crown_menu, "Orientaci\u00f3n de la imagen (inclinaci\u00f3n de la corona)...", lambda: self.edit_upright_angle(widget_id))
         aspect_menu.addMenu(crown_menu)
         self._add_gesture_menus(layers_menu, aspect_menu, widget_id, lmenus, full)       # Transformar (por capa) y Girar widget
-        menu.addMenu(aspect_menu)
+        self._regroup_widget_menu(menu, lmenus, aspect_menu, tpl_menu, sty_menu, fr_menu, crown_menu)          # [PACK176]
 
         # ---- Relaciones: padre, hijos y enlaces
         rel_menu = QMenu("Relaciones", menu)
