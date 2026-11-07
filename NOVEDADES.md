@@ -1,3 +1,7 @@
+## Pack 180 · 2026-11-07
+- **«Actualizar automáticamente al iniciar»** en *Ajustes* de la bandeja (casilla, desactivada por defecto; también en la ventana *Actualizaciones*). Si la marcas, al abrir el programa (unos segundos después) se instala sola la versión nueva publicada, con copia de seguridad (puedes volver desde *Actualizaciones*), y se reinicia; al volver a abrir avisa «Actualizado automáticamente al pack N». Sin la casilla, todo sigue como antes (pregunta antes de instalar).
+- Solo instala versiones **nuevas** (si tu archivo tiene cambios propios sin publicar no lo toca) y **una vez por versión publicada**: si algo falla o la versión sigue pareciendo nueva, no insiste en bucle; avisa del motivo.
+
 ## Pack 179 · 2026-11-07
 - **«Iniciar con el sistema»** en *Ajustes* de la bandeja (casilla): Widget Arena se abre solo al iniciar sesión en el equipo. Windows: entrada en el registro del usuario (*Run*, sin consola); macOS: un *LaunchAgent* en `~/Library/LaunchAgents`; Linux: un `.desktop` en `~/.config/autostart`. La casilla refleja lo que hay realmente en el sistema; desmarcarla lo quita. Si no se puede (permisos), avisa.
 

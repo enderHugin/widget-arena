@@ -13533,7 +13533,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 179                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 180                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -15758,6 +15758,10 @@ class UpdateDialog(QDialog):
         self.chk_auto.setChecked(update_state().get('auto', True) is not False)
         self.chk_auto.toggled.connect(self._auto_toggled)
         root.addWidget(self.chk_auto)
+        self.chk_inst = QCheckBox("Actualizar autom\u00e1ticamente al iniciar (sin preguntar; se guarda una copia por si quieres volver)")          # [PACK180]
+        self.chk_inst.setChecked(self.m.update_auto_install_on())
+        self.chk_inst.toggled.connect(self.m.set_update_auto_install)
+        root.addWidget(self.chk_inst)
         row = QHBoxLayout()
         self.b_check = QPushButton("Buscar de nuevo")
         self.b_check.clicked.connect(self.start_check)
@@ -22368,6 +22372,12 @@ class WidgetManager(QObject):
         auto_action.setToolTip("Abre Widget Arena solo al iniciar sesi\u00f3n en el equipo")
         auto_action.toggled.connect(self.set_autostart)
         cfg_menu.insertAction(integ_menu.menuAction(), auto_action)
+        upd_action = QAction("Actualizar autom\u00e1ticamente al iniciar", self)          # [PACK180]
+        upd_action.setCheckable(True)
+        upd_action.setChecked(self.update_auto_install_on())
+        upd_action.setToolTip("Al abrir el programa instala solo la versi\u00f3n nueva publicada (con copia de seguridad) y se reinicia")
+        upd_action.toggled.connect(self.set_update_auto_install)
+        cfg_menu.insertAction(integ_menu.menuAction(), upd_action)
         me_action = QAction("Mi nombre de autor...", self)          # [PACK178]
         me_action.triggered.connect(lambda _c=False: self.ask_user_name())
         cfg_menu.insertAction(integ_menu.menuAction(), me_action)
@@ -27682,7 +27692,10 @@ class WidgetManager(QObject):
     def update_auto_check(self):
         """Al abrir el programa: si hay una version nueva, pregunta (salvo que se haya pedido no avisar)."""
         st = update_state()
-        if st.get('auto', True) is False or os.environ.get('WA_OFFLINE') or getattr(sys, 'frozen', False):
+        if st.get('auto_notice') and st.pop('auto_notice') == APP_PACK:          # [PACK180] aviso tras una actualizacion automatica
+            update_state_save()
+            self._osd("Actualizado autom\u00e1ticamente al pack %d" % APP_PACK, 3500)
+        if (st.get('auto', True) is False and not st.get('auto_install')) or os.environ.get('WA_OFFLINE') or getattr(sys, 'frozen', False):
             return
         if time.time() - float(st.get('last_check', 0) or 0) < 3600:
             return
@@ -27690,10 +27703,45 @@ class WidgetManager(QObject):
         self._upd_probe.checked.connect(self._update_probe_done)
         self._upd_probe.check()
 
+    def update_auto_install_on(self):
+        return bool(update_state().get('auto_install'))
+
+    def set_update_auto_install(self, on):
+        """[PACK180] Actualizar solo, al abrir el programa, cuando hay una version nueva publicada."""
+        update_state()['auto_install'] = bool(on)
+        update_state().pop('auto_try_pack', None)
+        update_state_save()
+        self.build_tray_menu()
+
+    def _update_auto_install(self, info):
+        """Instala la version nueva sin preguntar. Una vez por version publicada: si falla o sigue pareciendo nueva, no se repite (evita bucles)."""
+        st = update_state()
+        pack = int(info['pack'])
+        if st.get('auto_try_pack') == pack:
+            return
+        st['auto_try_pack'] = pack
+        update_state_save()
+        self._osd("Instalando la versi\u00f3n nueva (pack %d)..." % pack, 2500)
+        self._upd_auto = w = _UpdateWorker(self)
+        w.applied.connect(lambda r, p=pack: self._update_auto_applied(r, p))
+        w.apply(info)
+
+    def _update_auto_applied(self, r, pack):
+        if not r.get('ok'):
+            log_warn("Actualizar", "Actualizaci\u00f3n autom\u00e1tica fallida: %s" % r.get('error', ''))
+            self._osd("No se pudo actualizar sola: %s" % r.get('error', ''), 4000)
+            return
+        update_state()['auto_notice'] = pack
+        update_state_save()
+        QTimer.singleShot(1500, self.update_restart_app)
+
     def _update_probe_done(self, r):
         if not r.get('ok') or r.get('state') != 'newer':
             return
         info = r['info']
+        if self.update_auto_install_on():                    # [PACK180] sin preguntar
+            self._update_auto_install(info)
+            return
         box = QMessageBox(QMessageBox.Question, "Widget Arena",
                           "Se ha encontrado una nueva versi\u00f3n de Widget Arena (pack %s).\n\n\u00bfDescargarla e instalarla ahora? Se guarda una copia de la versi\u00f3n "
                           "actual y el programa se reinicia; tus notas y ajustes no se tocan." % info.get('pack'))
