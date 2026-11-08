@@ -30,6 +30,9 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
   - línea de registro del Pack 170 «El sistema ha colocado el widget en…» (cable desajustado en la VM; el usuario prefiere que el widget pueda salirse de la pantalla);
   - rotación de la capa web con el marco (Ctrl+Alt+Shift): viable pero no barata; aparcada.
 
+## Opciones ocultas
+- [x] Pack 182: casilla del vigilante de actualizaciones, oculta; se muestra con Mayús+Ctrl+Win+Alt+F12 en la ventana *Actualizaciones*.
+
 ## Página web (GitHub Pages)
 - [x] Contador de descargas (GoatCounter, sitio `enderhugin`), por sistema, con enlace a las estadísticas (país, sistema, procedencia); autor/versión/licencia del pack de ejemplo (`dl/packs.json`).
 - [ ] En GoatCounter (Settings → Site): activar «Allow adding visitor counts on your website» (si no, la página no enseña cifras) y «Allow public view» (para el enlace a las estadísticas).

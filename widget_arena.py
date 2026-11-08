@@ -13595,12 +13595,13 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 181                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 182                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
 APP_FILE = os.path.abspath(_a0)
 UPDATE_FILES = ("widget_arena.py", "herramientas.py")
+UPDATE_WATCH_MS = 10 * 60 * 1000          # [PACK182] cada cuanto mira si hay version nueva el vigilante
 WA_DROP_EXTS = ('.wawidget', '.wapaper', '.waframe', '.json')          # [PACK181] lo que un widget acepta que le suelten encima
 _UPDATE_ST = {}
 
@@ -15826,6 +15827,14 @@ class UpdateDialog(QDialog):
         self.chk_inst.setChecked(self.m.update_auto_install_on())
         self.chk_inst.toggled.connect(self.m.set_update_auto_install)
         root.addWidget(self.chk_inst)
+        self.chk_watch = QCheckBox("Actualizar autom\u00e1ticamente en cuanto se detecte una versi\u00f3n nueva (vigila mientras el programa est\u00e9 abierto)")          # [PACK182]
+        self.chk_watch.setChecked(self.m.update_watch_on())
+        self.chk_watch.setVisible(self.chk_watch.isChecked())          # oculta salvo que este activada; se muestra con Mayus+Ctrl+Win+Alt+F12
+        self.chk_watch.toggled.connect(self._watch_toggled)
+        root.addWidget(self.chk_watch)
+        from PySide6.QtGui import QShortcut
+        self._reveal_sc = QShortcut(QKeySequence("Ctrl+Shift+Alt+Meta+F12"), self)
+        self._reveal_sc.activated.connect(self._reveal_watch)
         row = QHBoxLayout()
         self.b_check = QPushButton("Buscar de nuevo")
         self.b_check.clicked.connect(self.start_check)
@@ -15865,6 +15874,21 @@ class UpdateDialog(QDialog):
         self.status.setText("Buscando la versi\u00f3n publicada...")
         self._buttons()
         self.w.check()
+
+    def _reveal_watch(self):
+        self.chk_watch.setVisible(True)
+
+    def _watch_toggled(self, on):
+        self.m.set_update_watch(on)
+        if not on:
+            self.chk_watch.setVisible(False)          # desactivada: vuelve a ser invisible
+
+    def keyPressEvent(self, e):
+        mods = Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier
+        if e.key() == Qt.Key_F12 and (e.modifiers() & mods) == mods:
+            self._reveal_watch()
+            return
+        super().keyPressEvent(e)
 
     def _auto_toggled(self, on):
         update_state()['auto'] = bool(on)
@@ -27799,16 +27823,59 @@ class WidgetManager(QObject):
         if st.get('auto_notice') and st.pop('auto_notice') == APP_PACK:          # [PACK180] aviso tras una actualizacion automatica
             update_state_save()
             self._osd("Actualizado autom\u00e1ticamente al pack %d" % APP_PACK, 3500)
-        if (st.get('auto', True) is False and not st.get('auto_install')) or os.environ.get('WA_OFFLINE') or getattr(sys, 'frozen', False):
+        self._update_watch_sync()          # [PACK182]
+        watch = self.update_watch_on()
+        if (st.get('auto', True) is False and not st.get('auto_install') and not watch) or os.environ.get('WA_OFFLINE') or getattr(sys, 'frozen', False):
             return
-        if time.time() - float(st.get('last_check', 0) or 0) < 3600:
+        if not watch and time.time() - float(st.get('last_check', 0) or 0) < 3600:
             return
-        self._upd_probe = _UpdateWorker(self)
-        self._upd_probe.checked.connect(self._update_probe_done)
-        self._upd_probe.check()
+        self._update_probe_start()
 
     def update_auto_install_on(self):
         return bool(update_state().get('auto_install'))
+
+    # ---- [PACK182] vigilante: mientras el programa esta abierto mira cada 10 minutos y, si hay version nueva, la instala sin preguntar
+    def update_watch_on(self):
+        return bool(update_state().get('watch'))
+
+    def set_update_watch(self, on):
+        st = update_state()
+        st['watch'] = bool(on)
+        st.pop('auto_try_pack', None)
+        update_state_save()
+        self._update_watch_sync(now=bool(on))
+
+    def _update_watch_sync(self, now=False):
+        on = self.update_watch_on() and not os.environ.get('WA_OFFLINE') and not getattr(sys, 'frozen', False)
+        t = getattr(self, '_upd_watch_timer', None)
+        if on and t is None:
+            t = self._upd_watch_timer = QTimer(self)
+            t.setInterval(UPDATE_WATCH_MS)
+            t.timeout.connect(self._update_probe_start)
+        if t is not None:
+            if on and not t.isActive():
+                t.start()
+            elif not on and t.isActive():
+                t.stop()
+        if on and now:
+            QTimer.singleShot(1500, self._update_probe_start)
+
+    def _update_probe_start(self):
+        if getattr(self, '_upd_probing', False):
+            return
+        self._upd_probing = True
+        self._upd_probe = w = _UpdateWorker(self)
+        w.checked.connect(self._update_probe_done)
+        w.check()
+
+    def _update_restart_when_idle(self, tries=0):
+        """No reinicia en mitad de un arrastre ni con un cuadro de dialogo o un menu abierto: espera (hasta 2 minutos) y reintenta."""
+        busy = (QApplication.mouseButtons() != Qt.NoButton or QApplication.activeModalWidget() is not None
+                or QApplication.activePopupWidget() is not None)
+        if busy and tries < 24:
+            QTimer.singleShot(5000, lambda: self._update_restart_when_idle(tries + 1))
+            return
+        self.update_restart_app()
 
     def set_update_auto_install(self, on):
         """[PACK180] Actualizar solo, al abrir el programa, cuando hay una version nueva publicada."""
@@ -27837,13 +27904,14 @@ class WidgetManager(QObject):
             return
         update_state()['auto_notice'] = pack
         update_state_save()
-        QTimer.singleShot(1500, self.update_restart_app)
+        QTimer.singleShot(1500, self._update_restart_when_idle)
 
     def _update_probe_done(self, r):
+        self._upd_probing = False
         if not r.get('ok') or r.get('state') != 'newer':
             return
         info = r['info']
-        if self.update_auto_install_on():                    # [PACK180] sin preguntar
+        if self.update_auto_install_on() or self.update_watch_on():                    # [PACK180] [PACK182] sin preguntar
             self._update_auto_install(info)
             return
         box = QMessageBox(QMessageBox.Question, "Widget Arena",
