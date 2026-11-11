@@ -9762,7 +9762,7 @@ _UI_T_DROP = ("Nuevo con un aspecto", "Nueva nota", "Mostrar u ocultar la consol
 _UI_T_SUB = {      # submenus: (lo que se conserva, lo que se quita), por el principio del texto
     "Sets de widgets": (None, ("Duplicar el set", "Guardar el set activo al cambiar", "Precargar", "Importar y exportar", "Eliminar todos")),      # [PACK149] "Elegir los sets de la rotacion" se queda: los gestos de rotacion siguen en modo usuario
     "Ajustes": (("Apariencia", "Atajos de teclado", "Importar y exportar"), None),
-    "Apariencia": (("Cables (opacidad", "Flechas (apariencia", "Fuente predeterminada", "Mostrar ayuda de gestos"), None),      # [PACK191] flechas como cables
+    "Apariencia": (("Cables (opacidad", "Flechas (apariencia", "Flechas: tipos", "Fuente predeterminada", "Mostrar ayuda de gestos"), None),      # [PACK191] flechas como cables
 }
 _UI_W_DROP = ("Contenido", "Forma y borde", "Color y efectos", "Posici\u00f3n y tama\u00f1o", "Copiar \u00e1rbol", "Pegar \u00e1rbol", "Exportar \u00e1rbol", "Mover \u00e1rbol", "Usar como predeterminado")
 _UI_W_SUB = {"Widget": (None, None)}
@@ -14076,7 +14076,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 194                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 195                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -20171,7 +20171,9 @@ def _gesture_rows(key, layer_sel=0, linking=None):
         if cond is None or (cond == 'layer') == bool(layer_sel):
             rows.append((kind, text))
     if key and key == _ARROW_GESTURE_KEY[0]:          # [PACK189]
-        rows.append(("Arrastrar", "FLECHA: arrastra hasta otro widget y suelta sobre \u00e9l para crear una flecha hacia \u00e9l (Ajustes > Flechas: gesto de arrastre)"))
+        rows.append(("Arrastrar", "FLECHA: arrastra hasta otro widget y suelta sobre \u00e9l (Ajustes > Flechas: gesto de arrastre)"))
+        rows.append(("Rueda", "mientras arrastras la flecha: cambia su TIPO (Ajustes > Apariencia > Flechas: tipos)"))
+        rows.append(("Al rev\u00e9s", "arrastrar en sentido contrario a una flecha que ya existe la BORRA"))
     return rows
 
 
@@ -20253,6 +20255,8 @@ def _gesture_guide_html(manager):
             h.append("<tr><td><b>%s</b>&nbsp;&nbsp;</td><td>%s%s</td></tr>" % (kind, text, extra))
         if key and key == _ARROW_GESTURE_KEY[0]:
             h.append("<tr><td><b>Arrastrar</b>&nbsp;&nbsp;</td><td>FLECHA: arrastra hasta otro widget y suelta sobre \u00e9l para crear una flecha hacia \u00e9l</td></tr>")
+            h.append("<tr><td><b>Rueda</b>&nbsp;&nbsp;</td><td>mientras arrastras la flecha (antes de soltar): cambia su tipo</td></tr>")
+            h.append("<tr><td><b>Al rev\u00e9s</b>&nbsp;&nbsp;</td><td>arrastrar en sentido contrario a una flecha que ya existe la borra</td></tr>")
         h.append("</table>")
     h.append("<h2>Atajos de teclado configurables</h2><table cellspacing='0' cellpadding='3'>")
     seen_sets = {}
@@ -22115,6 +22119,39 @@ ARROW_DEFAULTS = {
 }
 
 
+ARROW_TYPES_DEFAULT = [          # [PACK195] tipos de ejemplo: solo guardan lo que cambian respecto a la apariencia general
+    {'id': 'afilada', 'name': "Afilada", 'style': {'w_start': 40, 'w_end': 230}, 'wheel': True},
+    {'id': 'rayas', 'name': "Rayas", 'style': {'dash': 'dash'}, 'wheel': True},
+    {'id': 'puntos', 'name': "Puntos", 'style': {'dash': 'dot', 'head': 'circle', 'head_size': 9}, 'wheel': True},
+    {'id': 'doble', 'name': "Doble punta", 'style': {'tail': 'triangle'}, 'wheel': True},
+    {'id': 'cable', 'name': "Como un cable", 'style': {'color_from': 'src', 'color2_from': 'dst', 'grad': True, 'head': 'open'}, 'wheel': True},
+    {'id': 'resaltada', 'name': "Resaltada", 'style': {'glow': 70, 'glow_size': 8, 'w_near': 4.0, 'w_far': 3.0}, 'wheel': True},
+    {'id': 'recta', 'name': "Recta y fina", 'style': {'curve': 0, 'curve_far': 0, 'w_near': 1.5, 'w_far': 1.0, 'head': 'open'}, 'wheel': False},
+]
+ARROW_GENERAL_NAME = "Apariencia general"
+
+
+def arrow_style_clean(d):
+    """Solo claves de aspecto conocidas (sin 'mode', que es del ajuste general)."""
+    return {k: v for k, v in (d or {}).items() if k in ARROW_DEFAULTS and k != 'mode'} if isinstance(d, dict) else {}
+
+
+def arrow_type_pixmap(st, w=150, h=36, label=''):
+    """[PACK195] Miniatura de un aspecto de flecha (origen amarillo, destino azul de muestra para los colores tomados de los widgets)."""
+    from PySide6.QtGui import QPixmap
+    pm = QPixmap(w, h)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    try:
+        s = arrow_resolve_colors(st, '#fef08a', '#74c0fc')
+        paint_arrow(p, QPointF(10, h * 0.62), QPointF(w - 10, h * 0.5), s, label)
+    except Exception as e:
+        log_warn("Flechas", "miniatura: %s" % e)
+    p.end()
+    return pm
+
+
 ARROW_COLOR_FROM = (('fixed', "El color elegido"), ('src', "El del widget de origen"), ('dst', "El del widget de destino"))
 
 
@@ -22472,7 +22509,7 @@ class ArrowLayer(QObject):
         if int(m.get_cable_param('_under_blur')) > 0 and items:          # [PACK187] si se mueve un widget transparente, lo que se ve a traves de el cambia
             _tr = tuple(sorted((k, w.geometry().getRect()) for k, w in m.widgets.items() if w.isVisible() and w.paper_translucent()))
         sig = (m._arrow_rev, _tr, int(m.get_cable_param('_under_blur')),
-               tuple((it['src'], it['id'], it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane'], it.get('fade', 1.0)) for it in items))
+               tuple((it['src'], it['id'], it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane'], it.get('fade', 1.0), it.get('type', '')) for it in items))
         if sig == self._sig and not force:
             return
         self._sig = sig
@@ -22552,6 +22589,242 @@ class _ArrowPicker(QObject):
         return False
 
 
+class _ArrowWheelFilter(QObject):
+    """[PACK195] Mientras se arrastra para crear una flecha, la rueda (vaya al widget que vaya) cambia el tipo de flecha.
+    Con Alt pulsado algunos sistemas mandan la rueda como horizontal: se acepta en los dos ejes."""
+
+    def __init__(self, mgr):
+        super().__init__(mgr)
+        self.m = mgr
+        self.acc = 0
+
+    def eventFilter(self, obj, ev):
+        try:
+            if ev.type() == QEvent.Wheel and getattr(self.m, '_arrow_ghost', None) is not None:
+                d = ev.angleDelta()
+                v = d.y() if d.y() != 0 else d.x()
+                self.acc += v
+                while abs(self.acc) >= 120:
+                    up = self.acc > 0
+                    self.acc -= 120 if up else -120
+                    self.m.arrow_drag_cycle(-1 if up else 1)
+                ev.accept()
+                return True
+        except Exception as e:
+            log_warn("Flechas", "rueda: %s" % e)
+        return False
+
+
+class ArrowTypesDialog(QDialog):
+    """[PACK195] Navegador y editor de tipos de flecha: lista con miniaturas, nombre, si entra en la rueda, orden, aspecto, nuevo/duplicar/borrar."""
+
+    def __init__(self, mgr, parent=None, select=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QListWidget, QLineEdit
+        self.m = mgr
+        self.types = mgr.arrow_types()
+        self.removed = []
+        self.usage = mgr.arrow_type_usage()
+        self.setWindowTitle("Tipos de flecha")
+        self.resize(760, 480)
+        lay = QVBoxLayout(self)
+        k = mgr.arrow_gesture_key()
+        how = (_gesture_key_title(k) + " + arrastrar") if k else "el gesto de arrastre"
+        intro = QLabel("Cada tipo es un aspecto con nombre que se suma a la apariencia general. Al crear una flecha con %s, la rueda del rat\u00f3n "
+                       "(antes de soltar) pasa por la apariencia general y por los tipos marcados, en este orden. Cambiar un tipo cambia todas "
+                       "las flechas de ese tipo." % how)
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+        body = QHBoxLayout()
+        self.lst = QListWidget()
+        self.lst.setIconSize(QSize(150, 36))
+        self.lst.setMinimumWidth(330)
+        self.lst.setToolTip("Marca los tipos que quieres en la rueda; el orden de la lista es el de la rueda")
+        body.addWidget(self.lst, 1)
+        right = QVBoxLayout()
+        self.big = QLabel()
+        self.big.setMinimumSize(360, 110)
+        self.big.setAlignment(Qt.AlignCenter)
+        self.big.setStyleSheet("background: rgba(30,36,48,220); border-radius: 8px;")
+        right.addWidget(self.big)
+        fm = QFormLayout()
+        self.ed_name = QLineEdit()
+        self.ed_name.setMaxLength(40)
+        fm.addRow("Nombre:", self.ed_name)
+        self.chk_wheel = QCheckBox("En la rueda al crear flechas")
+        fm.addRow("", self.chk_wheel)
+        self.lb_used = QLabel()
+        fm.addRow("Flechas de este tipo:", self.lb_used)
+        right.addLayout(fm)
+        self.b_edit = QPushButton("Editar su aspecto...")
+        right.addWidget(self.b_edit)
+        r1, r2 = QHBoxLayout(), QHBoxLayout()
+        self.b_new, self.b_dup, self.b_del = QPushButton("Nuevo"), QPushButton("Duplicar"), QPushButton("Borrar")
+        self.b_up, self.b_down = QPushButton("Subir"), QPushButton("Bajar")
+        for b in (self.b_new, self.b_dup, self.b_del):
+            r1.addWidget(b)
+        for b in (self.b_up, self.b_down):
+            r2.addWidget(b)
+        right.addLayout(r1)
+        right.addLayout(r2)
+        self.b_ex = QPushButton("A\u00f1adir los tipos de ejemplo que falten")
+        self.b_gen = QPushButton("Apariencia general (la base de todos)...")
+        right.addWidget(self.b_ex)
+        right.addWidget(self.b_gen)
+        right.addStretch(1)
+        body.addLayout(right, 1)
+        lay.addLayout(body, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.lst.currentRowChanged.connect(self._show)
+        self.lst.itemChanged.connect(self._item_changed)
+        self.ed_name.textEdited.connect(self._rename)
+        self.chk_wheel.toggled.connect(self._wheel)
+        self.b_edit.clicked.connect(self._edit)
+        self.b_new.clicked.connect(self._new)
+        self.b_dup.clicked.connect(self._dup)
+        self.b_del.clicked.connect(self._del)
+        self.b_up.clicked.connect(lambda: self._move(-1))
+        self.b_down.clicked.connect(lambda: self._move(1))
+        self.b_ex.clicked.connect(self._examples)
+        self.b_gen.clicked.connect(self._general)
+        sel = 0
+        for i, t in enumerate(self.types):
+            if t['id'] == select:
+                sel = i
+        self._fill(sel)
+
+    def _eff(self, t):
+        st = dict(self.m.arrow_style_general())
+        st.update(arrow_style_clean(t.get('style')))
+        return st
+
+    def _fill(self, row=0):
+        from PySide6.QtWidgets import QListWidgetItem
+        self.lst.blockSignals(True)
+        self.lst.clear()
+        for t in self.types:
+            it = QListWidgetItem(QIcon(arrow_type_pixmap(self._eff(t), 150, 36)), t['name'])
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if t['wheel'] else Qt.Unchecked)
+            it.setToolTip("%s \u00b7 %d flecha(s)" % (t['name'], self.usage.get(t['id'], 0)))
+            self.lst.addItem(it)
+        self.lst.blockSignals(False)
+        if self.types:
+            self.lst.setCurrentRow(max(0, min(row, len(self.types) - 1)))
+        self._show(self.lst.currentRow())
+
+    def _cur(self):
+        r = self.lst.currentRow()
+        return self.types[r] if 0 <= r < len(self.types) else None
+
+    def _show(self, _r=None):
+        t = self._cur()
+        on = t is not None
+        for w in (self.ed_name, self.chk_wheel, self.b_edit, self.b_dup, self.b_del, self.b_up, self.b_down):
+            w.setEnabled(on)
+        if not on:
+            self.big.clear()
+            self.ed_name.clear()
+            self.lb_used.setText("")
+            return
+        self.big.setPixmap(arrow_type_pixmap(self._eff(t), 340, 100, t['name']))
+        self.ed_name.setText(t['name'])
+        self.chk_wheel.blockSignals(True)
+        self.chk_wheel.setChecked(t['wheel'])
+        self.chk_wheel.blockSignals(False)
+        self.lb_used.setText(str(self.usage.get(t['id'], 0)))
+        self.b_del.setEnabled(len(self.types) > 1)
+
+    def _item_changed(self, it):
+        r = self.lst.row(it)
+        if 0 <= r < len(self.types):
+            self.types[r]['wheel'] = it.checkState() == Qt.Checked
+            if r == self.lst.currentRow():
+                self.chk_wheel.blockSignals(True)
+                self.chk_wheel.setChecked(self.types[r]['wheel'])
+                self.chk_wheel.blockSignals(False)
+
+    def _rename(self, text):
+        t = self._cur()
+        if t is not None:
+            t['name'] = text.strip()[:40] or t['id']
+            it = self.lst.currentItem()
+            self.lst.blockSignals(True)
+            it.setText(t['name'])
+            self.lst.blockSignals(False)
+
+    def _wheel(self, on):
+        t = self._cur()
+        if t is not None:
+            t['wheel'] = bool(on)
+            self.lst.blockSignals(True)
+            self.lst.currentItem().setCheckState(Qt.Checked if on else Qt.Unchecked)
+            self.lst.blockSignals(False)
+
+    def _edit(self):
+        t = self._cur()
+        if t is None:
+            return
+        g = self.m.arrow_style_general()
+        dlg = ArrowStyleDialog(self._eff(t), self, "Aspecto del tipo \u00ab%s\u00bb" % t['name'], on_reset=True, reset_label="Igual que la apariencia general")
+        if dlg.exec():
+            t['style'] = {} if dlg.reset else {k: v for k, v in dlg.values().items() if k != 'mode' and v != g.get(k)}
+            self._fill(self.lst.currentRow())
+
+    def _new_id(self):
+        import uuid
+        return 'tp_' + uuid.uuid4().hex[:6]
+
+    def _new(self):
+        self.types.append({'id': self._new_id(), 'name': "Tipo nuevo", 'style': {}, 'wheel': True})
+        self._fill(len(self.types) - 1)
+        self.ed_name.setFocus()
+        self.ed_name.selectAll()
+
+    def _dup(self):
+        t = self._cur()
+        if t is None:
+            return
+        r = self.lst.currentRow()
+        self.types.insert(r + 1, {'id': self._new_id(), 'name': (t['name'] + " (copia)")[:40], 'style': dict(t['style']), 'wheel': t['wheel']})
+        self._fill(r + 1)
+
+    def _del(self):
+        t = self._cur()
+        if t is None or len(self.types) <= 1:
+            return
+        n = self.usage.get(t['id'], 0)
+        if n and QMessageBox.question(self, "Borrar tipo", "%d flecha(s) son de este tipo. Conservar\u00e1n su aspecto, pero ya sin tipo. \u00bfBorrarlo?" % n) != QMessageBox.Yes:
+            return
+        r = self.lst.currentRow()
+        self.removed.append(t['id'])
+        del self.types[r]
+        self._fill(r)
+
+    def _move(self, d):
+        r = self.lst.currentRow()
+        j = r + d
+        if 0 <= r < len(self.types) and 0 <= j < len(self.types):
+            self.types[r], self.types[j] = self.types[j], self.types[r]
+            self._fill(j)
+
+    def _examples(self):
+        have = {t['id'] for t in self.types}
+        add = [copy.deepcopy(t) for t in ARROW_TYPES_DEFAULT if t['id'] not in have]
+        for t in add:
+            if t['id'] in self.removed:
+                self.removed.remove(t['id'])
+        self.types += add
+        self._fill(self.lst.currentRow())
+
+    def _general(self):
+        self.m.edit_arrow_style()
+        self._fill(self.lst.currentRow())
+
+
 class ArrowGestureDialog(QDialog):
     """[PACK189] Con que teclas se crea una flecha arrastrando de un widget a otro."""
 
@@ -22627,7 +22900,7 @@ class ArrowStyleDialog(QDialog):
                       ('label_bg', "Color del fondo", 'color', None), ('label_bg_op', "Opacidad del fondo", 'int', (0, 100, " %")))),
     )
 
-    def __init__(self, style, parent=None, title="Apariencia de las flechas", general=False, on_reset=None):
+    def __init__(self, style, parent=None, title="Apariencia de las flechas", general=False, on_reset=None, reset_label=None):
         super().__init__(parent)
         from PySide6.QtWidgets import QTabWidget, QDoubleSpinBox, QColorDialog
         self.setWindowTitle(title)
@@ -22658,7 +22931,7 @@ class ArrowStyleDialog(QDialog):
         lay.addWidget(self.prev)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         if on_reset is not None:
-            rb = bb.addButton("Usar la apariencia general", QDialogButtonBox.ResetRole)
+            rb = bb.addButton(reset_label or "Usar la apariencia general", QDialogButtonBox.ResetRole)
             rb.clicked.connect(lambda: (setattr(self, 'reset', True), self.accept()))
         self.reset = False
         bb.accepted.connect(self.accept)
@@ -22795,6 +23068,8 @@ class ArrowsDialog(QDialog):
             other = ar['to'] if out else src
             txt = "%s  %s%s" % ("\u2192" if out else "\u2190", self.m._get_widget_display_name(other),
                                 ("   \u00ab%s\u00bb" % ar['label']) if ar.get('label') else "")
+            if ar.get('type') and self.m.arrow_type_get(ar['type']):
+                txt += "   [%s]" % self.m.arrow_type_name(ar['type'])          # [PACK195]
             self.lst.addItem(txt + ("" if out else "   (llega a este widget)"))
             self._rows.append((src, ar['id']))
         if self._rows:
@@ -23333,6 +23608,8 @@ class WidgetManager(QObject):
         lst = self.global_state[dst].setdefault('arrows', [])
         if not any(x.get('to') == src for x in lst):
             lst.append({'id': aid, 'to': src, 'label': a.get('label', ''), 'style': dict(a.get('style') or {})})
+            if a.get('type'):
+                lst[-1]['type'] = a['type']          # [PACK195]
         self._arrow_changed()
 
     def arrows_clear_of(self, widget_id):
@@ -23354,10 +23631,92 @@ class WidgetManager(QObject):
 
     def arrow_effective_style(self, ar, general=None):
         g = dict(general or self.arrow_style_general())
-        for k, v in (ar.get('style') or {}).items():
-            if k in g and k != 'mode':
-                g[k] = v
+        t = self.arrow_type_get(ar.get('type')) if ar.get('type') else None          # [PACK195] general + tipo + retoques de esta flecha
+        for src_ in ((t or {}).get('style') or {}, ar.get('style') or {}):
+            for k, v in src_.items():
+                if k in g and k != 'mode':
+                    g[k] = v
         return g
+
+    # ---- [PACK195] tipos de flecha
+    def arrow_types(self):
+        raw = self.global_state.get('arrow_types')
+        lst = None
+        if isinstance(raw, str):
+            try:
+                lst = json.loads(raw)
+            except Exception:
+                lst = None
+        if not isinstance(lst, list):
+            lst = copy.deepcopy(ARROW_TYPES_DEFAULT)
+        out, seen = [], set()
+        for t in lst:
+            if not isinstance(t, dict) or not t.get('id') or str(t['id']) in seen:
+                continue
+            seen.add(str(t['id']))
+            out.append({'id': str(t['id']), 'name': str(t.get('name') or t['id'])[:40], 'style': arrow_style_clean(t.get('style')),
+                        'wheel': bool(t.get('wheel', True))})
+        return out
+
+    def arrow_type_get(self, tid):
+        if not tid:
+            return None
+        c = getattr(self, '_arrow_types_cache', None)
+        raw = self.global_state.get('arrow_types')
+        if c is None or c[0] is not raw:
+            c = (raw, {t['id']: t for t in self.arrow_types()})
+            self._arrow_types_cache = c
+        return c[1].get(tid)
+
+    def arrow_type_name(self, tid):
+        t = self.arrow_type_get(tid)
+        return t['name'] if t else ARROW_GENERAL_NAME
+
+    def arrow_type_usage(self):
+        u = {}
+        for _s, a in self.arrows_all():
+            if a.get('type'):
+                u[a['type']] = u.get(a['type'], 0) + 1
+        return u
+
+    def set_arrow_types(self, lst, removed=()):
+        """Guarda la lista. Las flechas de un tipo borrado conservan su aspecto: el del tipo pasa a ser retoque suyo."""
+        old = {t['id']: t for t in self.arrow_types()}
+        new_ids = {t['id'] for t in lst}
+        gone = [r for r in removed if r not in new_ids]
+        if gone:
+            for _s, a in self.arrows_all():
+                if a.get('type') in gone:
+                    st = dict((old.get(a['type']) or {}).get('style') or {})
+                    st.update(a.get('style') or {})
+                    a['style'] = st
+                    a.pop('type', None)
+        self.global_state['arrow_types'] = json.dumps([{'id': t['id'], 'name': t['name'], 'style': arrow_style_clean(t.get('style')),
+                                                       'wheel': bool(t.get('wheel', True))} for t in lst])
+        if self.global_state.get('arrow_type_last') and self.global_state['arrow_type_last'] not in new_ids:
+            self.global_state.pop('arrow_type_last', None)
+        self._arrow_changed()
+
+    def arrow_wheel_seq(self):
+        """Lo que recorre la rueda al crear una flecha: la apariencia general (None) y los tipos marcados, en su orden."""
+        return [None] + [t['id'] for t in self.arrow_types() if t['wheel']]
+
+    def arrow_set_type(self, src, aid, tid):
+        a = self.arrow_get(src, aid)
+        if not a:
+            return
+        if tid:
+            a['type'] = tid
+        else:
+            a.pop('type', None)
+        if tid:
+            self.global_state['arrow_type_last'] = tid
+        self._arrow_changed()
+
+    def edit_arrow_types(self, *_a, select=None):
+        dlg = ArrowTypesDialog(self, self.dialog_parent, select=select)
+        if dlg.exec():
+            self.set_arrow_types(dlg.types, dlg.removed)
 
     def _arrow_widget_color(self, wid):
         w = self.widgets.get(wid)
@@ -23444,21 +23803,27 @@ class WidgetManager(QObject):
             if ep is None:
                 continue
             out.append({'src': src, 'dst': a['to'], 'id': a['id'], 'p0': ep[0], 'p1': ep[1], 'style': stl,
-                        'label': str(a.get('label') or ''), 'lane': (a['to'], src) in pairs, 'fade': round(fade, 2)})
+                        'label': str(a.get('label') or ''), 'lane': (a['to'], src) in pairs, 'fade': round(fade, 2), 'type': a.get('type') or ''})
         if gh and gh['src'] in self.widgets:                    # [PACK189] flecha provisional mientras se arrastra
             ra, pt = rect_of(gh['src']), gh['pt']
             if ra is not None:
                 gdst = self.widget_id_at(pt)
                 rb = rect_of(gdst) if gdst and gdst != gh['src'] else None
-                stl = arrow_resolve_colors(self.arrow_effective_style({'style': {}}, g), self._arrow_widget_color(gh['src']),
+                stl = arrow_resolve_colors(self.arrow_effective_style({'type': gh.get('type'), 'style': {}}, g), self._arrow_widget_color(gh['src']),
                                            self._arrow_widget_color(gdst) if (gdst and gdst != gh['src']) else None)
+                glabel = ''
+                if rb is not None and any(s == gdst and a.get('to') == gh['src'] for s, a in allp or self.arrows_all()):
+                    stl.update({'color': '#ff5a5a', 'color2': '#ff5a5a', 'grad': False, 'dash': 'dash', 'head': 'none', 'tail': 'none',
+                                'glow': 0, 'w_start': 100, 'w_end': 100})          # [PACK195] soltar aqui BORRA la flecha que va al reves
+                    glabel = "\u2715 borrar"
                 if rb is not None:
                     ep = arrow_endpoints(ra, rb, float(stl['gap']))                 # sobre un widget: asi quedara
                 else:
                     stl['dash'] = 'dash'
                     ep = arrow_endpoints(ra, QRect(pt.x() - 1, pt.y() - 1, 2, 2), float(stl['gap']))
                 if ep is not None:
-                    out.append({'src': gh['src'], 'dst': gdst if rb is not None else '', 'id': '_ghost', 'p0': ep[0], 'p1': ep[1], 'style': stl, 'label': '', 'lane': False})
+                    out.append({'src': gh['src'], 'dst': gdst if rb is not None else '', 'id': '_ghost', 'p0': ep[0], 'p1': ep[1], 'style': stl, 'label': glabel,
+                                'lane': False, 'type': gh.get('type') or ''})
         return out
 
     def widget_id_at(self, gp):
@@ -23532,8 +23897,28 @@ class WidgetManager(QObject):
             self._osd(("Flechas: " + _gesture_key_title(k) + " + arrastrar de un widget a otro") if k else "Flechas: gesto de arrastre desactivado")
 
     def arrow_drag_begin(self, src, gp):
-        self._arrow_ghost = {'src': src, 'pt': QPoint(gp)}
+        seq = self.arrow_wheel_seq()
+        last = self.global_state.get('arrow_type_last') or None
+        self._arrow_ghost = {'src': src, 'pt': QPoint(gp), 'type': last if last in seq else None}          # [PACK195] empieza con el ultimo tipo usado
+        f = getattr(self, '_arrow_wheel_filter', None)
+        if f is None:
+            f = self._arrow_wheel_filter = _ArrowWheelFilter(self)
+        f.acc = 0
+        QApplication.instance().installEventFilter(f)
+        if len(seq) > 1:
+            self._osd("Flecha: %s   \u00b7   rueda: cambiar el tipo" % self.arrow_type_name(self._arrow_ghost['type']))
         self.arrow_layer.refresh()
+
+    def arrow_drag_cycle(self, step):
+        """[PACK195] Rueda durante el arrastre que crea una flecha: siguiente / anterior tipo de la lista."""
+        gh = getattr(self, '_arrow_ghost', None)
+        if gh is None:
+            return
+        seq = self.arrow_wheel_seq()
+        i = seq.index(gh.get('type')) if gh.get('type') in seq else 0
+        gh['type'] = seq[(i + step) % len(seq)]
+        self._osd("Flecha: %s   (%d/%d)" % (self.arrow_type_name(gh['type']), seq.index(gh['type']) + 1, len(seq)))
+        self.arrow_layer.tick()
 
     def arrow_drag_update(self, gp):
         gh = getattr(self, '_arrow_ghost', None)
@@ -23544,13 +23929,31 @@ class WidgetManager(QObject):
     def arrow_drag_end(self, gp):
         gh = getattr(self, '_arrow_ghost', None)
         self._arrow_ghost = None
+        f = getattr(self, '_arrow_wheel_filter', None)
+        if f is not None:
+            QApplication.instance().removeEventFilter(f)
         dst = self.widget_id_at(gp) if (gp is not None and gh) else None
         if gh and dst and dst != gh['src'] and dst in self.widgets:
-            if any(s == gh['src'] and a.get('to') == dst for s, a in self.arrows_all()):
-                self._osd("Ya hay una flecha entre esos dos widgets")
+            src, tid = gh['src'], gh.get('type')
+            rev = [a for s, a in self.arrows_all() if s == dst and a.get('to') == src]
+            fwd = [a for s, a in self.arrows_all() if s == src and a.get('to') == dst]
+            if rev:                                          # [PACK195] al reves de una flecha que ya existe: la borra
+                self.arrow_remove(dst, rev[0]['id'])
+                self._osd("Flecha borrada (iba de %s a %s)" % (self._get_widget_display_name(dst)[:30], self._get_widget_display_name(src)[:30]))
+            elif fwd:
+                if (fwd[0].get('type') or None) != tid:
+                    self.arrow_set_type(src, fwd[0]['id'], tid)
+                    self._osd("Flecha cambiada a: %s" % self.arrow_type_name(tid))
+                else:
+                    self._osd("Ya hay una flecha entre esos dos widgets")
             else:
-                self.add_arrow(gh['src'], dst)
-                self._osd("Flecha creada")
+                aid = self.add_arrow(src, dst)
+                if aid:
+                    if tid:
+                        self.arrow_get(src, aid)['type'] = tid
+                    self.global_state['arrow_type_last'] = tid or ''
+                    self._arrow_changed()
+                self._osd("Flecha creada: %s" % self.arrow_type_name(tid))
         self.arrow_layer.refresh()
 
     def arrow_pick_start(self, src):
@@ -23573,12 +23976,15 @@ class WidgetManager(QObject):
         if not ar:
             return
         g = self.arrow_style_general()
-        dlg = ArrowStyleDialog(self.arrow_effective_style(ar, g), parent or self.dialog_parent, "Apariencia de esta flecha", on_reset=True)
+        base = self.arrow_effective_style({'type': ar.get('type'), 'style': {}}, g)          # [PACK195] general + su tipo
+        ttl = "Retocar esta flecha (tipo: %s)" % self.arrow_type_name(ar.get('type'))
+        dlg = ArrowStyleDialog(self.arrow_effective_style(ar, g), parent or self.dialog_parent, ttl, on_reset=True,
+                               reset_label="Quitar los retoques (como su tipo)")
         if dlg.exec():
             if dlg.reset:
                 self.arrow_set(src, aid, style={})
             else:
-                self.arrow_set(src, aid, style={k: v for k, v in dlg.values().items() if k != 'mode' and v != g.get(k)})
+                self.arrow_set(src, aid, style={k: v for k, v in dlg.values().items() if k != 'mode' and v != base.get(k)})
 
     def arrow_label_dialog(self, src, aid, parent=None):
         ar = self.arrow_get(src, aid)
@@ -23659,16 +24065,30 @@ class WidgetManager(QObject):
             return None
         lm = QMenu("Aspecto de las flechas", menu)
         lm.setToolTipsVisible(True)
+        types = self.arrow_types()
         for src, ar in mine[:16]:
             outgoing = src == widget_id
             other = ar['to'] if outgoing else src
-            lab = "%s %s%s..." % ("\u2192" if outgoing else "\u2190", self._get_widget_display_name(other)[:40], ("  \u00ab%s\u00bb" % ar['label'][:20]) if ar.get('label') else "")
-            add(lm, lab, lambda s=src, i=ar['id']: self.edit_arrow_style_of(s, i),
-                tip="Color, grosor, punta, trazo y resplandor solo de esta flecha (\u00abUsar la apariencia general\u00bb la devuelve al aspecto com\u00fan)")
+            lab = "%s %s%s" % ("\u2192" if outgoing else "\u2190", self._get_widget_display_name(other)[:40], ("  \u00ab%s\u00bb" % ar['label'][:20]) if ar.get('label') else "")
+            sub = QMenu(lab, lm)                                  # [PACK195] cada flecha: su tipo y sus retoques
+            sub.setToolTipsVisible(True)
+            cur = ar.get('type') or None
+            if cur and not self.arrow_type_get(cur):
+                cur = None
+            add(sub, ARROW_GENERAL_NAME + " (sin tipo)", lambda c, s=src, i=ar['id']: self.arrow_set_type(s, i, None), checked=cur is None)
+            for t in types:
+                a_ = add(sub, t['name'], lambda c, s=src, i=ar['id'], tid=t['id']: self.arrow_set_type(s, i, tid), checked=cur == t['id'])
+                a_.setIcon(QIcon(arrow_type_pixmap(self.arrow_effective_style({'type': t['id'], 'style': {}}), 60, 18)))
+            sub.addSeparator()
+            add(sub, "Retocar solo esta flecha...", lambda s=src, i=ar['id']: self.edit_arrow_style_of(s, i),
+                tip="Color, grosor, punta, trazo y resplandor solo de esta flecha, encima de su tipo")
+            lm.addMenu(sub)
         if mine:
             lm.addSeparator()
+        add(lm, "Tipos de flecha (navegador y editor)...", lambda: self.edit_arrow_types(),
+            tip="Los tipos con nombre que recorre la rueda al crear una flecha arrastrando: verlos, editarlos, ordenarlos, crear nuevos")
         add(lm, "Todas las flechas (aspecto general)...", lambda: self.edit_arrow_style(),
-            tip="El aspecto que comparten todas las flechas (tambi\u00e9n en Ajustes > Apariencia > Flechas)")
+            tip="La base de todas las flechas y de todos los tipos (tambi\u00e9n en Ajustes > Apariencia > Flechas)")
         menu.addMenu(lm)
         return lm
 
@@ -24250,6 +24670,10 @@ class WidgetManager(QObject):
         arrow_action.setToolTip("Aspecto general de las flechas entre widgets (la de cada flecha se cambia en el men\u00fa del widget: Aspecto de las flechas)")
         arrow_action.triggered.connect(self.edit_arrow_style)
         look_menu.addAction(arrow_action)
+        arrow_t_action = QAction("Flechas: tipos (navegador y editor)...", self)          # [PACK195]
+        arrow_t_action.setToolTip("Tipos de flecha con nombre: la rueda los recorre mientras creas una flecha arrastrando")
+        arrow_t_action.triggered.connect(lambda: self.edit_arrow_types())
+        look_menu.addAction(arrow_t_action)
         crown_cfg_action = QAction("Corona del ancestro (tama\u00f1o, posici\u00f3n, opacidad)...", self)      # [PACK79]
         crown_cfg_action.triggered.connect(lambda checked=False: self._edit_crown_settings())
         look_menu.addAction(crown_cfg_action)
