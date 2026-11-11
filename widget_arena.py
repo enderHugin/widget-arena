@@ -13946,7 +13946,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 185                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 186                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -21927,6 +21927,546 @@ class BaseNoteDialog(QDialog):
 
 
 
+from PySide6.QtCore import QPointF, QRectF
+from PySide6.QtGui import QPolygonF
+
+
+ARROW_DEFAULTS = {
+    'mode': 'always',                       # always | hover | never (solo ajuste general)
+    'color': '#ff9f43', 'grad': False, 'color2': '#ffd166',
+    'op_near': 100, 'op_far': 60, 'len_near': 300, 'len_far': 1500,
+    'w_near': 2.5, 'w_far': 1.5,
+    'curve': 25, 'curve_far': 50, 'gap': 4,
+    'dash': 'solid', 'cap': 'round',
+    'head': 'triangle', 'head_size': 12, 'tail': 'none',
+    'glow': 0, 'glow_size': 6,
+    'label_size': 11, 'label_color': '#ffffff', 'label_bg': '#1f2737', 'label_bg_op': 75,
+}
+
+
+def arrow_endpoints(ra, rb, gap=0.0):
+    """Puntos de salida y de llegada de una flecha entre dos rectangulos (sobre la recta que une sus centros). None si se tocan o solapan."""
+    import math
+    ax, ay = ra.left() + ra.width() / 2.0, ra.top() + ra.height() / 2.0
+    bx, by = rb.left() + rb.width() / 2.0, rb.top() + rb.height() / 2.0
+    dx, dy = bx - ax, by - ay
+    L = math.hypot(dx, dy)
+    if L < 1e-3:
+        return None
+
+    def exit_t(r):
+        tx = (r.width() / 2.0) / abs(dx) if abs(dx) > 1e-6 else 1e18
+        ty = (r.height() / 2.0) / abs(dy) if abs(dy) > 1e-6 else 1e18
+        return min(tx, ty)
+    ta, tb = exit_t(ra), exit_t(rb)
+    if ta + tb >= 1.0:
+        return None
+    ux, uy = dx / L, dy / L
+    p0 = QPointF(ax + dx * ta + ux * gap, ay + dy * ta + uy * gap)
+    p1 = QPointF(bx - dx * tb - ux * gap, by - dy * tb - uy * gap)
+    if (p1.x() - p0.x()) * dx + (p1.y() - p0.y()) * dy <= 0:
+        return None
+    return p0, p1
+
+
+def _arrow_t(L, near, far):
+    t = max(0.0, min(1.0, (L - near) / max(1.0, far - near)))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _arrow_head_poly(kind, tip, ux, uy, size, width):
+    """Pieza de la punta (o de la cola) con la punta en 'tip' y (ux, uy) = hacia donde apunta. Devuelve (poligono | None, 'fill' | 'open' | 'circle')."""
+    nx, ny = -uy, ux
+    hw = size * 0.55
+    if kind == 'triangle':
+        return QPolygonF([tip, QPointF(tip.x() - ux * size + nx * hw, tip.y() - uy * size + ny * hw),
+                          QPointF(tip.x() - ux * size - nx * hw, tip.y() - uy * size - ny * hw)]), 'fill'
+    if kind == 'diamond':
+        return QPolygonF([tip, QPointF(tip.x() - ux * size / 2 + nx * hw * 0.8, tip.y() - uy * size / 2 + ny * hw * 0.8),
+                          QPointF(tip.x() - ux * size, tip.y() - uy * size),
+                          QPointF(tip.x() - ux * size / 2 - nx * hw * 0.8, tip.y() - uy * size / 2 - ny * hw * 0.8)]), 'fill'
+    if kind == 'open':
+        return QPolygonF([QPointF(tip.x() - ux * size + nx * hw, tip.y() - uy * size + ny * hw), tip,
+                          QPointF(tip.x() - ux * size - nx * hw, tip.y() - uy * size - ny * hw)]), 'open'
+    if kind == 'circle':
+        return QPolygonF([QPointF(tip.x() - ux * size / 2, tip.y() - uy * size / 2), QPointF(size / 2, size / 2)]), 'circle'
+    return None, ''
+
+
+def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
+    """Pinta una flecha de p0 a p1 con el estilo 'st' (dict de ARROW_DEFAULTS). La opacidad, el grosor y la curvatura dependen de lo larga que sea."""
+    import math
+    dx, dy = p1.x() - p0.x(), p1.y() - p0.y()
+    L = math.hypot(dx, dy)
+    if L < 2.0:
+        return
+    t = _arrow_t(L, float(st['len_near']), float(st['len_far']))
+    op = (st['op_near'] + (st['op_far'] - st['op_near']) * t) / 100.0
+    w = max(0.3, float(st['w_near']) + (float(st['w_far']) - float(st['w_near'])) * t)
+    curve = float(st['curve']) * (1.0 - (1.0 - float(st['curve_far']) / 100.0) * t) / 100.0
+    nx, ny = -dy / L, dx / L
+    if reverse_lane:                                   # ida y vuelta entre los mismos widgets: cada una un poco a su lado
+        p0 = QPointF(p0.x() + nx * 5, p0.y() + ny * 5)
+        p1 = QPointF(p1.x() + nx * 5, p1.y() + ny * 5)
+    off = L * 0.25 * curve
+    c1 = QPointF(p0.x() + dx / 3.0 + nx * off, p0.y() + dy / 3.0 + ny * off)
+    c2 = QPointF(p0.x() + dx * 2 / 3.0 + nx * off, p0.y() + dy * 2 / 3.0 + ny * off)
+    hs = max(4.0, float(st['head_size']))
+    head, tail = st['head'], st['tail']
+
+    def unit(a, b):
+        ex, ey = b.x() - a.x(), b.y() - a.y()
+        n = math.hypot(ex, ey) or 1.0
+        return ex / n, ey / n
+    ue = unit(c2, p1)                                  # direccion de llegada
+    us = unit(c1, p0)                                  # direccion en la salida (hacia fuera del trazo)
+    s0, s1 = QPointF(p0), QPointF(p1)
+    if head in ('triangle', 'diamond', 'circle'):
+        k = hs * 0.7
+        s1 = QPointF(p1.x() - ue[0] * k, p1.y() - ue[1] * k)
+        c2 = QPointF(c2.x() - ue[0] * k, c2.y() - ue[1] * k)
+    if tail in ('triangle', 'diamond', 'circle'):
+        k = hs * 0.7
+        s0 = QPointF(p0.x() - us[0] * k, p0.y() - us[1] * k)
+        c1 = QPointF(c1.x() - us[0] * k, c1.y() - us[1] * k)
+    path = QPainterPath(s0)
+    path.cubicTo(c1, c2, s1)
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setOpacity(max(0.0, min(1.0, op)))
+    col, col2 = QColor(st['color']), QColor(st['color2'])
+    brush = QBrush(col)
+    if st['grad']:
+        g = QLinearGradient(p0, p1)
+        g.setColorAt(0.0, col)
+        g.setColorAt(1.0, col2)
+        brush = QBrush(g)
+    cap = Qt.RoundCap if st['cap'] == 'round' else Qt.FlatCap
+    if int(st['glow']) > 0:
+        gc = QColor(col)
+        gc.setAlpha(int(255 * min(1.0, int(st['glow']) / 100.0) * 0.45))
+        pen = QPen(gc, w + 2 * float(st['glow_size']))
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+    pen = QPen(brush, w)
+    pen.setCapStyle(cap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    pat = {'dash': [4.0, 3.0], 'dot': [0.1, 2.6], 'dashdot': [4.0, 2.0, 0.1, 2.0]}.get(st['dash'])
+    if pat:
+        pen.setDashPattern(pat)
+        if st['dash'] in ('dot', 'dashdot'):
+            pen.setCapStyle(Qt.RoundCap)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+    p.drawPath(path)
+    for kind, tip, u, colr in ((head, p1, ue, col2 if st['grad'] else col), (tail, p0, us, col)):
+        if kind in ('', 'none', None):
+            continue
+        poly, mode = _arrow_head_poly(kind, tip, u[0], u[1], hs, w)
+        if poly is None:
+            continue
+        if mode == 'fill':
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(colr))
+            p.drawPolygon(poly)
+        elif mode == 'open':
+            hp = QPen(colr, w)
+            hp.setCapStyle(Qt.RoundCap)
+            hp.setJoinStyle(Qt.RoundJoin)
+            p.setPen(hp)
+            p.setBrush(Qt.NoBrush)
+            p.drawPolyline(poly)
+        elif mode == 'circle':
+            c_, r_ = poly[0], poly[1].x()
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(colr))
+            p.drawEllipse(c_, r_, r_)
+    if label:
+        mid = path.pointAtPercent(0.5)
+        f = QFont()
+        f.setPointSizeF(float(st['label_size']))
+        p.setFont(f)
+        fm = p.fontMetrics()
+        tw, th = fm.horizontalAdvance(label), fm.height()
+        r = QRectF(mid.x() - tw / 2.0 - 6, mid.y() - th / 2.0 - 2, tw + 12, th + 4)
+        bg = QColor(st['label_bg'])
+        bg.setAlpha(int(255 * int(st['label_bg_op']) / 100.0))
+        p.setPen(Qt.NoPen)
+        p.setBrush(bg)
+        p.drawRoundedRect(r, 6, 6)
+        p.setPen(QColor(st['label_color']))
+        p.drawText(r, Qt.AlignCenter, label)
+    p.restore()
+
+
+class _ArrowOverlay(QWidget):
+    """Una ventana transparente a los clics por pantalla donde se pintan las flechas."""
+
+    def __init__(self, layer):
+        super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput)
+        self.layer = layer
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.items = []
+        self.blank = False
+
+    def paintEvent(self, _e):
+        if self.blank:
+            return
+        p = QPainter(self)
+        o = self.geometry().topLeft()
+        p.translate(-o.x(), -o.y())
+        for it in self.items:
+            paint_arrow(p, it['p0'], it['p1'], it['style'], it['label'], it['lane'])
+        p.end()
+
+
+class ArrowLayer(QObject):
+    """Capa de flechas entre widgets. Se guarda en cada widget de ORIGEN (state['arrows'] = [{'id','to','label','style'}]); no se recorre nunca como
+    jerarquia, asi que no hay recursion ni bucles: una flecha solo se dibuja entre dos widgets. Solo se repinta cuando algo cambia."""
+
+    def __init__(self, mgr):
+        super().__init__(mgr)
+        self.m = mgr
+        self.overlays = {}
+        self._sig = None
+        self.items = []
+        self._t = QTimer(self)
+        self._t.setInterval(40)
+        self._t.timeout.connect(self.tick)
+        self._t.start()
+
+    def _overlay_for(self, scr):
+        ov = self.overlays.get(scr)
+        if ov is None:
+            ov = _ArrowOverlay(self)
+            try:
+                ov.setScreen(scr)
+            except TypeError:
+                pass
+            self.overlays[scr] = ov
+        return ov
+
+    def tick(self, force=False):
+        m = self.m
+        try:
+            items = m.arrow_items()
+        except Exception as e:
+            log_warn("Flechas", "no se pudo calcular: %s" % e)
+            return
+        sig = (m._arrow_rev, tuple((it['src'], it['id'], it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane']) for it in items))
+        if sig == self._sig and not force:
+            return
+        self._sig = sig
+        self.items = items
+        screens = QApplication.screens()
+        for scr in screens:
+            sg = scr.geometry()
+            mine = [it for it in items if QRectF(it['p0'], it['p1']).normalized().adjusted(-300, -300, 300, 300).intersects(QRectF(sg))]
+            ov = self.overlays.get(scr)
+            if not mine:
+                if ov is not None and ov.isVisible():
+                    ov.hide()
+                continue
+            ov = self._overlay_for(scr)
+            ov.items = mine
+            aot = any(getattr(m.widgets.get(it['src']), 'always_on_top', False) or getattr(m.widgets.get(it['dst']), 'always_on_top', False) for it in mine)
+            flags = Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput | (Qt.WindowStaysOnTopHint if aot else Qt.Widget)
+            if ov.windowFlags() != flags:
+                was = ov.isVisible()
+                ov.blank = True
+                ov.setWindowFlags(flags)
+                ov.blank = False
+                if was:
+                    ov.show()
+            if ov.geometry() != sg:
+                ov.blank = True
+                if ov.isVisible():
+                    ov.repaint()
+                ov.setGeometry(sg)
+                ov.blank = False
+            if not ov.isVisible():
+                ov.show()
+            ov.update()
+            if QApplication.applicationState() == Qt.ApplicationActive and not aot:
+                ov.raise_()
+
+    def refresh(self):
+        self.tick(force=True)
+
+
+class _ArrowPicker(QObject):
+    """Elegir el destino de una flecha con un clic en otro widget (Esc o clic fuera: cancelar)."""
+
+    def __init__(self, mgr, src):
+        super().__init__(mgr)
+        self.m, self.src, self.dst, self.done = mgr, src, None, False
+        QApplication.instance().installEventFilter(self)
+        QApplication.setOverrideCursor(Qt.CrossCursor)
+        mgr._osd("Haz clic en el widget de DESTINO de la flecha (Esc: cancelar)", 5000)
+
+    def finish(self):
+        if self.done:
+            return
+        self.done = True
+        QApplication.instance().removeEventFilter(self)
+        QApplication.restoreOverrideCursor()
+        if self.dst and self.dst != self.src and self.dst in self.m.widgets:
+            self.m.add_arrow(self.src, self.dst)
+            self.m._osd("Flecha creada")
+        elif self.dst is not None:
+            self.m._osd("Flecha cancelada")
+        self.deleteLater()
+
+    def eventFilter(self, o, e):
+        t = e.type()
+        if t == QEvent.KeyPress and e.key() == Qt.Key_Escape:
+            self.dst = None
+            self.finish()
+            return True
+        if t in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
+            if self.dst is None:
+                self.dst = self.m.widget_id_at(e.globalPosition().toPoint()) or ''
+            return True
+        if t == QEvent.MouseButtonRelease:
+            self.finish()
+            return True
+        return False
+
+
+class ArrowStyleDialog(QDialog):
+    """Apariencia de las flechas (la misma familia de opciones que los cables, pero propia): color y degradado, opacidad y grosor segun la longitud,
+    curvatura, punta y cola, trazo, resplandor y etiqueta. Con vista previa."""
+    SPEC = (
+        ("Color", (('color', "Color", 'color', None), ('grad', "Degradado hasta un segundo color", 'check', None), ('color2', "Segundo color (punta)", 'color', None))),
+        ("Opacidad y grosor", (
+            ('len_near', "Es 'corta' hasta esta longitud", 'int', (0, 6000, " px")), ('len_far', "Es 'larga' desde esta longitud", 'int', (50, 10000, " px")),
+            ('op_near', "Opacidad de una flecha corta", 'int', (5, 100, " %")), ('op_far', "Opacidad de una flecha larga", 'int', (5, 100, " %")),
+            ('w_near', "Grosor de una flecha corta", 'float', (0.3, 12.0, " px")), ('w_far', "Grosor de una flecha larga", 'float', (0.3, 12.0, " px")))),
+        ("Forma", (
+            ('curve', "Curvatura (0 = recta; negativo = hacia el otro lado)", 'int', (-300, 300, " %")),
+            ('curve_far', "Curvatura que conserva una flecha larga", 'int', (0, 400, " %")),
+            ('gap', "Separaci\u00f3n del borde del widget", 'int', (-20, 60, " px")))),
+        ("Punta y trazo", (
+            ('head', "Punta (en el destino)", 'choice', (('triangle', "Tri\u00e1ngulo"), ('open', "Abierta (V)"), ('diamond', "Rombo"), ('circle', "C\u00edrculo"), ('none', "Ninguna"))),
+            ('tail', "Cola (en el origen)", 'choice', (('none', "Ninguna"), ('triangle', "Tri\u00e1ngulo"), ('open', "Abierta (V)"), ('diamond', "Rombo"), ('circle', "C\u00edrculo"))),
+            ('head_size', "Tama\u00f1o de la punta", 'int', (4, 60, " px")),
+            ('dash', "Trazo", 'choice', (('solid', "Continuo"), ('dash', "Rayas"), ('dot', "Puntos"), ('dashdot', "Raya y punto"))),
+            ('cap', "Extremos", 'choice', (('round', "Redondeados"), ('flat', "Planos"))))),
+        ("Resplandor", (('glow', "Intensidad (0 = sin resplandor)", 'int', (0, 100, " %")), ('glow_size', "Alcance", 'int', (1, 30, " px")))),
+        ("Etiqueta", (('label_size', "Tama\u00f1o del texto", 'float', (6.0, 40.0, " pt")), ('label_color', "Color del texto", 'color', None),
+                      ('label_bg', "Color del fondo", 'color', None), ('label_bg_op', "Opacidad del fondo", 'int', (0, 100, " %")))),
+    )
+
+    def __init__(self, style, parent=None, title="Apariencia de las flechas", general=False, on_reset=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QTabWidget, QDoubleSpinBox, QColorDialog
+        self.setWindowTitle(title)
+        self.st = dict(ARROW_DEFAULTS)
+        self.st.update({k: v for k, v in (style or {}).items() if k in ARROW_DEFAULTS})
+        self._ctl = {}
+        lay = QVBoxLayout(self)
+        if general:
+            fm = QFormLayout()
+            self.cb_mode = QComboBox()
+            for k, lab in (('always', "Siempre visibles"), ('hover', "Solo al pasar el rat\u00f3n por un widget con flechas"), ('never', "Ocultas")):
+                self.cb_mode.addItem(lab, k)
+            self.cb_mode.setCurrentIndex(max(0, self.cb_mode.findData(self.st['mode'])))
+            fm.addRow("Mostrar las flechas:", self.cb_mode)
+            lay.addLayout(fm)
+        else:
+            self.cb_mode = None
+        self.prev = _ArrowPreview(self)
+        tabs = QTabWidget()
+        for tname, rows in self.SPEC:
+            page = QWidget()
+            form = QFormLayout(page)
+            for key, lab, kind, arg in rows:
+                w = self._make(key, kind, arg)
+                form.addRow(lab + ":", w)
+            tabs.addTab(page, tname)
+        lay.addWidget(tabs)
+        lay.addWidget(self.prev)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        if on_reset is not None:
+            rb = bb.addButton("Usar la apariencia general", QDialogButtonBox.ResetRole)
+            rb.clicked.connect(lambda: (setattr(self, 'reset', True), self.accept()))
+        self.reset = False
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.prev.set_style(self.st)
+
+    def _make(self, key, kind, arg):
+        from PySide6.QtWidgets import QDoubleSpinBox, QColorDialog
+        v = self.st[key]
+        if kind == 'check':
+            w = QCheckBox()
+            w.setChecked(bool(v))
+            w.toggled.connect(lambda x, k=key: self._set(k, bool(x)))
+        elif kind == 'int':
+            w = QSpinBox()
+            w.setRange(arg[0], arg[1])
+            w.setSuffix(arg[2])
+            w.setValue(int(v))
+            w.valueChanged.connect(lambda x, k=key: self._set(k, int(x)))
+        elif kind == 'float':
+            w = QDoubleSpinBox()
+            w.setRange(arg[0], arg[1])
+            w.setSuffix(arg[2])
+            w.setDecimals(1)
+            w.setSingleStep(0.5)
+            w.setValue(float(v))
+            w.valueChanged.connect(lambda x, k=key: self._set(k, float(x)))
+        elif kind == 'choice':
+            w = QComboBox()
+            for val, lab in arg:
+                w.addItem(lab, val)
+            w.setCurrentIndex(max(0, w.findData(v)))
+            w.currentIndexChanged.connect(lambda _i, k=key, c=w: self._set(k, c.currentData()))
+        else:
+            w = QPushButton(str(v))
+            self._paint_btn(w, v)
+
+            def pick(_c=False, k=key, b=w):
+                col = QColorDialog.getColor(QColor(self.st[k]), self, "Elegir color")
+                if col.isValid():
+                    self._set(k, col.name())
+                    self._paint_btn(b, col.name())
+                    b.setText(col.name())
+            w.clicked.connect(pick)
+        self._ctl[key] = w
+        return w
+
+    @staticmethod
+    def _paint_btn(b, c):
+        col = QColor(c)
+        b.setStyleSheet("QPushButton{background:%s;color:%s;border:1px solid #888;padding:3px 10px;}" % (col.name(), '#000' if col.lightness() > 128 else '#fff'))
+
+    def _set(self, k, v):
+        self.st[k] = v
+        self.prev.set_style(self.st)
+
+    def values(self):
+        d = dict(self.st)
+        if self.cb_mode is not None:
+            d['mode'] = self.cb_mode.currentData()
+        return d
+
+
+class _ArrowPreview(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(120)
+        self.st = dict(ARROW_DEFAULTS)
+
+    def set_style(self, st):
+        self.st = dict(st)
+        self.update()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillRect(self.rect(), QColor(38, 42, 54))
+        ra = QRect(24, self.height() // 2 - 26, 90, 52)
+        rb = QRect(self.width() - 114, self.height() // 2 - 26, 90, 52)
+        for r in (ra, rb):
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(254, 240, 138))
+            p.drawRoundedRect(r, 8, 8)
+        ep = arrow_endpoints(ra, rb, float(self.st['gap']))
+        if ep is not None:
+            paint_arrow(p, ep[0], ep[1], self.st, "etiqueta")
+        p.end()
+
+
+class ArrowsDialog(QDialog):
+    """Las flechas que salen de un widget y las que llegan a el."""
+
+    def __init__(self, mgr, widget_id, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QListWidget
+        self.m, self.wid = mgr, widget_id
+        self.setWindowTitle("Flechas de %s" % mgr._get_widget_display_name(widget_id))
+        self.resize(520, 360)
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("Las flechas salen de un widget y llegan a otro; no cambian la jerarqu\u00eda (padres e hijos)."))
+        self.lst = QListWidget()
+        lay.addWidget(self.lst, 1)
+        row = QHBoxLayout()
+        self.b_new = QPushButton("Nueva (elegir destino con el rat\u00f3n)")
+        self.b_style = QPushButton("Apariencia...")
+        self.b_label = QPushButton("Etiqueta...")
+        self.b_inv = QPushButton("Invertir sentido")
+        self.b_del = QPushButton("Borrar")
+        for b in (self.b_new, self.b_style, self.b_label, self.b_inv, self.b_del):
+            row.addWidget(b)
+        lay.addLayout(row)
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(self.reject)
+        bb.accepted.connect(self.accept)
+        lay.addWidget(bb)
+        self.b_new.clicked.connect(self._new)
+        self.b_style.clicked.connect(self._style)
+        self.b_label.clicked.connect(self._label)
+        self.b_inv.clicked.connect(self._invert)
+        self.b_del.clicked.connect(self._delete)
+        self.lst.itemDoubleClicked.connect(lambda _i: self._style())
+        self._fill()
+
+    def _fill(self, keep=None):
+        self.lst.clear()
+        self._rows = []
+        for src, ar in self.m.arrows_of(self.wid):
+            out = src == self.wid
+            other = ar['to'] if out else src
+            txt = "%s  %s%s" % ("\u2192" if out else "\u2190", self.m._get_widget_display_name(other),
+                                ("   \u00ab%s\u00bb" % ar['label']) if ar.get('label') else "")
+            self.lst.addItem(txt + ("" if out else "   (llega a este widget)"))
+            self._rows.append((src, ar['id']))
+        if self._rows:
+            self.lst.setCurrentRow(0 if keep is None else max(0, min(keep, len(self._rows) - 1)))
+
+    def _cur(self):
+        r = self.lst.currentRow()
+        return self._rows[r] if 0 <= r < len(self._rows) else None
+
+    def _new(self):
+        self.hide()
+        self.m.arrow_pick_start(self.wid)
+        self.accept()
+
+    def _style(self):
+        c = self._cur()
+        if c:
+            self.m.edit_arrow_style_of(c[0], c[1], self)
+
+    def _label(self):
+        c = self._cur()
+        if not c:
+            return
+        ar = self.m.arrow_get(c[0], c[1])
+        text, ok = QInputDialog.getText(self, "Etiqueta de la flecha", "Texto (vac\u00edo = sin etiqueta):", text=ar.get('label', ''))
+        if ok:
+            self.m.arrow_set(c[0], c[1], label=text.strip()[:60])
+            self._fill(self.lst.currentRow())
+
+    def _invert(self):
+        c = self._cur()
+        if c:
+            self.m.arrow_invert(c[0], c[1])
+            self._fill(self.lst.currentRow())
+
+    def _delete(self):
+        c = self._cur()
+        if c:
+            self.m.arrow_remove(c[0], c[1])
+            self._fill(self.lst.currentRow())
+
+
 class ConnectorOverlayGroup:
     """Una ConnectorOverlay POR PANTALLA. Una sola ventana que abarque monitores con distinta escala no
     puede ser coherente en todos (su tamano nativo usa la escala de una unica pantalla) y los cables
@@ -22199,6 +22739,7 @@ class WidgetManager(QObject):
         
         self._seed_global_history()          # [PACK54] estado inicial: tambien el primer cambio se puede deshacer
         self.connector_overlay = ConnectorOverlayGroup(self)
+        self.arrow_layer = ArrowLayer(self)          # [PACK186]
         self.app.aboutToQuit.connect(self.force_save_all_states)
         self.app.aboutToQuit.connect(self._autosave_current_profile)
         self.app.aboutToQuit.connect(self._persist_history)
@@ -22321,6 +22862,250 @@ class WidgetManager(QObject):
             state.pop('timer_message', None)
         self.save_global_state(record_history=False)
         self.build_tray_menu()   # el submenu de la nota muestra "Cancelar temporizador"
+
+    # ---- [PACK186] flechas entre widgets (se guardan en el widget de origen: state['arrows'])
+    _arrow_rev = 0
+
+    def arrow_style_general(self):
+        out = dict(ARROW_DEFAULTS)
+        st = self.global_state.get('arrow_style')
+        if isinstance(st, str):
+            try:
+                st = json.loads(st)
+            except Exception:
+                st = None
+        if isinstance(st, dict):
+            for k, v in st.items():
+                if k in out and ((isinstance(v, (int, float)) and not isinstance(v, bool) and isinstance(out[k], (int, float)) and not isinstance(out[k], bool))
+                                 or isinstance(v, type(out[k]))):
+                    out[k] = v
+        if out['mode'] not in ('always', 'hover', 'never'):
+            out['mode'] = 'always'
+        return out
+
+    def _arrow_changed(self, save=True):
+        self._arrow_rev += 1
+        lay = getattr(self, 'arrow_layer', None)
+        if lay is not None:
+            lay.refresh()
+        if save:
+            self.save_global_state()
+
+    def set_arrow_style_general(self, d):
+        self.global_state['arrow_style'] = json.dumps(d)
+        self._arrow_changed()
+
+    def arrows_all(self):
+        out = []
+        for src, st in self.global_state.items():
+            if isinstance(st, dict) and isinstance(st.get('arrows'), list):
+                out += [(src, a) for a in st['arrows'] if isinstance(a, dict) and a.get('id') and a.get('to')]
+        return out
+
+    def arrows_of(self, widget_id):
+        """Las flechas que salen de un widget y las que llegan a el: [(origen, flecha)]."""
+        return [(s, a) for s, a in self.arrows_all() if s == widget_id or a.get('to') == widget_id]
+
+    def arrow_get(self, src, aid):
+        for a in (self.global_state.get(src) or {}).get('arrows', []) if isinstance(self.global_state.get(src), dict) else []:
+            if isinstance(a, dict) and a.get('id') == aid:
+                return a
+        return {}
+
+    def add_arrow(self, src, dst, label=''):
+        """Flecha de 'src' a 'dst'. No hay limite de ramas ni de niveles: no es jerarquia, nunca se recorre."""
+        st = self.global_state.get(src)
+        if not isinstance(st, dict) or src == dst or dst not in self.global_state:
+            return None
+        lst = st.setdefault('arrows', [])
+        for a in lst:
+            if a.get('to') == dst:
+                return a.get('id')                       # ya existe: no se repite
+        import uuid
+        aid = 'arw_' + uuid.uuid4().hex[:8]
+        lst.append({'id': aid, 'to': dst, 'label': str(label)[:60], 'style': {}})
+        self._arrow_changed()
+        return aid
+
+    def arrow_set(self, src, aid, label=None, style=None):
+        a = self.arrow_get(src, aid)
+        if not a:
+            return
+        if label is not None:
+            a['label'] = label
+        if style is not None:
+            a['style'] = dict(style)
+        self._arrow_changed()
+
+    def arrow_remove(self, src, aid):
+        st = self.global_state.get(src)
+        if isinstance(st, dict) and isinstance(st.get('arrows'), list):
+            st['arrows'] = [a for a in st['arrows'] if not (isinstance(a, dict) and a.get('id') == aid)]
+            if not st['arrows']:
+                st.pop('arrows', None)
+            self._arrow_changed()
+
+    def arrow_invert(self, src, aid):
+        a = self.arrow_get(src, aid)
+        dst = a.get('to') if a else None
+        if not dst or dst not in self.global_state or not isinstance(self.global_state[dst], dict):
+            return
+        self.arrow_remove(src, aid)
+        lst = self.global_state[dst].setdefault('arrows', [])
+        if not any(x.get('to') == src for x in lst):
+            lst.append({'id': aid, 'to': src, 'label': a.get('label', ''), 'style': dict(a.get('style') or {})})
+        self._arrow_changed()
+
+    def arrows_clear_of(self, widget_id):
+        for s, a in self.arrows_of(widget_id):
+            st = self.global_state.get(s)
+            if isinstance(st, dict) and isinstance(st.get('arrows'), list):
+                st['arrows'] = [x for x in st['arrows'] if x is not a]
+                if not st['arrows']:
+                    st.pop('arrows', None)
+        self._arrow_changed()
+
+    def arrows_drop_target(self, widget_id):
+        """Al eliminar un widget: se van las flechas que llegaban a el (las que salian de el se van con su estado)."""
+        for s, st in self.global_state.items():
+            if isinstance(st, dict) and isinstance(st.get('arrows'), list):
+                st['arrows'] = [a for a in st['arrows'] if not (isinstance(a, dict) and a.get('to') == widget_id)]
+                if not st['arrows']:
+                    st.pop('arrows', None)
+
+    def arrow_effective_style(self, ar, general=None):
+        g = dict(general or self.arrow_style_general())
+        for k, v in (ar.get('style') or {}).items():
+            if k in g and k != 'mode':
+                g[k] = v
+        return g
+
+    def arrow_items(self):
+        """Lo que hay que pintar ahora: [{src, dst, id, p0, p1, style, label, lane}] (coordenadas globales)."""
+        g = self.arrow_style_general()
+        if g['mode'] == 'never':
+            return []
+        allp = self.arrows_all()
+        pairs = {(s, a['to']) for s, a in allp}
+        rects = {}
+
+        def rect_of(wid):
+            if wid not in rects:
+                w = self.widgets.get(wid)
+                if w is None or not w.isVisible():
+                    rects[wid] = None
+                else:
+                    o = w._visible_rect_off()
+                    rects[wid] = QRect(w.pos() + o.topLeft(), o.size())
+            return rects[wid]
+        out = []
+        for src, a in allp:
+            ra, rb = rect_of(src), rect_of(a['to'])
+            if ra is None or rb is None:
+                continue
+            if g['mode'] == 'hover' and not (getattr(self.widgets[src], '_is_hovered', False) or getattr(self.widgets[a['to']], '_is_hovered', False)):
+                continue
+            stl = self.arrow_effective_style(a, g)
+            ep = arrow_endpoints(ra, rb, float(stl['gap']))
+            if ep is None:
+                continue
+            out.append({'src': src, 'dst': a['to'], 'id': a['id'], 'p0': ep[0], 'p1': ep[1], 'style': stl,
+                        'label': str(a.get('label') or ''), 'lane': (a['to'], src) in pairs})
+        return out
+
+    def widget_id_at(self, gp):
+        """Widget que hay en un punto de la pantalla (la capa de flechas, transparente a los clics, no cuenta)."""
+        w = QApplication.widgetAt(gp)
+        wid = getattr(w.window() if w is not None else None, 'widget_id', None)
+        if wid in self.widgets:
+            return wid
+        hits = []
+        for k, ww in self.widgets.items():
+            if not ww.isVisible():
+                continue
+            lp = ww.mapFromGlobal(gp)
+            if not ww.rect().contains(lp):
+                continue
+            m = ww.mask()
+            if not m.isEmpty() and not m.contains(lp):
+                continue
+            hits.append(k)
+        for k in hits:
+            if self.widgets[k].isActiveWindow():
+                return k
+        return hits[-1] if hits else None
+
+    def arrow_pick_start(self, src):
+        p = getattr(self, '_arrow_picker', None)
+        if p is not None:
+            try:
+                p.dst = None
+                p.finish()
+            except Exception:
+                pass
+        self._arrow_picker = _ArrowPicker(self, src)
+
+    def edit_arrow_style(self, *_a):
+        dlg = ArrowStyleDialog(self.arrow_style_general(), self.dialog_parent, "Flechas: apariencia y visibilidad", general=True)
+        if dlg.exec():
+            self.set_arrow_style_general(dlg.values())
+
+    def edit_arrow_style_of(self, src, aid, parent=None):
+        ar = self.arrow_get(src, aid)
+        if not ar:
+            return
+        g = self.arrow_style_general()
+        dlg = ArrowStyleDialog(self.arrow_effective_style(ar, g), parent or self.dialog_parent, "Apariencia de esta flecha", on_reset=True)
+        if dlg.exec():
+            if dlg.reset:
+                self.arrow_set(src, aid, style={})
+            else:
+                self.arrow_set(src, aid, style={k: v for k, v in dlg.values().items() if k != 'mode' and v != g.get(k)})
+
+    def edit_widget_arrows(self, widget_id):
+        dlg = ArrowsDialog(self, widget_id, self.dialog_parent)
+        dlg.exec()
+
+    def _choose_arrow_target(self, widget_id):
+        others = sorted(((self._get_widget_display_name(w), w) for w, s in self.global_state.items()
+                         if isinstance(s, dict) and w != widget_id and w in self.widgets), key=lambda t: t[0].lower())
+        if not others:
+            self._osd("No hay otros widgets")
+            return None
+        pm = QMenu(self.dialog_parent)
+        head = pm.addAction("Nueva flecha hacia...")
+        head.setEnabled(False)
+        pm.addSeparator()
+        for name, wid in others[:40]:
+            a = QAction(name[:60], pm)
+            a.triggered.connect(lambda checked=False, t=wid: self.add_arrow(widget_id, t))
+            pm.addAction(a)
+        self._arrow_chooser = pm
+        pm.popup(self._cursor_pos())
+        return pm
+
+    def _add_arrow_menus(self, menu, widget_id, full, add):
+        am = QMenu("Flechas", menu)
+        am.setToolTipsVisible(True)
+        n = len(self.arrows_of(widget_id))
+        add(am, "Nueva flecha: elegir el destino con el rat\u00f3n", lambda: self.arrow_pick_start(widget_id),
+            tip="Haz clic despu\u00e9s en el widget al que debe llegar la flecha. Las flechas relacionan widgets de ramas distintas sin cambiar la jerarqu\u00eda")
+        others = sorted(((self._get_widget_display_name(w), w) for w, s in self.global_state.items()
+                         if isinstance(s, dict) and w != widget_id and w in self.widgets), key=lambda t: t[0].lower())
+        if full:
+            add(am, "Nueva flecha hacia... (lista junto al cursor)", lambda: self._choose_arrow_target(widget_id))
+        elif others:
+            sub = QMenu("Nueva flecha hacia...", am)
+            for name, wid in others[:40]:
+                a = QAction(name[:60], self)
+                a.triggered.connect(lambda checked=False, t=wid: self.add_arrow(widget_id, t))
+                sub.addAction(a)
+            am.addMenu(sub)
+        add(am, "Flechas de este widget...", lambda: self.edit_widget_arrows(widget_id),
+            tip="Las que salen de \u00e9l y las que le llegan: cambiar su apariencia, su etiqueta o su sentido, o borrarlas")
+        add(am, "Quitar todas las flechas de este widget", lambda: self.arrows_clear_of(widget_id), enabled=bool(n) or full)
+        add(am, "Apariencia de todas las flechas...", lambda: self.edit_arrow_style())
+        menu.addMenu(am)
 
     # ---- [PACK185] iman y cuadricula al mover widgets
     def get_snap_settings(self):
@@ -22949,6 +23734,9 @@ class WidgetManager(QObject):
         child_cfg_action = QAction("Tipo de hijo al crear con el rat\u00f3n...", self)            # [PACK62]
         child_cfg_action.triggered.connect(self.edit_child_types)
         cfg_menu.insertAction(integ_menu.menuAction(), child_cfg_action)
+        arrow_action = QAction("Flechas: apariencia y visibilidad...", self)          # [PACK186]
+        arrow_action.triggered.connect(self.edit_arrow_style)
+        cfg_menu.insertAction(integ_menu.menuAction(), arrow_action)
         snap_action = QAction("Im\u00e1n y cuadr\u00edcula al mover...", self)          # [PACK185]
         snap_action.setToolTip("May\u00fas al arrastrar alinea con otros widgets y la pantalla; Ctrl+May\u00fas ajusta a una cuadr\u00edcula")
         snap_action.triggered.connect(self.edit_snap_settings)
@@ -24557,6 +25345,7 @@ class WidgetManager(QObject):
                                   lambda: self.create_child_note(widget_id, independent=bool(QApplication.keyboardModifiers() & Qt.MetaModifier)))
         self._bind_independent_child_action(rel_menu, create_child_action)
         self._add_link_menus(rel_menu, widget_id, full)
+        self._add_arrow_menus(rel_menu, widget_id, full, add)          # [PACK186]
         if state.get('parent_id') or full:
             add(rel_menu, "Independizar posici\u00f3n de este hijo", lambda c, wid=widget_id: self.set_position_independent(wid, c),
                 checked=bool(state.get('pos_independent', False)), tip="No se mueve cuando se arrastra a su padre",
@@ -27412,6 +28201,7 @@ class WidgetManager(QObject):
             self.widgets.pop(widget_id)
         if widget_id in self.global_state:
             self.global_state.pop(widget_id)
+        self.arrows_drop_target(widget_id)          # [PACK186]
 
         for child_id in self.get_children(widget_id):
             child_state = self.global_state.get(child_id)
