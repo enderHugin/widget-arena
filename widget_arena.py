@@ -7744,6 +7744,129 @@ class ClickableLabel(QLabel):
 
 # --- Editor de Texto Inline ---
 
+def wa_font_families():
+    """[PACK184] Todas las familias instaladas: sin repetidos, sin vacias y sin las '@' (texto vertical) de Windows."""
+    from PySide6.QtGui import QFontDatabase
+    out, seen = [], set()
+    for f in QFontDatabase.families():
+        k = (f or '').strip()
+        if k and not k.startswith('@') and k.lower() not in seen:
+            seen.add(k.lower())
+            out.append(k)
+    return out
+
+
+def wa_font_step(names, current, last_idx, step, recent=False):
+    """[PACK184] Indice de la fuente siguiente (step=+1) o anterior (-1) de 'names'. Si la rueda sigue girando ('recent') o la familia actual es
+    la de la vez anterior, se sigue desde el indice guardado: asi se recorre la lista ENTERA sin saltos ni vueltas cortas (antes la familia
+    leida del cursor a veces no coincidia con la ultima puesta y la rueda oscilaba entre unas pocas). Si el usuario la cambio a mano, se busca donde esta."""
+    n = len(names)
+    if n == 0:
+        return None
+    cur = (current or '').strip().lower()
+    if last_idx is not None and 0 <= last_idx < n and (recent or not cur or cur == names[last_idx].lower()):
+        return (last_idx + step) % n
+    if cur:
+        for i, f in enumerate(names):
+            if f.lower() == cur:
+                return (i + step) % n
+    return 0 if step > 0 else n - 1
+
+
+class FavoriteFontsDialog(QDialog):
+    """[PACK184] Lista personal de fuentes por las que se rota al editar texto (Mayus+rueda o atajo)."""
+
+    def __init__(self, favs, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        self.setWindowTitle("Mis fuentes favoritas")
+        self.resize(680, 480)
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("Elige las fuentes por las que quieres rotar al editar un texto (Mayus + rueda, o con su atajo). "
+                             "Ctrl + Mayus + rueda recorre siempre TODAS las instaladas."))
+        row = QHBoxLayout()
+        lay.addLayout(row, 1)
+        left = QVBoxLayout()
+        left.addWidget(QLabel("Fuentes instaladas"))
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Buscar...")
+        left.addWidget(self.search)
+        self.all = QListWidget()
+        self.all.setSelectionMode(QListWidget.ExtendedSelection)
+        left.addWidget(self.all, 1)
+        row.addLayout(left, 1)
+        mid = QVBoxLayout()
+        mid.addStretch(1)
+        self.b_add = QPushButton("A\u00f1adir \u2192")
+        self.b_del = QPushButton("\u2190 Quitar")
+        self.b_up = QPushButton("Subir")
+        self.b_dn = QPushButton("Bajar")
+        for b in (self.b_add, self.b_del, self.b_up, self.b_dn):
+            mid.addWidget(b)
+        mid.addStretch(1)
+        row.addLayout(mid)
+        right = QVBoxLayout()
+        right.addWidget(QLabel("Mis favoritas (en este orden)"))
+        self.fav = QListWidget()
+        self.fav.setSelectionMode(QListWidget.ExtendedSelection)
+        right.addWidget(self.fav, 1)
+        row.addLayout(right, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self._names = wa_font_families()
+        self._QLWI = QListWidgetItem
+        for f in favs:
+            self._add_fav(f)
+        self._fill()
+        self.search.textChanged.connect(self._fill)
+        self.all.itemDoubleClicked.connect(lambda _i: self._add())
+        self.fav.itemDoubleClicked.connect(lambda _i: self._remove())
+        self.b_add.clicked.connect(self._add)
+        self.b_del.clicked.connect(self._remove)
+        self.b_up.clicked.connect(lambda: self._move(-1))
+        self.b_dn.clicked.connect(lambda: self._move(1))
+
+    def _fill(self):
+        q = self.search.text().strip().lower()
+        self.all.clear()
+        for f in self._names:
+            if not q or q in f.lower():
+                it = self._QLWI(f)
+                it.setFont(QFont(f, 11))
+                self.all.addItem(it)
+
+    def _has(self, f):
+        return any(self.fav.item(i).text().lower() == f.lower() for i in range(self.fav.count()))
+
+    def _add_fav(self, f):
+        if f and not self._has(f):
+            it = self._QLWI(f)
+            it.setFont(QFont(f, 11))
+            self.fav.addItem(it)
+
+    def _add(self):
+        for it in self.all.selectedItems():
+            self._add_fav(it.text())
+
+    def _remove(self):
+        for it in self.fav.selectedItems():
+            self.fav.takeItem(self.fav.row(it))
+
+    def _move(self, d):
+        rows = sorted({self.fav.row(i) for i in self.fav.selectedItems()}, reverse=(d > 0))
+        for r in rows:
+            nr = r + d
+            if 0 <= nr < self.fav.count():
+                it = self.fav.takeItem(r)
+                self.fav.insertItem(nr, it)
+                it.setSelected(True)
+
+    def result_list(self):
+        return [self.fav.item(i).text() for i in range(self.fav.count())]
+
+
 class InlineTextEditor(QTextEdit):
     editing_finished = Signal(object)
 
@@ -7844,19 +7967,19 @@ class InlineTextEditor(QTextEdit):
 
         menu.addSeparator()
         
-        bold_action = QAction("Negrita (Ctrl+B)", self)
+        bold_action = QAction(self._txt_lbl('bold', "Negrita"), self)
         bold_action.triggered.connect(lambda: self.setFontWeight(QFont.Bold if self.fontWeight() != QFont.Bold else QFont.Normal))
         menu.addAction(bold_action)
         
-        italic_action = QAction("Cursiva (Ctrl+I)", self)
+        italic_action = QAction(self._txt_lbl('italic', "Cursiva"), self)
         italic_action.triggered.connect(lambda: self.setFontItalic(not self.fontItalic()))
         menu.addAction(italic_action)
         
-        underline_action = QAction("Subrayado (Ctrl+U)", self)
+        underline_action = QAction(self._txt_lbl('underline', "Subrayado"), self)
         underline_action.triggered.connect(lambda: self.setFontUnderline(not self.fontUnderline()))
         menu.addAction(underline_action)
         
-        strike_action = QAction("Tachado (Ctrl+Shift+X)", self)
+        strike_action = QAction(self._txt_lbl('strike', "Tachado"), self)
         strike_action.triggered.connect(self._toggle_strikethrough)
         menu.addAction(strike_action)
         
@@ -7866,22 +7989,22 @@ class InlineTextEditor(QTextEdit):
         align_group = QActionGroup(align_menu)
         align_group.setExclusive(True)
 
-        align_left_action = QAction("Izquierda", self, checkable=True)
+        align_left_action = QAction(self._txt_lbl('align_left', "Izquierda"), self, checkable=True)
         align_left_action.triggered.connect(lambda: self.setAlignment(Qt.AlignLeft))
         align_menu.addAction(align_left_action)
         align_group.addAction(align_left_action)
 
-        align_center_action = QAction("Centrado", self, checkable=True)
+        align_center_action = QAction(self._txt_lbl('align_center', "Centrado"), self, checkable=True)
         align_center_action.triggered.connect(lambda: self.setAlignment(Qt.AlignCenter))
         align_menu.addAction(align_center_action)
         align_group.addAction(align_center_action)
 
-        align_right_action = QAction("Derecha", self, checkable=True)
+        align_right_action = QAction(self._txt_lbl('align_right', "Derecha"), self, checkable=True)
         align_right_action.triggered.connect(lambda: self.setAlignment(Qt.AlignRight))
         align_menu.addAction(align_right_action)
         align_group.addAction(align_right_action)
         
-        align_justify_action = QAction("Justificado", self, checkable=True)
+        align_justify_action = QAction(self._txt_lbl('align_justify', "Justificado"), self, checkable=True)
         align_justify_action.triggered.connect(lambda: self.setAlignment(Qt.AlignJustify))
         align_menu.addAction(align_justify_action)
         align_group.addAction(align_justify_action)
@@ -7904,7 +8027,7 @@ class InlineTextEditor(QTextEdit):
         
         link_at_click = self.anchorAt(pos)
         cursor_on_link = has_selection and bool(cursor.charFormat().anchorHref())
-        link_action = QAction("Insertar/Editar enlace (Ctrl+K)...", self)
+        link_action = QAction(self._txt_lbl('link', "Insertar/Editar enlace..."), self)
         link_action.setEnabled(has_selection or cursor_on_link or bool(link_at_click))
 
         def _trigger_insert_link():
@@ -7917,20 +8040,24 @@ class InlineTextEditor(QTextEdit):
         
         menu.addSeparator()
         
-        font_action = QAction("Cambiar fuente...", self)
-        font_action.setEnabled(has_selection)
+        font_action = QAction(self._txt_lbl('font', "Cambiar fuente..."), self)
+        font_action.setToolTip("A la selecci\u00f3n; si no hay, a todo el texto")
         font_action.triggered.connect(self._change_selection_font)
         menu.addAction(font_action)
         
-        size_action = QAction("Cambiar tama\u00f1o...", self)
-        size_action.setEnabled(has_selection)
+        size_action = QAction(self._txt_lbl('size', "Cambiar tama\u00f1o..."), self)
+        size_action.setToolTip("A la selecci\u00f3n; si no hay, a todo el texto")
         size_action.triggered.connect(self._change_selection_size)
         menu.addAction(size_action)
         
-        color_action = QAction("Cambiar color...", self)
-        color_action.setEnabled(has_selection)
+        color_action = QAction(self._txt_lbl('color', "Cambiar color..."), self)
+        color_action.setToolTip("A la selecci\u00f3n; si no hay, a todo el texto")
         color_action.triggered.connect(self._change_selection_color)
         menu.addAction(color_action)
+
+        fav_action = QAction(self._txt_lbl('fav_edit', "Mis fuentes favoritas..."), self)          # [PACK184]
+        fav_action.triggered.connect(self.edit_favorites)
+        menu.addAction(fav_action)
         
         menu.exec(self.mapToGlobal(pos))
         
@@ -7956,6 +8083,129 @@ class InlineTextEditor(QTextEdit):
         
         super().mousePressEvent(event)
         
+    # ---- [PACK184] atajos de edicion de texto y fuentes favoritas
+    def _hk(self):
+        try:
+            return self.window().manager.hotkeys
+        except Exception:
+            return None
+
+    def _txt_lbl(self, cid, base):
+        hk = self._hk()
+        key = hk.binding('txt_' + cid)[0] if hk is not None else ''
+        return base + ('\t' + key if key else '')
+
+    def _fmt_cursor(self):
+        c = self.textCursor()
+        if not c.hasSelection():
+            c.select(QTextCursor.Document)          # sin seleccion: a todo el texto (como la rueda)
+        return c
+
+    def _size_step(self, d):
+        c = self._fmt_cursor()
+        fmt = c.charFormat()
+        cs = fmt.fontPointSize() or fmt.font().pointSize()
+        if cs <= 0:
+            cs = 14
+        nf = QTextCharFormat()
+        nf.setFontPointSize(max(2, cs + d))
+        c.mergeCharFormat(nf)
+
+    def _favorites(self):
+        try:
+            return self.window().manager.favorite_fonts()
+        except Exception:
+            return []
+
+    def edit_favorites(self):
+        try:
+            m = self.window().manager
+        except Exception:
+            return
+        dlg = FavoriteFontsDialog(m.favorite_fonts(), self)
+        if dlg.exec():
+            m.set_favorite_fonts(dlg.result_list())
+
+    def _apply_family(self, fam):
+        fmt = QTextCharFormat()
+        fmt.setFontFamily(fam)
+        cur = self.textCursor()
+        if cur.hasSelection():
+            cur.mergeCharFormat(fmt)
+        else:
+            c2 = QTextCursor(self.document())
+            c2.select(QTextCursor.Document)
+            c2.mergeCharFormat(fmt)
+        self.mergeCurrentCharFormat(fmt)
+
+    def cycle_font(self, step, names=None, mark=''):
+        """Pasa a la fuente siguiente / anterior de 'names' (por defecto TODAS las instaladas)."""
+        names = list(names) if names else wa_font_families()
+        if not names:
+            return
+        key = (len(names), names[0], names[-1])
+        last = getattr(self, '_font_cycle_last', None)
+        same = last is not None and last[0] == key
+        recent = same and (time.monotonic() - last[2]) < 1.5
+        cur = self.currentCharFormat().font().family()          # (fontFamily() cierra el programa con algunos formatos en ciertas versiones de PySide)
+        i = wa_font_step(names, cur, last[1] if same else None, step, recent)
+        self._font_cycle_last = (key, i, time.monotonic())
+        self._apply_family(names[i])
+        QToolTip.showText(QCursor.pos(), "%s   (%d/%d)%s" % (names[i], i + 1, len(names), mark), self)
+
+    def run_text_command(self, cid):
+        c = cid[4:]
+        if c == 'bold':
+            self.setFontWeight(QFont.Bold if self.fontWeight() != QFont.Bold else QFont.Normal)
+        elif c == 'italic':
+            self.setFontItalic(not self.fontItalic())
+        elif c == 'underline':
+            self.setFontUnderline(not self.fontUnderline())
+        elif c == 'strike':
+            self._toggle_strikethrough()
+        elif c.startswith('align_'):
+            self.setAlignment({'align_left': Qt.AlignLeft, 'align_center': Qt.AlignCenter,
+                               'align_right': Qt.AlignRight, 'align_justify': Qt.AlignJustify}[c])
+        elif c == 'link':
+            cur = self.textCursor()
+            if cur.hasSelection() or cur.charFormat().anchorHref():
+                self._insert_link()
+        elif c == 'font':
+            self._change_selection_font()
+        elif c == 'size':
+            self._change_selection_size()
+        elif c == 'color':
+            self._change_selection_color()
+        elif c == 'size_up':
+            self._size_step(1)
+        elif c == 'size_down':
+            self._size_step(-1)
+        elif c in ('font_next', 'font_prev'):
+            self.cycle_font(1 if c == 'font_next' else -1)
+        elif c in ('fav_next', 'fav_prev'):
+            favs = self._favorites()
+            if not favs:
+                QToolTip.showText(QCursor.pos(), "A\u00fan no has elegido fuentes favoritas", self)
+                self.edit_favorites()
+            else:
+                self.cycle_font(1 if c == 'fav_next' else -1, favs, '  \u2605')
+        elif c == 'fav_edit':
+            self.edit_favorites()
+        elif c == 'undo':
+            self.undo()
+        elif c == 'redo':
+            self.redo()
+        elif c == 'cut':
+            self.cut()
+        elif c == 'copy':
+            self.copy()
+        elif c == 'paste':
+            self.paste()
+        elif c == 'delete':
+            self._delete_selection()
+        elif c == 'select_all':
+            self.selectAll()
+
     def _toggle_strikethrough(self):
         fmt = self.currentCharFormat()
         fmt.setFontStrikeOut(not fmt.fontStrikeOut())
@@ -8094,9 +8344,7 @@ class InlineTextEditor(QTextEdit):
                 cursor.insertText(fallback_text)
 
     def _change_selection_font(self):
-        cursor = self.textCursor()
-        if not cursor.hasSelection():
-            return
+        cursor = self._fmt_cursor()          # [PACK184] sin seleccion: todo el texto
         
         current_fmt = cursor.charFormat()
         current_font = current_fmt.font()
@@ -8108,9 +8356,7 @@ class InlineTextEditor(QTextEdit):
             cursor.mergeCharFormat(fmt)
     
     def _change_selection_size(self):
-        cursor = self.textCursor()
-        if not cursor.hasSelection():
-            return
+        cursor = self._fmt_cursor()          # [PACK184] sin seleccion: todo el texto
         
         current_fmt = cursor.charFormat()
         current_size = int(current_fmt.font().pointSize())
@@ -8122,9 +8368,7 @@ class InlineTextEditor(QTextEdit):
             cursor.mergeCharFormat(fmt)
     
     def _change_selection_color(self):
-        cursor = self.textCursor()
-        if not cursor.hasSelection():
-            return
+        cursor = self._fmt_cursor()          # [PACK184] sin seleccion: todo el texto
         
         current_fmt = cursor.charFormat()
         current_color = current_fmt.foreground().color()
@@ -8137,27 +8381,32 @@ class InlineTextEditor(QTextEdit):
 
     def keyPressEvent(self, event: QKeyEvent):
         modifiers = event.modifiers()
+        _hk = self._hk()
+        if _hk is not None and _hk.handle_text_key(event, self):          # [PACK184] atajos configurables de edicion de texto
+            event.accept()
+            return
+        _legacy = _hk is None
         
         if (modifiers & Qt.ControlModifier):
-            if event.key() == Qt.Key_K:
+            if _legacy and event.key() == Qt.Key_K:
                 cur = self.textCursor()
                 if cur.hasSelection() or cur.charFormat().anchorHref():
                     self._insert_link()
                 event.accept()
                 return
-            elif event.key() == Qt.Key_B:
+            elif _legacy and event.key() == Qt.Key_B:
                 self.setFontWeight(QFont.Bold if self.fontWeight() != QFont.Bold else QFont.Normal)
                 event.accept()
                 return
-            elif event.key() == Qt.Key_I:
+            elif _legacy and event.key() == Qt.Key_I:
                 self.setFontItalic(not self.fontItalic())
                 event.accept()
                 return
-            elif event.key() == Qt.Key_U:
+            elif _legacy and event.key() == Qt.Key_U:
                 self.setFontUnderline(not self.fontUnderline())
                 event.accept()
                 return
-            elif (modifiers & Qt.ShiftModifier) and event.key() == Qt.Key_X:
+            elif _legacy and (modifiers & Qt.ShiftModifier) and event.key() == Qt.Key_X:
                 fmt = self.currentCharFormat()
                 fmt.setFontStrikeOut(not fmt.fontStrikeOut())
                 self.setCurrentCharFormat(fmt)
@@ -8208,7 +8457,7 @@ class InlineTextEditor(QTextEdit):
     def wheelEvent(self, event: QWheelEvent):
         modifiers = event.modifiers()
         
-        if modifiers & Qt.ControlModifier:
+        if (modifiers & Qt.ControlModifier) and not (modifiers & Qt.ShiftModifier):          # [PACK184] Ctrl+Mayus ya no cambia el tamano: recorre todas las fuentes
             delta_y = event.angleDelta().y()
             if delta_y == 0:
                 event.ignore()
@@ -8259,37 +8508,11 @@ class InlineTextEditor(QTextEdit):
                 event.accept()
                 return
 
-            from PySide6.QtGui import QFontDatabase
-            fonts = QFontDatabase.families()
-
-            current_family = self.currentCharFormat().fontFamily()
-            if not current_family:
-                current_family = self.font().family()
-
-            try:
-                current_idx = fonts.index(current_family)
-            except ValueError:
-                current_idx = getattr(self, '_font_cycle_idx', 0)
-
-            self._font_cycle_idx = (current_idx + step) % len(fonts)
-            new_family = fonts[self._font_cycle_idx]
-
-            cursor = self.textCursor()
-            has_selection = cursor.hasSelection()
-            
-            if not has_selection:
-                cursor.select(QTextCursor.Document)
-                
-            fmt = QTextCharFormat()
-            fmt.setFontFamily(new_family)
-            cursor.mergeCharFormat(fmt)
-            
-            if not has_selection:
-                cursor.clearSelection()
-                
-            self.setTextCursor(cursor)
-
-            QToolTip.showText(QCursor.pos(), new_family, self)
+            if modifiers & Qt.ControlModifier:
+                self.cycle_font(step)                                   # Ctrl+Mayus+rueda: TODAS las instaladas
+            else:
+                favs = self._favorites()
+                self.cycle_font(step, favs or None, '  \u2605' if favs else '')          # Mayus+rueda: mis favoritas (o todas si no he elegido)
             event.accept()
         else:
             super().wheelEvent(event)
@@ -8969,6 +9192,25 @@ HOTKEY_COMMANDS = [
     ("profile_prev", "Set anterior de la rotaci\u00f3n", "Ctrl+Shift+Up", False, False),
     ("set_rotation", "Elegir los sets de la rotaci\u00f3n...", "", False, False),
     ("clone_set", "Duplicar el set activo como set nuevo (pide nombre y ranura)", "", False, False),
+    # [PACK184] edicion de texto (solo actuan mientras se edita el texto de un widget)
+    ("txt_bold", "Negrita", "Ctrl+B", False, True), ("txt_italic", "Cursiva", "Ctrl+I", False, True),
+    ("txt_underline", "Subrayado", "Ctrl+U", False, True), ("txt_strike", "Tachado", "Ctrl+Shift+X", False, True),
+    ("txt_align_left", "Alinear a la izquierda", "Ctrl+L", False, True), ("txt_align_center", "Centrar", "Ctrl+E", False, True),
+    ("txt_align_right", "Alinear a la derecha", "Ctrl+R", False, True), ("txt_align_justify", "Justificar", "Ctrl+J", False, True),
+    ("txt_link", "Insertar / editar enlace", "Ctrl+K", False, True),
+    ("txt_font", "Cambiar la fuente... (a la selecci\u00f3n, o a todo el texto si no hay)", "", False, True),
+    ("txt_size", "Cambiar el tama\u00f1o... (a la selecci\u00f3n, o a todo el texto si no hay)", "", False, True),
+    ("txt_color", "Cambiar el color... (a la selecci\u00f3n, o a todo el texto si no hay)", "", False, True),
+    ("txt_size_up", "Aumentar el tama\u00f1o del texto", "", False, True), ("txt_size_down", "Reducir el tama\u00f1o del texto", "", False, True),
+    ("txt_fav_next", "Siguiente fuente favorita (Mayus+rueda arriba)", "", False, True),
+    ("txt_fav_prev", "Fuente favorita anterior (Mayus+rueda abajo)", "", False, True),
+    ("txt_fav_edit", "Elegir mis fuentes favoritas...", "", False, True),
+    ("txt_font_next", "Siguiente fuente de TODAS las instaladas (Ctrl+Mayus+rueda arriba)", "", False, True),
+    ("txt_font_prev", "Fuente anterior de TODAS las instaladas (Ctrl+Mayus+rueda abajo)", "", False, True),
+    ("txt_undo", "Deshacer (adem\u00e1s de Ctrl+Z)", "", False, True), ("txt_redo", "Rehacer (adem\u00e1s de Ctrl+Y)", "", False, True),
+    ("txt_cut", "Cortar (adem\u00e1s de Ctrl+X)", "", False, True), ("txt_copy", "Copiar (adem\u00e1s de Ctrl+C)", "", False, True),
+    ("txt_paste", "Pegar (adem\u00e1s de Ctrl+V)", "", False, True), ("txt_delete", "Eliminar la selecci\u00f3n", "", False, True),
+    ("txt_select_all", "Seleccionar todo (adem\u00e1s de Ctrl+A)", "", False, True),
 ]
 # [PACK104] Rutas del menu del widget que cambiaron (nombres de [PACK78] -> estructura nueva); el orden importa: lo especifico antes.
 _WIDGET_PATH_MOVES_A = ([
@@ -9746,7 +9988,7 @@ class HotkeyManager(QObject):
     # ---- registro de atajos ---------------------------------------------
     def apply(self):
         self._unregister_all()
-        glob = [(cid, self.binding(cid)[0]) for cid in self.all_ids() if self.binding(cid)[1] and self.binding(cid)[0]]
+        glob = [(cid, self.binding(cid)[0]) for cid in self.all_ids() if self.binding(cid)[1] and self.binding(cid)[0] and not cid.startswith("txt_")]
         if sys.platform == "win32":        # Ctrl+Alt+cifra va por gancho (respeta AltGr); el resto por RegisterHotKey
             if not hasattr(self, "_hook"):
                 self._hook = _CtrlAltDigitHook()
@@ -9817,9 +10059,27 @@ class HotkeyManager(QObject):
         if not seq:
             return False
         for cid in self.all_ids():
+            if cid.startswith("txt_"):
+                continue                       # [PACK184] las de edicion de texto solo valen dentro del editor
             key, glob = self.binding(cid)
             if key == seq and not glob:
                 return self.run(cid, win)
+        return False
+
+    def handle_text_key(self, event, ed):
+        """[PACK184] Teclas de edicion de texto (Negrita, Centrar, Fuente favorita...): solo con el editor de texto abierto. True si se ejecuto algo."""
+        seq = _hk_event_seq(event)
+        if not seq:
+            return False
+        mods = event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)
+        if not mods and event.text() and event.text().isprintable():
+            return False                       # una letra sola no puede ser atajo: es texto
+        for c in HOTKEY_COMMANDS:
+            if c[0].startswith("txt_"):
+                key, _g = self.binding(c[0])
+                if key and key == seq:
+                    ed.run_text_command(c[0])
+                    return True
         return False
 
     def run(self, cmd_id, win=None):
@@ -13603,7 +13863,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 183                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 184                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -16448,6 +16708,7 @@ HOTKEY_GROUPS = {
     "redo_widget": "Con un widget enfocado", "reload_widget": "Con un widget enfocado", "open_gestures": "Aplicaci\u00f3n",
     **{f"set_{_k}_{_n}": "Sets y ranuras" for _k in ("load", "save", "loadc") for _n in range(1, 11)},
     "profile_next": "Sets y ranuras", "profile_prev": "Sets y ranuras", "set_rotation": "Sets y ranuras", "clone_set": "Sets y ranuras",
+    **{c[0]: "Edici\u00f3n de texto (al escribir en un widget)" for c in HOTKEY_COMMANDS if c[0].startswith("txt_")},          # [PACK184]
 }
 
 
@@ -16597,7 +16858,7 @@ class HotkeyEditor(QWidget):
             cat = HOTKEY_GROUPS.get(cid, "General")
             if cat not in cats:
                 cats[cat] = self._group(g_cmd, cat)
-            self._leaf(cats[cat], label, cid, True)
+            self._leaf(cats[cat], label, cid, True, local_only=cid.startswith("txt_"))          # [PACK184] las de texto no pueden ser globales
         g_tray = self._group(None, "Men\u00fa del icono de bandeja (tray)")
         menu = m.tray_icon.contextMenu()
         if menu is not None:
@@ -19655,7 +19916,7 @@ def _gesture_guide_html(manager):
             continue
         if key:
             h.append("<tr><td><b>%s</b>&nbsp;&nbsp;</td><td>%s</td><td>&nbsp;%s</td></tr>" % (
-                key, label, "(global)" if glob else "(con un widget enfocado)"))
+                key, label, "(global)" if glob else ("(al editar texto)" if cid.startswith("txt_") else "(con un widget enfocado)")))
     names = {"set_load": "Cargar el set de la ranura N (cifra 1\u20260)", "set_loadc": "Cargar el set N (o el set n.\u00ba N de la lista)",
              "set_save": "Guardar el set activo en la ranura N"}
     for kind, (key, glob) in seen_sets.items():
@@ -23974,7 +24235,7 @@ class WidgetManager(QObject):
                 km_.setToolTipsVisible(True)
                 add(km_, "Sin recorte", lambda c: self._set_layer_clip(widget_id, 0), checked=(_cm not in (1, 2, 3)),
                     tip="La capa 2 se ve entera, como siempre")
-                for _lab, _rr in (("Esquinas redondeadas (10 %)", 10), ("Esquinas redondeadas (25 %)", 25), ("Esquinas muy redondeadas (50 %)", 50)):
+                for _lab, _rr in (("Esquinas redondeadas (10 %)", 10), ("Esquinas redondeadas medias (25 %)", 25), ("Esquinas muy redondeadas (50 %)", 50)):
                     add(km_, _lab, lambda c, r_=_rr: self._set_layer_clip(widget_id, 1, r_), checked=(_cm == 1 and _cr == _rr),
                         tip="Recorta la imagen (o la p\u00e1gina web) con esquinas redondeadas; el % es del radio respecto a la mitad del lado menor")
                 add(km_, "Elipse (o c\u00edrculo)", lambda c: self._set_layer_clip(widget_id, 2), checked=(_cm == 2),
@@ -27867,6 +28128,19 @@ class WidgetManager(QObject):
 
     def update_auto_install_on(self):
         return bool(update_state().get('auto_install'))
+
+    # ---- [PACK184] fuentes favoritas (lista personal, en el orden elegido)
+    def favorite_fonts(self):
+        try:
+            lst = json.loads(self.global_state.get('favorite_fonts') or '[]')
+        except Exception:
+            lst = []
+        have = {f.lower() for f in wa_font_families()}
+        return [f for f in (lst if isinstance(lst, list) else []) if isinstance(f, str) and f.lower() in have]
+
+    def set_favorite_fonts(self, lst):
+        self.global_state['favorite_fonts'] = json.dumps([str(f) for f in lst])
+        self.save_global_state(record_history=False)
 
     # ---- [PACK182] vigilante: mientras el programa esta abierto mira cada 10 minutos y, si hay version nueva, la instala sin preguntar
     def update_watch_on(self):

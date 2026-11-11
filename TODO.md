@@ -23,8 +23,8 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
 ## Nuevos (2026-11-11)
 - [x] 9. (Pack 183) **Bug (vídeo): rastro del texto anterior en modo edición** de una nota. Probable causa: entrar en edición no desactiva el «brillo por hover».
 - [x] 10. (Pack 183) **Bug (vídeo): «Editar forma de papel» cambia los colores** del widget.
-- [ ] 11. **Hotkeys para TODAS las opciones de los menús contextuales**, incluidas las de edición de texto, que hoy no tienen (alineación/justificado, color, fuente…).
-- [ ] 12. **Edición de texto: rotar entre fuentes elegidas por el usuario** (lista personal de fuentes favoritas). **Bug:** con Ctrl+Mayús+rueda la lista de fuentes a veces no sale completa (solo una parte).
+- [x] 11. (Pack 184) **Hotkeys para TODAS las opciones de los menús contextuales**, incluidas las de edición de texto, que hoy no tienen (alineación/justificado, color, fuente…).
+- [x] 12. (Pack 184) **Edición de texto: rotar entre fuentes elegidas por el usuario** (lista personal de fuentes favoritas). **Bug:** con Ctrl+Mayús+rueda la lista de fuentes a veces no sale completa (solo una parte).
 - [ ] 13. **Flechas entre widgets** (nueva capa de dependencias, aparte de los cables): relaciones entre ramas de árboles que en principio no dependían entre sí; sin los problemas de recursión y bucles infinitos de la idea anterior. Con su propia edición de apariencia y **toda la familia de opciones de los cables, pero propia** (colores, grosor, opacidad, degradado…).
 - [ ] 14. **Desenfoque (blur) de lo que se ve a través de widgets transparentes:** hoy los cables, widgets y (futuras) flechas que no entran ni salen directamente de ese widget se ven nítidos a través de la transparencia; deben verse con blur **editable**. Para (1) flechas, (2) widgets y (3) cables.
 
