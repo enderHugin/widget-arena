@@ -26,7 +26,7 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
 - [x] 11. (Pack 184) **Hotkeys para TODAS las opciones de los menús contextuales**, incluidas las de edición de texto, que hoy no tienen (alineación/justificado, color, fuente…).
 - [x] 12. (Pack 184) **Edición de texto: rotar entre fuentes elegidas por el usuario** (lista personal de fuentes favoritas). **Bug:** con Ctrl+Mayús+rueda la lista de fuentes a veces no sale completa (solo una parte).
 - [x] 13. (Pack 186; queda el blur a través de transparencias → punto 14) **Flechas entre widgets** (nueva capa de dependencias, aparte de los cables): relaciones entre ramas de árboles que en principio no dependían entre sí; sin los problemas de recursión y bucles infinitos de la idea anterior. Con su propia edición de apariencia y **toda la familia de opciones de los cables, pero propia** (colores, grosor, opacidad, degradado…).
-- [ ] 14. **Desenfoque (blur) de lo que se ve a través de widgets transparentes:** hoy los cables, widgets y (futuras) flechas que no entran ni salen directamente de ese widget se ven nítidos a través de la transparencia; deben verse con blur **editable**. Para (1) flechas, (2) widgets y (3) cables.
+- [x] 14. (Pack 187) **Desenfoque (blur) de lo que se ve a través de widgets transparentes:** hoy los cables, widgets y (futuras) flechas que no entran ni salen directamente de ese widget se ven nítidos a través de la transparencia; deben verse con blur **editable**. Para (1) flechas, (2) widgets y (3) cables.
 
 ## Pendientes del asistente (al final; no bloquean lo anterior)
 - [ ] 7a. Pedir las líneas de registro de Linux `Ctrl+Alt+rueda: evento=… fisicas=…` (rotación fina).

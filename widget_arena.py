@@ -6741,11 +6741,13 @@ class StickerWindow(QMainWindow):
         except Exception:
             return fb
 
-    def set_under_veil(self, global_regions, op_pct):
-        """Resta opacidad (hasta dejar op_pct %) a lo que este widget dibuja bajo esas regiones globales."""
+    def set_under_veil(self, global_regions, op_pct, blur_regions=None, blur_px=0):
+        """Resta opacidad (hasta dejar op_pct %) a lo que este widget dibuja bajo esas regiones globales, y [PACK187] difumina (blur_px) lo que se
+        ve bajo las regiones de blur_regions (widgets transparentes de encima que no son padre ni hijo de este)."""
         v = getattr(self, '_under_veil', None)
+        blur_regions = blur_regions or []
         if v is None:
-            if not global_regions:
+            if not global_regions and not (blur_regions and blur_px > 0):
                 return
             v = self._under_veil = _UnderVeil(self.central_widget)
         origin = v.mapToGlobal(QPoint(0, 0))
@@ -6755,16 +6757,41 @@ class StickerWindow(QMainWindow):
         reg = reg.translated(-origin.x(), -origin.y())
         alpha = int(round(255 * (1.0 - max(0, min(100, op_pct)) / 100.0)))
         if reg.isEmpty() or alpha <= 0:
-            if v.isVisible():
+            reg, alpha = QRegion(), 0
+        breg = QRegion()
+        if blur_px > 0:
+            for r in blur_regions:
+                breg = breg.united(r)
+            breg = breg.translated(-origin.x(), -origin.y()).intersected(QRegion(self.central_widget.rect()))
+        if reg.isEmpty() and breg.isEmpty():
+            if v.isVisible() or not v.blur_region.isEmpty():
                 v.region = QRegion()
+                v.blur_region, v.blur_img = QRegion(), None
                 v.hide()
             return
-
-        if reg == v.region and alpha == v.alpha and v.isVisible():
+        if not breg.isEmpty():                          # [PACK187] lo que este widget dibuja bajo la zona, difuminado (sin el propio velo)
+            v.skip = True
+            try:
+                v.hide()
+                pm = self.central_widget.grab()
+            finally:
+                v.skip = False
+            bb = breg.boundingRect().intersected(pm.rect())
+            if pm.isNull() or bb.isEmpty():
+                breg = QRegion()
+            else:
+                pad = 3 * int(blur_px) + 2
+                crop = bb.adjusted(-pad, -pad, pad, pad).intersected(pm.rect())
+                src = pm.toImage().copy(crop)
+                v.blur_img = _blur_image(src, int(blur_px))
+                v.blur_at = crop.topLeft()
+        if breg.isEmpty():
+            v.blur_img = None
+        if reg == v.region and breg == v.blur_region and alpha == v.alpha and v.isVisible() and breg.isEmpty():
             v.raise_()
             return
         v.setGeometry(self.central_widget.rect())
-        v.region, v.alpha = reg, alpha
+        v.region, v.alpha, v.blur_region = reg, alpha, breg
         v.show()
         v.raise_()
         v.update()
@@ -9144,7 +9171,7 @@ class ConnectorOverlay(QWidget):
                 return
 
             painter.save()                                      # fuera de los dos widgets: el cable de siempre
-            painter.setClipRegion(QRegion(_ov_rect).subtracted(inside))
+            painter.setClipRegion(QRegion(_ov_rect).subtracted(inside), Qt.IntersectClip)
             draw_edge(p_id, c_id, is_dimmed)
             painter.restore()
 
@@ -9153,7 +9180,7 @@ class ConnectorOverlay(QWidget):
 
             if _in_bl <= 0:                                     # dentro: mas tenue (cristal)
                 painter.save()
-                painter.setClipRegion(inside)
+                painter.setClipRegion(inside, Qt.IntersectClip)
                 painter.setOpacity(painter.opacity() * _in_op / 100.0)
                 draw_edge(p_id, c_id, is_dimmed)
                 painter.restore()
@@ -9192,15 +9219,75 @@ class ConnectorOverlay(QWidget):
                 img = _blur_image(img.copy(crop), _in_bl, 0.55)
 
                 painter.save()
+                painter.setClipRegion(reg, Qt.IntersectClip)
+                painter.setOpacity(1.0)
+                painter.drawImage(bb.topLeft() + crop.topLeft(), img)
+                painter.restore()
+
+        # [PACK187] un cable que pasa por debajo de un widget transparente que NO es uno de sus dos extremos se ve difuminado a traves de el
+        _ub = int(self.manager.get_cable_param('_under_blur'))
+        _ureg = {}
+        if _ub > 0 and not preview_all:
+            try:
+                for _uw in self.manager.under_blur_windows(target_id):
+                    _r = QRegion(_uw.paper_shape_global()).translated(-offset.x(), -offset.y()).intersected(QRegion(_ov_rect))
+                    if not _r.isEmpty():
+                        _ureg[_uw.widget_id] = _r
+            except Exception as _e_ub:
+                log_warn("Cables", "difuminado bajo widgets transparentes: %s" % _e_ub)
+                _ureg = {}
+
+        def draw_edge_blur(p_id, c_id, is_dimmed):
+            nonlocal painter
+            regs = [(k, r) for k, r in _ureg.items() if k not in (p_id, c_id)]
+            pw_, cw_ = self.manager.widgets.get(p_id), self.manager.widgets.get(c_id)
+            if regs and pw_ is not None and cw_ is not None:
+                box = pw_.geometry().united(cw_.geometry()).adjusted(-300, -300, 300, 300).translated(-offset.x(), -offset.y())
+                regs = [(k, r) for k, r in regs if r.boundingRect().intersects(box)]
+            if not regs:
+                draw_edge_fx(p_id, c_id, is_dimmed)
+                return
+            union = QRegion()
+            for _k, r in regs:
+                union = union.united(r)
+            painter.save()                                      # fuera de esos widgets: el cable de siempre
+            painter.setClipRegion(QRegion(_ov_rect).subtracted(union))
+            draw_edge_fx(p_id, c_id, is_dimmed)
+            painter.restore()
+            main_p = painter
+            for _k, reg in regs:                                # a traves de cada uno: el cable, difuminado
+                bb = reg.boundingRect().intersected(_ov_rect)
+                if bb.isEmpty():
+                    continue
+                img = QImage(bb.size(), QImage.Format_ARGB32_Premultiplied)
+                img.fill(Qt.transparent)
+                p2 = QPainter(img)
+                p2.setRenderHints(main_p.renderHints())
+                p2.translate(-bb.topLeft())
+                p2.setOpacity(main_p.opacity())
+                painter = p2
+                try:
+                    draw_edge_fx(p_id, c_id, is_dimmed)
+                finally:
+                    p2.end()
+                    painter = main_p
+                al = np.frombuffer(img.constBits(), dtype=np.uint8).reshape((img.height(), img.width(), 4))[:, :, 3]
+                rows, cols = np.flatnonzero(al.any(axis=1)), np.flatnonzero(al.any(axis=0))
+                if not len(rows):
+                    continue
+                pad = 3 * _ub + 2
+                crop = QRect(int(cols[0]), int(rows[0]), int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1)).adjusted(-pad, -pad, pad, pad).intersected(img.rect())
+                img = _blur_image(img.copy(crop), _ub, 0.55)
+                painter.save()
                 painter.setClipRegion(reg)
                 painter.setOpacity(1.0)
                 painter.drawImage(bb.topLeft() + crop.topLeft(), img)
                 painter.restore()
 
         for p, c in edges_to_draw_normal:
-            draw_edge_fx(p, c, True)
+            draw_edge_blur(p, c, True)
         for p, c in edges_to_draw_dimmed:
-            draw_edge_fx(p, c, False)
+            draw_edge_blur(p, c, False)
         self._rope_box = (_rope_bx[0].toAlignedRect().adjusted(-70, -70, 70, 70) if _rope_bx[0] is not None else None)
         self._rope_fast = _rope_fast[0]
         if _rope_live[0]:
@@ -13946,7 +14033,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 186                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 187                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -17502,8 +17589,9 @@ CABLE_DIALOG_SPEC = [
             ('_cable_inside_blur', "Difuminado del cable dentro de esos widgets (0 = n\u00edtido)", 'i', " px", None)],
          "Con 0 % el cable se ve solo desde el borde del widget hacia fuera, aunque el papel sea transl\u00facido. Con un valor intermedio se ve a trav\u00e9s del papel como a trav\u00e9s de un cristal, y el difuminado lo desenfoca. Con 100 % y 0 px se ve entero, nazca donde nazca."),
         ("Un widget bajo otro transparente", [
-            ('_under_op', "Opacidad de un widget transparente que queda bajo otro widget transparente (100 % = sin cambio)", 'i', " %", None)],
-         "Ayuda a distinguir cu\u00e1l est\u00e1 encima cuando se superponen widgets transparentes: el de abajo se ve m\u00e1s tenue donde queda bajo el de arriba. Los widgets que no son transparentes no cambian: siguen opacos y tapan lo que tienen detr\u00e1s (el escritorio, otros widgets) tambi\u00e9n bajo un widget transparente. En Windows se lee el orden real de las ventanas; en otros sistemas se aprende de los clics y puede equivocarse si una ventana se sube por otra v\u00eda, hasta que haces clic en ella."),
+            ('_under_op', "Opacidad de un widget transparente que queda bajo otro widget transparente (100 % = sin cambio)", 'i', " %", None),
+            ('_under_blur', "Difuminado de lo que se ve a trav\u00e9s de un widget transparente: widgets, cables y flechas que no son suyos (0 = n\u00edtido)", 'i', " px", None)],
+         "El difuminado se aplica a lo que queda DEBAJO de un widget transparente: otros widgets, los cables que no lo unen a \u00e9l y las flechas que no salen ni llegan a \u00e9l (lo que s\u00ed es suyo se ve n\u00edtido). Ayuda a distinguir cu\u00e1l est\u00e1 encima cuando se superponen widgets transparentes: el de abajo se ve m\u00e1s tenue donde queda bajo el de arriba. Los widgets que no son transparentes no cambian: siguen opacos y tapan lo que tienen detr\u00e1s (el escritorio, otros widgets) tambi\u00e9n bajo un widget transparente. En Windows se lee el orden real de las ventanas; en otros sistemas se aprende de los clics y puede equivocarse si una ventana se sube por otra v\u00eda, hasta que haces clic en ella."),
         ("Apilamiento de los widgets", [
             ('_tree_z', "Un widget y sus descendientes en la pila", 'c', ("Se apilan como un bloque", "Cada widget por su cuenta"), None),
             ('_child_z', "Un hijo respecto a su padre", 'c', ("Siempre por debajo del padre", "Sin regla: el que se toca queda encima"), None)],
@@ -18600,15 +18688,29 @@ class _UnderVeil(QWidget):
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.region = QRegion()      # en coordenadas de la capa
         self.alpha = 0
+        self.blur_region = QRegion()           # [PACK187] zona que se ve a traves de un widget transparente de encima
+        self.blur_img = None                   # lo que hay en esa zona, ya difuminado (y su esquina en coordenadas de la capa)
+        self.blur_at = QPoint(0, 0)
+        self.skip = False                      # durante la captura de lo que se dibuja debajo, el velo no pinta
         self.hide()
 
     def paintEvent(self, event):
-        if self.region.isEmpty() or self.alpha <= 0:
+        if self.skip:
+            return
+        if (self.region.isEmpty() or self.alpha <= 0) and (self.blur_region.isEmpty() or self.blur_img is None):
             return
         p = QPainter(self)
-        p.setCompositionMode(QPainter.CompositionMode_DestinationOut)
-        p.setClipRegion(self.region)
-        p.fillRect(self.rect(), QColor(0, 0, 0, int(self.alpha)))
+        if not self.blur_region.isEmpty() and self.blur_img is not None:          # [PACK187] se borra lo nitido y se pone lo difuminado
+            p.setCompositionMode(QPainter.CompositionMode_Source)
+            p.setClipRegion(self.blur_region)
+            p.fillRect(self.rect(), Qt.transparent)
+            p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+            p.drawImage(self.blur_at, self.blur_img)
+            p.setClipping(False)
+        if not self.region.isEmpty() and self.alpha > 0:
+            p.setCompositionMode(QPainter.CompositionMode_DestinationOut)
+            p.setClipRegion(self.region)
+            p.fillRect(self.rect(), QColor(0, 0, 0, int(self.alpha)))
         p.end()
 
 
@@ -22117,10 +22219,50 @@ class _ArrowOverlay(QWidget):
         if self.blank:
             return
         p = QPainter(self)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.fillRect(self.rect(), Qt.transparent)
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
         o = self.geometry().topLeft()
+        px = int(self.layer.m.get_cable_param('_under_blur'))
+        tregs = self.layer.m.translucent_regions() if px > 0 else {}
         p.translate(-o.x(), -o.y())
         for it in self.items:
+            regs = [(k, r) for k, r in tregs.items() if k not in (it['src'], it['dst'])]
+            if regs:
+                box = QRectF(it['p0'], it['p1']).normalized().adjusted(-200, -200, 200, 200).toAlignedRect()
+                regs = [(k, r) for k, r in regs if r.boundingRect().intersects(box)]
+            if not regs:
+                paint_arrow(p, it['p0'], it['p1'], it['style'], it['label'], it['lane'])
+                continue
+            # un widget transparente que no es ni el origen ni el destino: la flecha se ve difuminada a traves de el
+            union = QRegion()
+            for _k, r in regs:
+                union = union.united(r)
+            p.save()
+            p.setClipRegion(QRegion(QRect(o, self.size())).subtracted(union))
             paint_arrow(p, it['p0'], it['p1'], it['style'], it['label'], it['lane'])
+            p.restore()
+            for _k, reg in regs:
+                bb = reg.boundingRect().intersected(QRect(o, self.size()))
+                if bb.isEmpty():
+                    continue
+                img = QImage(bb.size(), QImage.Format_ARGB32_Premultiplied)
+                img.fill(Qt.transparent)
+                p2 = QPainter(img)
+                p2.translate(-bb.topLeft())
+                paint_arrow(p2, it['p0'], it['p1'], it['style'], it['label'], it['lane'])
+                p2.end()
+                al = np.frombuffer(img.constBits(), dtype=np.uint8).reshape((img.height(), img.width(), 4))[:, :, 3]
+                rows, cols = np.flatnonzero(al.any(axis=1)), np.flatnonzero(al.any(axis=0))
+                if not len(rows):
+                    continue
+                pad = 3 * px + 2
+                crop = QRect(int(cols[0]), int(rows[0]), int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1)).adjusted(-pad, -pad, pad, pad).intersected(img.rect())
+                blurred = _blur_image(img.copy(crop), px, 0.55)
+                p.save()
+                p.setClipRegion(reg)
+                p.drawImage(bb.topLeft() + crop.topLeft(), blurred)
+                p.restore()
         p.end()
 
 
@@ -22157,7 +22299,11 @@ class ArrowLayer(QObject):
         except Exception as e:
             log_warn("Flechas", "no se pudo calcular: %s" % e)
             return
-        sig = (m._arrow_rev, tuple((it['src'], it['id'], it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane']) for it in items))
+        _tr = ()
+        if int(m.get_cable_param('_under_blur')) > 0 and items:          # [PACK187] si se mueve un widget transparente, lo que se ve a traves de el cambia
+            _tr = tuple(sorted((k, w.geometry().getRect()) for k, w in m.widgets.items() if w.isVisible() and w.paper_translucent()))
+        sig = (m._arrow_rev, _tr, int(m.get_cable_param('_under_blur')),
+               tuple((it['src'], it['id'], it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane']) for it in items))
         if sig == self._sig and not force:
             return
         self._sig = sig
@@ -27878,6 +28024,7 @@ class WidgetManager(QObject):
         '_cable_ograd_start': (10, 0, 50),      # % del cable con opacidad plena en CADA extremo (padre e hijo)
         '_tree_z': (0, 0, 1),                   # [PACK138] 0 = un arbol se apila como un bloque; 1 = cada widget por su cuenta
         '_child_z': (0, 0, 1),                  # [PACK147] 0 = un hijo queda siempre por debajo de su padre; 1 = sin esa regla (el que se toca queda encima)
+        '_under_blur': (5, 0, 30),              # [PACK187] px de difuminado de lo que se ve A TRAVES de un widget transparente (widgets, cables y flechas que no son suyos; 0 = nitido)
         '_under_op': (40, 5, 100),              # [PACK136] % de opacidad de lo que queda bajo el papel translucido de otro widget (100 = sin cambio)
         '_cable_inside_op': (0, 0, 100),        # [PACK134] % de opacidad del cable DENTRO de los widgets que une (0 = no se ve: nace del borde)
         '_cable_inside_blur': (0, 0, 30),       # [PACK134] px de difuminado del cable dentro de esos widgets (0 = nitido)
@@ -29420,8 +29567,32 @@ class WidgetManager(QObject):
         ws.sort(key=lambda t: (1 if t[1].always_on_top else 0, getattr(t[1], '_zstamp', 0), t[0]))
         return [w for _i, w in ws]
 
+    def under_blur_windows(self, anchor_id=None):
+        """[PACK187] Widgets de papel transparente que quedan POR ENCIMA del anclaje (en el orden Z) y por tanto dejan ver lo que tienen debajo."""
+        order = self._veil_order()
+        above = order
+        if anchor_id is not None:
+            for i, w in enumerate(order):
+                if w.widget_id == anchor_id:
+                    above = order[i + 1:]
+                    break
+        return [w for w in above if w.widget_id != anchor_id and w.paper_translucent() and not w.layer1_editor.isVisible()]
+
+    def translucent_regions(self, exclude=()):
+        """[PACK187] {id: QRegion global del papel} de los widgets transparentes visibles (para difuminar lo que se ve a traves de ellos)."""
+        out = {}
+        for k, w in self.widgets.items():
+            if k in exclude or not w.isVisible() or getattr(w, '_is_closing', False):
+                continue
+            try:
+                if w.paper_translucent() and not w.layer1_editor.isVisible():
+                    out[k] = QRegion(w.paper_shape_global())
+            except Exception:
+                pass
+        return out
+
     def _veil_sig(self):
-        op = int(self.get_cable_param('_under_op'))
+        op = (int(self.get_cable_param('_under_op')), int(self.get_cable_param('_under_blur')))
         return (op, tuple((w.widget_id, tuple(w.geometry().getRect()), getattr(w, '_zstamp', 0), bool(w.always_on_top),
                            w.layer2_label.pixmap().cacheKey() if w.layer2_label.pixmap() is not None else 0)
                           for w in self._veil_order()))
@@ -29429,7 +29600,7 @@ class WidgetManager(QObject):
     def _veil_poll_tick(self):
         try:
             s = self._veil_sig()
-            if s != getattr(self, '_veil_last', None):
+            if s != getattr(self, '_veil_last', None) or getattr(self, '_veil_blur_live', False):          # [PACK187] con difuminado, lo de debajo puede cambiar (reloj...): se refresca
                 self._veil_apply()
         except Exception:
             pass
@@ -29437,10 +29608,24 @@ class WidgetManager(QObject):
     def _veil_apply(self):
         try:
             op = int(self.get_cable_param('_under_op'))
+            blur = int(self.get_cable_param('_under_blur'))
             order = self._veil_order()
             self._veil_last = self._veil_sig()
+            self._veil_blur_live = False
             for i, w in enumerate(order):
                 rects = []
+                brects = []
+                if blur > 0:                              # [PACK187] lo que queda bajo un widget transparente (que no es su padre ni su hijo) se ve difuminado
+                    wg0 = w.geometry()
+                    rel = {self.global_state.get(w.widget_id, {}).get('parent_id')} | set(self.get_children(w.widget_id))
+                    for u in order[i + 1:]:
+                        if u.widget_id in rel or not u.geometry().intersects(wg0) or not u.paper_translucent() or u.layer1_editor.isVisible():
+                            continue
+                        r0 = QRegion(u.paper_shape_global()).intersected(QRegion(wg0))
+                        if not r0.isEmpty():
+                            brects.append(r0)
+                    if brects:
+                        self._veil_blur_live = True
                 if op < 100 and w.paper_glassy():       # [PACK139] solo se atenua un papel transparente: los opacos siguen opacos
                     wg = w.geometry()
                     for u in order[i + 1:]:
@@ -29452,7 +29637,7 @@ class WidgetManager(QObject):
                         r = QRegion(u.paper_shape_global()).intersected(QRegion(wg))
                         if not r.isEmpty():
                             rects.append(r)
-                w.set_under_veil(rects, op)
+                w.set_under_veil(rects, op, brects, blur)
             for w in self.widgets.values():                  # los que ya no se ven: sin velo
                 if w not in order:
                     w.set_under_veil([], 100)
