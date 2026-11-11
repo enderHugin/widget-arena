@@ -14076,7 +14076,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 196                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 197                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22294,7 +22294,136 @@ def _arrow_head_poly(kind, tip, ux, uy, size, width):
     return None, ''
 
 
+_ARROW_IMG_CACHE = {}          # [PACK197] clave (geometria + estilo + etiqueta + escala) -> (rect, imagen opaca de la flecha)
+_ARROW_IMG_ORDER = []
+
+
+def _arrow_bounds(p0, p1, st, label, reverse_lane):
+    """Rectangulo (coordenadas del pintor) que contiene seguro toda la flecha: trazo curvo, punta, cola, resplandor y etiqueta."""
+    import math
+    from PySide6.QtGui import QFontMetrics
+    dx, dy = p1.x() - p0.x(), p1.y() - p0.y()
+    L = math.hypot(dx, dy) or 1.0
+    t = _arrow_t(L, float(st['len_near']), float(st['len_far']))
+    w = max(0.3, float(st['w_near']) + (float(st['w_far']) - float(st['w_near'])) * t)
+    curve = float(st['curve']) * (1.0 - (1.0 - float(st['curve_far']) / 100.0) * t) / 100.0
+    nx, ny = -dy / L, dx / L
+    sh = 5.0 if reverse_lane else 0.0
+    off = L * 0.25 * curve
+    pts = [(p0.x() + nx * sh, p0.y() + ny * sh), (p1.x() + nx * sh, p1.y() + ny * sh),
+           (p0.x() + dx / 3.0 + nx * (off + sh), p0.y() + dy / 3.0 + ny * (off + sh)),
+           (p0.x() + dx * 2 / 3.0 + nx * (off + sh), p0.y() + dy * 2 / 3.0 + ny * (off + sh))]
+    xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+    wmax = w * max(int(st.get('w_start', 100)), int(st.get('w_end', 100)), 100) / 100.0
+    m = max(float(st['head_size']), wmax * 2.6) * 1.6 + wmax * 2 + 8
+    if int(st['glow']) > 0:
+        m += float(st['glow_size']) * 3.5 + 4
+    r = QRectF(min(xs) - m, min(ys) - m, max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m)
+    if label:
+        f = QFont()
+        f.setPointSizeF(float(st['label_size']))
+        fm = QFontMetrics(f)
+        hw, hh = fm.horizontalAdvance(label) / 2.0 + 12, fm.height() / 2.0 + 6
+        mx = 0.125 * pts[0][0] + 0.375 * pts[2][0] + 0.375 * pts[3][0] + 0.125 * pts[1][0]
+        my = 0.125 * pts[0][1] + 0.375 * pts[2][1] + 0.375 * pts[3][1] + 0.125 * pts[1][1]
+        r = r.united(QRectF(mx - hw, my - hh, 2 * hw, 2 * hh))
+    return r
+
+
 def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
+    """[PACK197] Pinta una flecha de p0 a p1. Si es semitransparente o tiene resplandor, se pinta entera OPACA en una imagen (guardada en
+    cache) y se le aplica la opacidad una sola vez: asi no se ven el trazo por dentro del halo ni los solapes entre piezas."""
+    import math
+    L = math.hypot(p1.x() - p0.x(), p1.y() - p0.y())
+    if L < 2.0:
+        return
+    t = _arrow_t(L, float(st['len_near']), float(st['len_far']))
+    op = max(0.0, min(1.0, (st['op_near'] + (st['op_far'] - st['op_near']) * t) / 100.0))
+    if op <= 0.0:
+        return
+    if op >= 0.995 and int(st['glow']) <= 0:
+        return _paint_arrow_raw(p, p0, p1, st, label, reverse_lane)
+    try:
+        dpr = float(p.device().devicePixelRatioF()) if p.device() is not None else 1.0
+    except Exception:
+        dpr = 1.0
+    r = _arrow_bounds(p0, p1, st, label, reverse_lane)
+    if r.width() * r.height() * dpr * dpr > 8e6:
+        dpr = 1.0
+    if r.width() * r.height() > 8e6:
+        return _paint_arrow_raw(p, p0, p1, st, label, reverse_lane)          # enorme: sin imagen intermedia
+    key = (round(p0.x() * 2), round(p0.y() * 2), round(p1.x() * 2), round(p1.y() * 2), label, bool(reverse_lane), round(dpr, 2),
+           json.dumps({k: v for k, v in st.items() if k not in ('op_near', 'op_far')}, sort_keys=True, default=str))
+    hit = _ARROW_IMG_CACHE.get(key)
+    if hit is None:
+        img = QImage(max(1, int(math.ceil(r.width() * dpr))), max(1, int(math.ceil(r.height() * dpr))), QImage.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        ip = QPainter(img)
+        ip.setRenderHint(QPainter.Antialiasing, True)
+        ip.setRenderHint(QPainter.TextAntialiasing, True)
+        ip.scale(dpr, dpr)
+        ip.translate(-r.x(), -r.y())
+        try:
+            _paint_arrow_raw(ip, p0, p1, st, label, reverse_lane, _op=1.0, _dpr=dpr)
+        finally:
+            ip.end()
+        hit = (QRectF(r), img)
+        _ARROW_IMG_CACHE[key] = hit
+        _ARROW_IMG_ORDER.append(key)
+        while len(_ARROW_IMG_ORDER) > 40:
+            _ARROW_IMG_CACHE.pop(_ARROW_IMG_ORDER.pop(0), None)
+    p.save()
+    p.setOpacity(op)
+    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    p.drawImage(hit[0], hit[1])
+    p.restore()
+
+
+def _arrow_glow_paint(p, shape, st, col, col2, p0, p1, dpr=1.0):
+    """[PACK197] Resplandor SUAVE: la figura entera de la flecha (trazo, punta y cola), ensanchada y difuminada, con su color y su degradado."""
+    import math
+    gs = max(1.0, float(st['glow_size']))
+    a = min(1.0, int(st['glow']) / 100.0)
+    ps = QPainterPathStroker()
+    ps.setWidth(gs * 1.5)
+    ps.setCapStyle(Qt.RoundCap)
+    ps.setJoinStyle(Qt.RoundJoin)
+    halo = ps.createStroke(shape).united(shape)
+    br = halo.boundingRect().adjusted(-gs * 2 - 3, -gs * 2 - 3, gs * 2 + 3, gs * 2 + 3)
+    if br.width() * br.height() * dpr * dpr > 8e6:
+        dpr = 1.0
+    img = QImage(max(1, int(math.ceil(br.width() * dpr))), max(1, int(math.ceil(br.height() * dpr))), QImage.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    ip = QPainter(img)
+    ip.setRenderHint(QPainter.Antialiasing, True)
+    ip.scale(dpr, dpr)
+    ip.translate(-br.x(), -br.y())
+    ga = int(255 * min(1.0, 0.25 + 0.75 * a))
+    gc, gc2 = QColor(col), QColor(col2 if st['grad'] else col)
+    gc.setAlpha(ga)
+    gc2.setAlpha(ga)
+    gb = QBrush(gc)
+    if st['grad']:
+        lg = QLinearGradient(p0, p1)
+        lg.setColorAt(0.0, gc)
+        lg.setColorAt(1.0, gc2)
+        gb = QBrush(lg)
+    ip.setPen(Qt.NoPen)
+    ip.setBrush(gb)
+    ip.drawPath(halo)
+    ip.end()
+    try:
+        img = _blur_image(img, max(1, int(round(gs * 0.75 * dpr))))
+    except Exception as e:
+        log_warn("Flechas", "resplandor: %s" % e)
+    p.save()
+    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    p.setOpacity(p.opacity() * (0.35 + 0.65 * a))
+    p.drawImage(br, img)
+    p.restore()
+
+
+def _paint_arrow_raw(p, p0, p1, st, label='', reverse_lane=False, _op=None, _dpr=1.0):
     """Pinta una flecha de p0 a p1 con el estilo 'st' (dict de ARROW_DEFAULTS). La opacidad, el grosor y la curvatura dependen de lo larga que sea."""
     import math
     dx, dy = p1.x() - p0.x(), p1.y() - p0.y()
@@ -22303,6 +22432,8 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
         return
     t = _arrow_t(L, float(st['len_near']), float(st['len_far']))
     op = (st['op_near'] + (st['op_far'] - st['op_near']) * t) / 100.0
+    if _op is not None:
+        op = _op                                      # [PACK197] dentro de la imagen de grupo: opaca
     w = max(0.3, float(st['w_near']) + (float(st['w_far']) - float(st['w_near'])) * t)
     curve = float(st['curve']) * (1.0 - (1.0 - float(st['curve_far']) / 100.0) * t) / 100.0
     nx, ny = -dy / L, dx / L
@@ -22359,21 +22490,6 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
         if dashes:
             ps.setDashPattern(dashes)
         return ps.createStroke(src_path)
-    if int(st['glow']) > 0:
-        _ga = int(255 * min(1.0, int(st['glow']) / 100.0) * 0.45)          # [PACK196] el resplandor sigue el color de la flecha (tambien su degradado)
-        gc, gc2 = QColor(col), QColor(col2 if st['grad'] else col)
-        gc.setAlpha(_ga)
-        gc2.setAlpha(_ga)
-        gbrush = QBrush(gc)
-        if st['grad']:
-            _gg = QLinearGradient(p0, p1)
-            _gg.setColorAt(0.0, gc)
-            _gg.setColorAt(1.0, gc2)
-            gbrush = QBrush(_gg)
-        g2 = 2 * float(st['glow_size'])
-        p.setPen(Qt.NoPen)
-        p.setBrush(gbrush)
-        p.drawPath(_arrow_taper_path(path, w0 + g2, w1 + g2, None, True) if taper else stroke(path, w + g2, Qt.RoundCap))
     # trazo, punta y cola en UNA sola figura: con transparencia no quedan solapes mas oscuros
     if taper:
         wm = (w0 + w1) / 2.0
@@ -22400,6 +22516,8 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
         elif mode == 'circle':
             piece.addEllipse(poly[0], poly[1].x(), poly[1].x())
         shape = shape.united(piece)
+    if int(st['glow']) > 0:                          # [PACK197] halo suave alrededor de TODA la flecha, del color de la flecha
+        _arrow_glow_paint(p, shape, st, col, col2, p0, p1, _dpr)
     p.setPen(Qt.NoPen)
     p.setBrush(brush)
     p.drawPath(shape)
