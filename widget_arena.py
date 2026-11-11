@@ -6638,6 +6638,9 @@ class StickerWindow(QMainWindow):
         super().moveEvent(event)
         if self.isVisible():
             self._moved_at = time.monotonic()                # [PACK194] mientras se mueve se ven sus flechas
+            lay = getattr(self.manager, 'arrow_layer', None)
+            if lay is not None:
+                lay.kick()                                   # [PACK198] sus flechas le siguen en el mismo momento
         try:                                                 # [PACK170] el sistema (no la aplicacion) ha puesto el widget en otro sitio del pedido
             rq = getattr(self, '_req_pos', None)
             if rq is not None and getattr(self, "_is_window_dragging", False) and (self.pos() - rq).manhattanLength() > 3 and time.monotonic() - getattr(self, '_req_warn_t', 0.0) > 5.0:
@@ -6655,6 +6658,7 @@ class StickerWindow(QMainWindow):
         try:
             if event.type() == QEvent.ActivationChange and self.isActiveWindow():
                 self.manager.veil_raised(self, True)
+                self.manager._arrow_raise_due = True          # [PACK198] la ventana de flechas vuelve a ponerse encima
         except Exception:
             pass
 
@@ -14076,7 +14080,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 197                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 198                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22176,17 +22180,45 @@ def arrow_resolve_colors(st, src_col=None, dst_col=None):
 def _arrow_taper_path(path, w0, w1, pat_px, round_cap):
     """[PACK192] Contorno relleno de un trazo cuyo grosor pasa de w0 (salida) a w1 (llegada), con trazos/huecos opcionales (en px)."""
     import math
+    import bisect
     from PySide6.QtGui import QPolygonF
-    Lp = path.length()
+    if path.elementCount() == 4:          # [PACK198] una curva de Bezier: tabla de puntos y longitudes (percentAtLength era lento)
+        (x0, y0), (x1, y1), (x2, y2), (x3, y3) = [(path.elementAt(i).x, path.elementAt(i).y) for i in range(4)]
+        est = math.hypot(x1 - x0, y1 - y0) + math.hypot(x2 - x1, y2 - y1) + math.hypot(x3 - x2, y3 - y2)
+        nt = max(16, min(400, int(est / 3.0)))
+        tx, ty, ts = [], [], [0.0]
+        for i in range(nt + 1):
+            t_ = i / float(nt)
+            mt = 1.0 - t_
+            a_, b_, c_, d_ = mt * mt * mt, 3 * mt * mt * t_, 3 * mt * t_ * t_, t_ * t_ * t_
+            tx.append(a_ * x0 + b_ * x1 + c_ * x2 + d_ * x3)
+            ty.append(a_ * y0 + b_ * y1 + c_ * y2 + d_ * y3)
+            if i:
+                ts.append(ts[-1] + math.hypot(tx[-1] - tx[-2], ty[-1] - ty[-2]))
+        Lp = ts[-1]
+
+        def at(s):
+            s = max(0.0, min(Lp, s))
+            k = bisect.bisect_left(ts, s)
+            if k <= 0:
+                return QPointF(tx[0], ty[0])
+            if k > nt:
+                return QPointF(tx[nt], ty[nt])
+            d = ts[k] - ts[k - 1]
+            f = (s - ts[k - 1]) / d if d > 1e-9 else 0.0
+            return QPointF(tx[k - 1] + (tx[k] - tx[k - 1]) * f, ty[k - 1] + (ty[k] - ty[k - 1]) * f)
+    else:
+        Lp = path.length()
+
+        def at(s):
+            s = max(0.0, min(Lp, s))
+            return path.pointAtPercent(path.percentAtLength(s))
     out = QPainterPath()
     out.setFillRule(Qt.WindingFill)
     if Lp < 1.0:
         return out
-    step = max(1.5, Lp / 400.0)
-
-    def at(s):
-        s = max(0.0, min(Lp, s))
-        return path.pointAtPercent(path.percentAtLength(s))
+    step = max(2.0, Lp / 300.0)
+    _CS = [(math.cos(math.pi * kk / 8.0), math.sin(math.pi * kk / 8.0)) for kk in range(1, 8)]          # [PACK198]
 
     def wid(s):
         return max(0.2, w0 + (w1 - w0) * (s / Lp))
@@ -22220,16 +22252,14 @@ def _arrow_taper_path(path, w0, w1, pat_px, round_cap):
         if round_cap:                                  # media luna de la punta: de la izquierda a la derecha pasando por delante
             ux, uy, nx, ny, r = us[-1]
             c = pts[-1]
-            for kk in range(1, 8):
-                f = math.pi * kk / 8.0
-                poly.append(QPointF(c.x() + r * (nx * math.cos(f) + ux * math.sin(f)), c.y() + r * (ny * math.cos(f) + uy * math.sin(f))))
+            for cf, sf in _CS:
+                poly.append(QPointF(c.x() + r * (nx * cf + ux * sf), c.y() + r * (ny * cf + uy * sf)))
         poly += list(reversed(right))
         if round_cap:                                  # y la de la cola, pasando por detras
             ux, uy, nx, ny, r = us[0]
             c = pts[0]
-            for kk in range(1, 8):
-                f = math.pi * kk / 8.0
-                poly.append(QPointF(c.x() - r * (nx * math.cos(f) + ux * math.sin(f)), c.y() - r * (ny * math.cos(f) + uy * math.sin(f))))
+            for cf, sf in _CS:
+                poly.append(QPointF(c.x() - r * (nx * cf + ux * sf), c.y() - r * (ny * cf + uy * sf)))
         out.addPolygon(QPolygonF(poly))
         out.closeSubpath()
     if not pat_px:
@@ -22379,17 +22409,111 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
     p.restore()
 
 
-def _arrow_glow_paint(p, shape, st, col, col2, p0, p1, dpr=1.0):
-    """[PACK197] Resplandor SUAVE: la figura entera de la flecha (trazo, punta y cola), ensanchada y difuminada, con su color y su degradado."""
+def _arrow_taper_draw(p, path, w0, w1, pat_px, round_cap, brush, extra=0.0):
+    """[PACK198] Trazo cuyo grosor pasa de w0 a w1 (con rayas o puntos opcionales, en px): tramos cortos, cada uno con su grosor, que Qt pinta
+    de forma nativa (antes se construia un contorno punto a punto, en Python). Se pinta opaco (o en la imagen de grupo), asi que los solapes
+    entre tramos no se notan."""
+    import math
+    import bisect
+    n_el = path.elementCount()
+    if n_el != 4:
+        p.setPen(Qt.NoPen)
+        p.setBrush(brush)
+        p.drawPath(_arrow_taper_path(path, w0 + extra, w1 + extra, pat_px, round_cap))
+        return
+    (x0, y0), (x1, y1), (x2, y2), (x3, y3) = [(path.elementAt(i).x, path.elementAt(i).y) for i in range(4)]
+    est = math.hypot(x1 - x0, y1 - y0) + math.hypot(x2 - x1, y2 - y1) + math.hypot(x3 - x2, y3 - y2)
+    nt = max(16, min(300, int(est / 4.0)))
+    tx, ty, ts = [], [], [0.0]
+    for i in range(nt + 1):
+        t_ = i / float(nt)
+        mt = 1.0 - t_
+        a_, b_, c_, d_ = mt * mt * mt, 3 * mt * mt * t_, 3 * mt * t_ * t_, t_ * t_ * t_
+        tx.append(a_ * x0 + b_ * x1 + c_ * x2 + d_ * x3)
+        ty.append(a_ * y0 + b_ * y1 + c_ * y2 + d_ * y3)
+        if i:
+            ts.append(ts[-1] + math.hypot(tx[-1] - tx[-2], ty[-1] - ty[-2]))
+    Lp = ts[-1]
+    if Lp < 1.0:
+        return
+
+    def at(s):
+        s = max(0.0, min(Lp, s))
+        k = bisect.bisect_left(ts, s)
+        if k <= 0:
+            return QPointF(tx[0], ty[0])
+        if k > nt:
+            return QPointF(tx[nt], ty[nt])
+        d = ts[k] - ts[k - 1]
+        f = (s - ts[k - 1]) / d if d > 1e-9 else 0.0
+        return QPointF(tx[k - 1] + (tx[k] - tx[k - 1]) * f, ty[k - 1] + (ty[k] - ty[k - 1]) * f)
+    step = max(3.0, Lp / 140.0)
+    p.setBrush(Qt.NoBrush)
+
+    def piece(a, b):
+        n = max(1, int(math.ceil((b - a) / step)))
+        prev = at(a)
+        for k in range(1, n + 1):
+            s = a + (b - a) * k / n
+            q = at(s)
+            wm = max(0.2, w0 + (w1 - w0) * ((a + (b - a) * (k - 0.5) / n) / Lp)) + extra
+            pen = QPen(brush, wm)
+            pen.setCapStyle(Qt.RoundCap if (round_cap or (n > 1 and 0 < k < n) or (k == 1 and n > 1 and False)) else Qt.FlatCap)
+            if not round_cap and n > 1:
+                pen.setCapStyle(Qt.FlatCap if (k == 1 or k == n) else Qt.RoundCap)
+            p.setPen(pen)
+            p.drawLine(prev, q)
+            prev = q
+    if not pat_px:
+        piece(0.0, Lp)
+        return
+    s0, i = 0.0, 0
+    while s0 < Lp:
+        seg = max(0.05, pat_px[i % len(pat_px)])
+        if i % 2 == 0:
+            piece(s0, min(Lp, s0 + seg))
+        s0 += seg
+        i += 1
+
+
+def _arrow_heads_paint(p, heads, brush, extra):
+    """[PACK198] Punta y cola: rellenas, abiertas (V) o circulo; 'extra' las ensancha (para el resplandor)."""
+    for poly, mode, ww in heads:
+        if mode == 'fill':
+            if extra > 0:
+                hp = QPen(brush, extra)
+                hp.setJoinStyle(Qt.RoundJoin)
+                p.setPen(hp)
+            else:
+                p.setPen(Qt.NoPen)
+            p.setBrush(brush)
+            p.drawPolygon(poly)
+        elif mode == 'open':
+            hp = QPen(brush, ww + extra)
+            hp.setCapStyle(Qt.RoundCap)
+            hp.setJoinStyle(Qt.RoundJoin)
+            p.setPen(hp)
+            p.setBrush(Qt.NoBrush)
+            p.drawPolyline(poly)
+        elif mode == 'circle':
+            r_ = poly[1].x() + extra / 2.0
+            p.setPen(Qt.NoPen)
+            p.setBrush(brush)
+            p.drawEllipse(poly[0], r_, r_)
+
+
+def _arrow_glow_paint(p, path, body_poly, heads, st, col, col2, p0, p1, w, body_cap, pat, dpr=1.0, taper_args=None):
+    """[PACK197] [PACK198] Resplandor SUAVE: trazo, punta y cola ensanchados (con el pincel: sin operaciones de trazados) y difuminados,
+    con el color y el degradado de la flecha."""
     import math
     gs = max(1.0, float(st['glow_size']))
     a = min(1.0, int(st['glow']) / 100.0)
-    ps = QPainterPathStroker()
-    ps.setWidth(gs * 1.5)
-    ps.setCapStyle(Qt.RoundCap)
-    ps.setJoinStyle(Qt.RoundJoin)
-    halo = ps.createStroke(shape).united(shape)
-    br = halo.boundingRect().adjusted(-gs * 2 - 3, -gs * 2 - 3, gs * 2 + 3, gs * 2 + 3)
+    ext = gs * 1.5
+    br = path.boundingRect()
+    for poly, _m, _w in heads:
+        br = br.united(poly.boundingRect() if _m != 'circle' else QRectF(poly[0].x() - poly[1].x(), poly[0].y() - poly[1].x(), 2 * poly[1].x(), 2 * poly[1].x()))
+    m_ = w * 3 + ext + gs * 2 + 3
+    br = br.adjusted(-m_, -m_, m_, m_)
     if br.width() * br.height() * dpr * dpr > 8e6:
         dpr = 1.0
     img = QImage(max(1, int(math.ceil(br.width() * dpr))), max(1, int(math.ceil(br.height() * dpr))), QImage.Format_ARGB32_Premultiplied)
@@ -22398,19 +22522,25 @@ def _arrow_glow_paint(p, shape, st, col, col2, p0, p1, dpr=1.0):
     ip.setRenderHint(QPainter.Antialiasing, True)
     ip.scale(dpr, dpr)
     ip.translate(-br.x(), -br.y())
-    ga = int(255 * min(1.0, 0.25 + 0.75 * a))
-    gc, gc2 = QColor(col), QColor(col2 if st['grad'] else col)
-    gc.setAlpha(ga)
-    gc2.setAlpha(ga)
-    gb = QBrush(gc)
+    gb = QBrush(QColor(col))
     if st['grad']:
         lg = QLinearGradient(p0, p1)
-        lg.setColorAt(0.0, gc)
-        lg.setColorAt(1.0, gc2)
+        lg.setColorAt(0.0, QColor(col))
+        lg.setColorAt(1.0, QColor(col2))
         gb = QBrush(lg)
-    ip.setPen(Qt.NoPen)
-    ip.setBrush(gb)
-    ip.drawPath(halo)
+    if taper_args is not None:                     # grosor variable: los mismos tramos, ensanchados
+        tw0, tw1, tpat, _trc = taper_args
+        _arrow_taper_draw(ip, path, tw0, tw1, tpat, True, gb, extra=ext)
+    else:
+        hp = QPen(gb, w + ext)
+        hp.setCapStyle(Qt.RoundCap)
+        hp.setJoinStyle(Qt.RoundJoin)
+        if pat:
+            hp.setDashPattern([x * w / (w + ext) for x in pat])
+        ip.setPen(hp)
+        ip.setBrush(Qt.NoBrush)
+        ip.drawPath(path)
+    _arrow_heads_paint(ip, heads, gb, ext)
     ip.end()
     try:
         img = _blur_image(img, max(1, int(round(gs * 0.75 * dpr))))
@@ -22418,7 +22548,7 @@ def _arrow_glow_paint(p, shape, st, col, col2, p0, p1, dpr=1.0):
         log_warn("Flechas", "resplandor: %s" % e)
     p.save()
     p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-    p.setOpacity(p.opacity() * (0.35 + 0.65 * a))
+    p.setOpacity(p.opacity() * min(1.0, 0.25 + 0.75 * a) * (0.35 + 0.65 * a))
     p.drawImage(br, img)
     p.restore()
 
@@ -22490,37 +22620,32 @@ def _paint_arrow_raw(p, p0, p1, st, label='', reverse_lane=False, _op=None, _dpr
         if dashes:
             ps.setDashPattern(dashes)
         return ps.createStroke(src_path)
-    # trazo, punta y cola en UNA sola figura: con transparencia no quedan solapes mas oscuros
-    if taper:
-        wm = (w0 + w1) / 2.0
-        body = _arrow_taper_path(path, w0, w1, [x * wm for x in pat] if pat else None, rc)
-    else:
-        body = stroke(path, w, Qt.RoundCap if (pat and st['dash'] in ('dot', 'dashdot')) else cap, pat)
-    shape = body
+    # [PACK198] cada pieza tal cual, sin operaciones booleanas (eran lo que mas costaba): la flecha se pinta opaca, o dentro de la imagen
+    # de grupo de paint_arrow, que le aplica la opacidad una sola vez, asi que los solapes entre trazo, punta y cola no se notan.
+    heads = []
     for kind, tip, u in ((head, p1, ue), (tail, p0, us)):
         if kind in ('', 'none', None):
             continue
         ww = w1 if tip is p1 else w0
         poly, mode = _arrow_head_poly(kind, tip, u[0], u[1], hs_h if tip is p1 else hs_t, ww)
-        if poly is None:
-            continue
-        piece = QPainterPath()
-        if mode == 'fill':
-            piece.addPolygon(poly)
-            piece.closeSubpath()
-        elif mode == 'open':
-            pl = QPainterPath(poly[0])
-            for q in list(poly)[1:]:
-                pl.lineTo(q)
-            piece = stroke(pl, ww, Qt.RoundCap)
-        elif mode == 'circle':
-            piece.addEllipse(poly[0], poly[1].x(), poly[1].x())
-        shape = shape.united(piece)
+        if poly is not None:
+            heads.append((poly, mode, ww))
+    body_cap = Qt.RoundCap if (pat and st['dash'] in ('dot', 'dashdot')) else cap
+    targs = (w0, w1, [x * (w0 + w1) / 2.0 for x in pat] if pat else None, rc) if taper else None
     if int(st['glow']) > 0:                          # [PACK197] halo suave alrededor de TODA la flecha, del color de la flecha
-        _arrow_glow_paint(p, shape, st, col, col2, p0, p1, _dpr)
-    p.setPen(Qt.NoPen)
-    p.setBrush(brush)
-    p.drawPath(shape)
+        _arrow_glow_paint(p, path, None, heads, st, col, col2, p0, p1, max(w, w0, w1), body_cap, pat, _dpr, taper_args=targs)
+    if targs is not None:
+        _arrow_taper_draw(p, path, targs[0], targs[1], targs[2], targs[3], brush)
+    else:
+        pen = QPen(brush, w)
+        pen.setCapStyle(body_cap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        if pat:
+            pen.setDashPattern(pat)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+    _arrow_heads_paint(p, heads, brush, 0.0)
     if label:
         mid = path.pointAtPercent(0.5)
         f = QFont()
@@ -22551,18 +22676,24 @@ class _ArrowOverlay(QWidget):
         self.items = []
         self.blank = False
 
-    def paintEvent(self, _e):
+    def paintEvent(self, e):
         if self.blank:
             return
+        dirty = e.region().boundingRect()                  # [PACK198] solo la zona que ha cambiado
         p = QPainter(self)
         p.setCompositionMode(QPainter.CompositionMode_Source)
-        p.fillRect(self.rect(), Qt.transparent)
+        p.fillRect(dirty, Qt.transparent)
         p.setCompositionMode(QPainter.CompositionMode_SourceOver)
         o = self.geometry().topLeft()
         px = int(self.layer.m.get_cable_param('_under_blur'))
-        tregs = self.layer.m.translucent_regions() if px > 0 else {}
+        tregs = getattr(self.layer, 'tregs', None) or {} if px > 0 else {}
+        gdirty = dirty.translated(o)
+        bnds = getattr(self, 'bounds', {})
         p.translate(-o.x(), -o.y())
         for it in self.items:
+            b_ = bnds.get((it['src'], it['id']))
+            if b_ is not None and not b_[0].intersects(gdirty):
+                continue                                   # [PACK198] fuera de la zona a repintar
             regs = [(k, r) for k, r in tregs.items() if k not in (it['src'], it['dst'])]
             if regs:
                 box = QRectF(it['p0'], it['p1']).normalized().adjusted(-200, -200, 200, 200).toAlignedRect()
@@ -22630,6 +22761,8 @@ class ArrowLayer(QObject):
 
     def tick(self, force=False):
         m = self.m
+        if not force and not self.has_arrows() and not any(ov.isVisible() for ov in self.overlays.values()):
+            return                                         # [PACK198] sin flechas: nada que calcular
         try:
             items = m.arrow_items()
         except Exception as e:
@@ -22642,8 +22775,12 @@ class ArrowLayer(QObject):
                tuple((it['src'], it['id'], it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane'], it.get('fade', 1.0), it.get('type', '')) for it in items))
         if sig == self._sig and not force:
             return
+        full = force or self._sig is None or sig[:3] != self._sig[:3]          # [PACK198] cambio general (estilos, transparencias): todo
         self._sig = sig
         self.items = items
+        if full and int(m.get_cable_param('_under_blur')) > 0:
+            self.tregs = m.translucent_regions()               # [PACK198] una vez por cambio, no en cada pintado
+        now = time.monotonic()
         screens = QApplication.screens()
         for scr in screens:
             sg = scr.geometry()
@@ -22652,16 +22789,38 @@ class ArrowLayer(QObject):
             if not mine:
                 if ov is not None and ov.isVisible():
                     ov.hide()
+                    ov.bounds = {}
                 continue
             ov = self._overlay_for(scr)
             ov.items = mine
+            # [PACK198] zona a repintar: donde estaban y donde estan las flechas que han cambiado
+            newb = {}
+            for it in mine:
+                try:
+                    b = _arrow_bounds(it['p0'], it['p1'], it['style'], it['label'], it['lane']).toAlignedRect().adjusted(-2, -2, 2, 2)
+                except Exception:
+                    b = QRectF(it['p0'], it['p1']).normalized().adjusted(-300, -300, 300, 300).toAlignedRect()
+                newb[(it['src'], it['id'])] = (b, (it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane'], it.get('fade', 1.0),
+                                                   it.get('type', ''), tuple(sorted(it['style'].items()))))
+            oldb = getattr(ov, 'bounds', None) or {}
+            dirty = QRegion()
+            for k in set(oldb) | set(newb):
+                o_, n_ = oldb.get(k), newb.get(k)
+                if full or o_ is None or n_ is None or o_ != n_:
+                    if o_ is not None:
+                        dirty = dirty.united(o_[0])
+                    if n_ is not None:
+                        dirty = dirty.united(n_[0])
+            ov.bounds = newb
             aot = any(getattr(m.widgets.get(it['src']), 'always_on_top', False) or getattr(m.widgets.get(it['dst']), 'always_on_top', False) for it in mine)
             flags = Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput | (Qt.WindowStaysOnTopHint if aot else Qt.Widget)
+            whole = False
             if ov.windowFlags() != flags:
                 was = ov.isVisible()
                 ov.blank = True
                 ov.setWindowFlags(flags)
                 ov.blank = False
+                whole = True
                 if was:
                     ov.show()
             if ov.geometry() != sg:
@@ -22670,11 +22829,39 @@ class ArrowLayer(QObject):
                     ov.repaint()
                 ov.setGeometry(sg)
                 ov.blank = False
+                whole = True
+            shown = False
             if not ov.isVisible():
                 ov.show()
-            ov.update()
+                shown = whole = True
+            if whole:
+                ov.update()
+            elif not dirty.isEmpty():
+                ov.update(dirty.translated(-sg.topLeft()))
+            # [PACK198] subir la ventana de flechas solo al mostrarla, cuando se activa un widget o, como mucho, cada 2 s (no en cada fotograma)
             if QApplication.applicationState() == Qt.ApplicationActive and not aot:
-                ov.raise_()
+                if shown or getattr(m, '_arrow_raise_due', False) or now - getattr(ov, '_raised_at', 0.0) > 2.0:
+                    ov.raise_()
+                    ov._raised_at = now
+        m._arrow_raise_due = False
+
+    def has_arrows(self):
+        """[PACK198] Hay alguna flecha (se recalcula solo cuando cambian)."""
+        m = self.m
+        if getattr(self, '_has_rev', None) != m._arrow_rev:
+            self._has_rev = m._arrow_rev
+            self._has = bool(m.arrows_all())
+        return self._has or getattr(m, '_arrow_ghost', None) is not None
+
+    def kick(self):
+        """[PACK198] Un widget se ha movido: sus flechas se recalculan enseguida (no esperan al temporizador)."""
+        if not getattr(self, '_kick_pending', False) and self.has_arrows():
+            self._kick_pending = True
+            QTimer.singleShot(0, self._kicked)
+
+    def _kicked(self):
+        self._kick_pending = False
+        self.tick()
 
     def refresh(self):
         self.tick(force=True)

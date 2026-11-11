@@ -1,3 +1,23 @@
+## Pack 198 · 2026-11-11
+- **Flechas sin bajada de fps (mismo aspecto).** Medido en un arrastre con una flecha, en milisegundos por fotograma:
+
+  | Flecha | Antes | Ahora |
+  |---|---|---|
+  | Normal | 1,2 | 0,5–1 |
+  | Con resplandor | 9–10 | 1,5–2,5 |
+  | Afilada con resplandor | 31–39 | 3–4 |
+  | Afilada con resplandor y puntos | 46–55 | 3–4 |
+
+  A 60 fps hay 16 ms por fotograma, así que antes no daba tiempo.
+- Qué cambia por dentro (nada visible):
+  - **Sin operaciones de unir figuras.** Trazo, punta, cola y halo se unían en una sola figura en cada fotograma, y era lo que más costaba (13–22 ms con resplandor y grosor variable). Desde el pack 197 la flecha se pinta opaca en su imagen y se le aplica la opacidad una vez, así que las piezas se pintan tal cual.
+  - **Grosor variable:** se dibuja en tramos cortos con su grosor, que Qt pinta de forma nativa, en vez de construir el contorno punto a punto.
+  - **La ventana de flechas solo repinta la zona que cambia.** Antes se borraba y se repintaba la pantalla entera en cada fotograma; ahora es menos del 2 % de una pantalla de 2560×1440. En Windows esto importa mucho, porque esa ventana transparente se envía al compositor en cada actualización.
+  - Esa ventana **ya no se sube al frente en cada fotograma**: solo al mostrarse, cuando se activa un widget o, como mucho, cada 2 s.
+  - **Al mover un widget, sus flechas se recalculan en ese mismo momento.** Antes esperaban a un temporizador de 40 ms y por eso iban por detrás del widget al arrastrarlo.
+  - Sin flechas, el temporizador no calcula nada.
+- Comprobado que se ven igual: comparadas píxel a píxel con las del pack 197 en nueve estilos (resplandor, afiladas, puntos, rayas, degradado, punta abierta, transparencia, extremos planos), solo hay diferencias de suavizado de bordes.
+
 ## Pack 197 · 2026-11-11
 - **Flechas semitransparentes sin «esqueleto».** Al hacerse transparentes (al pasar el ratón, en los fundidos o con poca opacidad), se veía el trazo por dentro del resplandor, y la punta y el trazo por encima del halo, porque cada pieza se transparentaba por separado. Ahora la flecha entera (resplandor, trazo, punta, cola y etiqueta) se pinta opaca en una imagen aparte y se le aplica la transparencia una sola vez: se ve como una sola pieza, con la misma opacidad en todas partes.
 - **Resplandor nuevo: halo suave alrededor de toda la flecha.** Antes era una banda de bordes duros que solo seguía el trazo y terminaba bajo la punta. Ahora envuelve la figura completa (punta y cola incluidas) y se difumina hacia fuera, con el color de la flecha y su degradado. «Intensidad» y «Alcance» siguen funcionando igual.
