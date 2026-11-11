@@ -5357,7 +5357,7 @@ class StickerWindow(QMainWindow):
         return self.manager.get_tint_color('child')
 
     def _set_hierarchy_highlighted(self, active, color=None):
-        if not active:
+        if not active or getattr(self, '_inline_editing', False):          # [PACK183] editando el texto no hay tinte (dejaba el texto viejo encima)
             self.hierarchy_border.hide()
             self._hierarchy_tint_timer.stop()
             self._hierarchy_tint_color = None
@@ -6826,6 +6826,8 @@ class StickerWindow(QMainWindow):
 
     def _start_inline_edit_l1(self):
         log_debug(self.widget_id, "Iniciando edicion inline L1")
+        self._inline_editing = True                    # [PACK183]
+        self._set_hierarchy_highlighted(False)
         self._escape_backup = copy.deepcopy(self.current_template_data)
         
         l1_data = self.current_template_data.get('layer1', {})
@@ -6944,8 +6946,14 @@ class StickerWindow(QMainWindow):
 
     @Slot(object)
     def _on_layer1_editing_finished(self, html_content):
+        self._inline_editing = False                   # [PACK183]
         self.layer1_editor.hide()
         self.layer1_label.show()
+        try:
+            if self.underMouse():
+                self.manager.set_hierarchy_highlight(self.widget_id, True)
+        except Exception:
+            pass
         
         self.layer2_anim.stop()
         current_l2_rot = self.layer2_label.property("rotation")
@@ -13595,7 +13603,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 182                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 183                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -21121,6 +21129,8 @@ class BaseNoteDialog(QDialog):
         tabs.setMinimumHeight(560)
         self._building = False
         self._fold_enable()
+        self._p0 = copy.deepcopy(self.p)                # [PACK183] como estaba al abrir
+        self._live_started = False
         self._refresh()
 
     def _style_fill(self, select=None):
@@ -21443,6 +21453,9 @@ class BaseNoteDialog(QDialog):
 
     def _live_fire(self):
         if self._live is not None and self.chk_live.isChecked():
+            if not getattr(self, '_live_started', True) and self.p == getattr(self, '_p0', None):
+                return                                  # [PACK183] sin cambios todavia: la nota real no se toca
+            self._live_started = True
             self._live(copy.deepcopy(self.p))
 
     def _live_toggled(self, on):
@@ -26148,10 +26161,7 @@ class WidgetManager(QObject):
             return
         start = st['template_data'].get('base_note')
         if not isinstance(start, dict):
-            try:
-                start = json.loads(self.global_state.get('base_note_settings') or '{}')
-            except Exception:
-                start = {}
+            start = self._infer_base_note(st['template_data'])          # [PACK183] nota antigua: parte de SU imagen, no de los ajustes globales
         win = self.widgets.get(widget_id)
         live_state = {'on': False}
 
@@ -26176,6 +26186,30 @@ class WidgetManager(QObject):
             self.apply_base_note(widget_id, dlg.get_params())
         else:
             live(None)
+
+    @staticmethod
+    def _infer_base_note(td):
+        """[PACK183] Parametros aproximados de una nota sin 'base_note' guardado: color del centro y tamano del cuerpo de su imagen."""
+        start = {}
+        try:
+            l2 = (td.get('layer2') or {}) if isinstance(td, dict) else {}
+            img = QImage(_resolve_stored(l2.get('content', '')))
+            if not img.isNull():
+                img = img.convertToFormat(QImage.Format_ARGB32)
+                W, H = img.width(), img.height()
+                c = img.pixelColor(W // 2, H // 2)
+                start['color'] = QColor(c.red(), c.green(), c.blue()).name()
+                start['color_a'] = int(round(c.alpha() * 100 / 255.0))
+                xs0, xs1, ys0, ys1 = W, -1, H, -1
+                for y in range(0, H, 2):
+                    for x in range(0, W, 2):
+                        if img.pixelColor(x, y).alpha() > 200:
+                            xs0, xs1, ys0, ys1 = min(xs0, x), max(xs1, x), min(ys0, y), max(ys1, y)
+                if xs1 > xs0 and ys1 > ys0:
+                    start['w'], start['h'] = int(xs1 - xs0 + 2), int(ys1 - ys0 + 2)
+        except Exception:
+            start = {}
+        return start
 
     def preview_base_note(self, widget_id, p):
         """[PACK80] Vista en vivo: pinta la nota real con los parametros del dialogo sin guardar nada

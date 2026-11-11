@@ -20,6 +20,14 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
 ## Nuevo (propuesto por ti, a diseñar)
 - [ ] 8. **Crear y transformar widgets desde una interfaz («constructor»)**: hoy crear uno de cero es una odisea (elegir capa, navegar por el disco…). Y en una nota (capa 1 = texto) no se puede poner un marco generado en la capa 1 («Marco» sale desactivado). Idea: ventana con vista previa en vivo y pasos (fondo, marco, contenido, forma) que sirva para crear uno nuevo y para cambiar uno existente.
 
+## Nuevos (2026-11-11)
+- [x] 9. (Pack 183) **Bug (vídeo): rastro del texto anterior en modo edición** de una nota. Probable causa: entrar en edición no desactiva el «brillo por hover».
+- [x] 10. (Pack 183) **Bug (vídeo): «Editar forma de papel» cambia los colores** del widget.
+- [ ] 11. **Hotkeys para TODAS las opciones de los menús contextuales**, incluidas las de edición de texto, que hoy no tienen (alineación/justificado, color, fuente…).
+- [ ] 12. **Edición de texto: rotar entre fuentes elegidas por el usuario** (lista personal de fuentes favoritas). **Bug:** con Ctrl+Mayús+rueda la lista de fuentes a veces no sale completa (solo una parte).
+- [ ] 13. **Flechas entre widgets** (nueva capa de dependencias, aparte de los cables): relaciones entre ramas de árboles que en principio no dependían entre sí; sin los problemas de recursión y bucles infinitos de la idea anterior. Con su propia edición de apariencia y **toda la familia de opciones de los cables, pero propia** (colores, grosor, opacidad, degradado…).
+- [ ] 14. **Desenfoque (blur) de lo que se ve a través de widgets transparentes:** hoy los cables, widgets y (futuras) flechas que no entran ni salen directamente de ese widget se ven nítidos a través de la transparencia; deben verse con blur **editable**. Para (1) flechas, (2) widgets y (3) cables.
+
 ## Pendientes del asistente (al final; no bloquean lo anterior)
 - [ ] 7a. Pedir las líneas de registro de Linux `Ctrl+Alt+rueda: evento=… fisicas=…` (rotación fina).
 - [ ] 7b. Probar los packs 167–170 con QtWebEngine real y en Windows:
