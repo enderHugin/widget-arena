@@ -4026,6 +4026,16 @@ class StickerWindow(QMainWindow):
             
             click_pos = event.position().toPoint()
 
+            try:
+                if self.manager.arrow_gesture_matches(modifiers):          # [PACK189] tecla(s) + arrastrar a otro widget = flecha
+                    self._arrow_drag = True
+                    self._potential_drag_target = None
+                    self.manager.arrow_drag_begin(self.widget_id, event.globalPosition().toPoint())
+                    event.accept()
+                    return
+            except Exception as e_ag:
+                log_warn(self.widget_id, "Gesto de flecha: %s" % e_ag)
+
             if (modifiers & Qt.ControlModifier) and \
                (modifiers & Qt.AltModifier) and \
                (modifiers & Qt.ShiftModifier):
@@ -4350,6 +4360,14 @@ class StickerWindow(QMainWindow):
         return QPoint(new_pos.x() + dx, new_pos.y() + dy)
 
     def mouseMoveEvent(self, event):
+        if getattr(self, '_arrow_drag', False):                          # [PACK189]
+            if event.buttons() & Qt.LeftButton:
+                self.manager.arrow_drag_update(event.globalPosition().toPoint())
+            else:
+                self._arrow_drag = False
+                self.manager.arrow_drag_end(None)
+            event.accept()
+            return
         if event.buttons() & Qt.LeftButton:
             self._sync_drag_mode(event.modifiers())
         
@@ -4501,6 +4519,11 @@ class StickerWindow(QMainWindow):
             child_window._save_changes_to_manager()
 
     def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and getattr(self, '_arrow_drag', False):          # [PACK189]
+            self._arrow_drag = False
+            self.manager.arrow_drag_end(event.globalPosition().toPoint())
+            event.accept()
+            return
         if event.button() == Qt.LeftButton:
             
             if self._is_window_dragging:
@@ -14042,7 +14065,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 188                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 189                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -20105,6 +20128,23 @@ GESTURE_TABLE = {
         ("Click der.", "ELIMINAR el widget y TODOS sus descendientes (confirma solo si tiene hijos)", None),
     ],
 }
+_ARROW_GESTURE_KEY = ['']          # [PACK189] combinacion (orden C, A, S, W) del arrastre que crea flechas; '' = desactivado
+ARROW_GESTURE_DEFAULT = {'on': True, 'mods': ['alt', 'shift']}
+ARROW_GESTURE_TAKEN = {             # combinaciones que ya hacen otra cosa con el raton
+    '': "Arrastrar sin teclas mueve el widget",
+    'C': "Ctrl + arrastrar enlaza el widget como hijo", 'A': "Alt + arrastrar enlaza el widget como padre",
+    'S': "May\u00fas + arrastrar mueve el widget y alinea", 'CA': "Ctrl + Alt + clic selecciona la capa",
+    'CS': "Ctrl + May\u00fas + arrastrar mueve ajustando a la cuadr\u00edcula", 'CAS': "Ctrl + Alt + May\u00fas + arrastrar crea un hijo",
+    'CAW': "Ctrl + Alt + Win + arrastrar mueve el widget con sus descendientes", 'CASW': "Ctrl + Alt + May\u00fas + Win + arrastrar crea un hijo",
+}
+
+
+def _gesture_key_title(key):
+    names = dict(GESTURE_MODS_LONG)
+    return " + ".join(names[c] for c in key) if key else "(sin teclas)"
+
+
+GESTURE_MODS_LONG = (("C", "Ctrl"), ("A", "Alt"), ("S", "May\u00fas"), ("W", "Win"))
 GESTURE_SECTIONS = (("", "Sin teclas"), ("C", "Ctrl"), ("A", "Alt"), ("S", "May\u00fas"), ("CS", "Ctrl + May\u00fas"),
                     ("CA", "Ctrl + Alt"), ("AS", "Alt + May\u00fas"), ("CAW", "Ctrl + Alt + Win"),
                     ("CAS", "Ctrl + Alt + May\u00fas"), ("CASW", "Ctrl + Alt + May\u00fas + Win"))
@@ -20119,6 +20159,8 @@ def _gesture_rows(key, layer_sel=0, linking=None):
     for kind, text, cond in GESTURE_TABLE.get(key, []):
         if cond is None or (cond == 'layer') == bool(layer_sel):
             rows.append((kind, text))
+    if key and key == _ARROW_GESTURE_KEY[0]:          # [PACK189]
+        rows.append(("Arrastrar", "FLECHA: arrastra hasta otro widget y suelta sobre \u00e9l para crear una flecha hacia \u00e9l (Ajustes > Flechas: gesto de arrastre)"))
     return rows
 
 
@@ -20190,11 +20232,16 @@ def _gesture_guide_html(manager):
          "<p>Mant\u00e9n pulsadas las teclas <b>Ctrl</b>, <b>Alt</b>, <b>May\u00fas</b> o <b>Win</b> mientras pasas el rat\u00f3n sobre un widget: "
          "junto al cursor aparece un recuadro con lo que har\u00e1 cada click, arrastre o rueda. "
          "Todo lo que se hace con estas combinaciones tambi\u00e9n est\u00e1 en el <b>men\u00fa del widget</b> (click derecho).</p>"]
-    for key, title in GESTURE_SECTIONS:
+    _secs = list(GESTURE_SECTIONS)
+    if _ARROW_GESTURE_KEY[0] and _ARROW_GESTURE_KEY[0] not in [k for k, _t in _secs]:
+        _secs.append((_ARROW_GESTURE_KEY[0], _gesture_key_title(_ARROW_GESTURE_KEY[0])))
+    for key, title in _secs:
         h.append("<h3>%s</h3><table cellspacing='0' cellpadding='3'>" % title)
         for kind, text, cond in GESTURE_TABLE.get(key, []):
             extra = " <i>(con una capa seleccionada)</i>" if cond == 'layer' else ""
             h.append("<tr><td><b>%s</b>&nbsp;&nbsp;</td><td>%s%s</td></tr>" % (kind, text, extra))
+        if key and key == _ARROW_GESTURE_KEY[0]:
+            h.append("<tr><td><b>Arrastrar</b>&nbsp;&nbsp;</td><td>FLECHA: arrastra hasta otro widget y suelta sobre \u00e9l para crear una flecha hacia \u00e9l</td></tr>")
         h.append("</table>")
     h.append("<h2>Atajos de teclado configurables</h2><table cellspacing='0' cellpadding='3'>")
     seen_sets = {}
@@ -22392,6 +22439,53 @@ class _ArrowPicker(QObject):
         return False
 
 
+class ArrowGestureDialog(QDialog):
+    """[PACK189] Con que teclas se crea una flecha arrastrando de un widget a otro."""
+
+    def __init__(self, g, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Flechas: gesto de arrastre")
+        lay = QVBoxLayout(self)
+        self.chk_on = QCheckBox("Crear una flecha arrastrando de un widget a otro mientras se mantienen estas teclas")
+        self.chk_on.setChecked(bool(g.get('on', True)))
+        lay.addWidget(self.chk_on)
+        row = QHBoxLayout()
+        self.mods = {}
+        for k, lab in (('ctrl', "Ctrl"), ('alt', "Alt"), ('shift', "May\u00fas"), ('meta', "Win / Cmd")):
+            c = QCheckBox(lab)
+            c.setChecked(k in g.get('mods', []))
+            c.toggled.connect(self._check)
+            self.mods[k] = c
+            row.addWidget(c)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.msg = QLabel()
+        self.msg.setWordWrap(True)
+        lay.addWidget(self.msg)
+        lay.addWidget(QLabel("Se mantienen las teclas, se pulsa sobre el widget de origen, se arrastra y se suelta sobre el de destino."))
+        self.bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.bb.accepted.connect(self.accept)
+        self.bb.rejected.connect(self.reject)
+        lay.addWidget(self.bb)
+        self.chk_on.toggled.connect(self._check)
+        self._check()
+
+    def values(self):
+        return {'on': self.chk_on.isChecked(), 'mods': [k for k, c in self.mods.items() if c.isChecked()]}
+
+    def _check(self, *_a):
+        v = self.values()
+        key = ''.join(c for c, n in (('C', 'ctrl'), ('A', 'alt'), ('S', 'shift'), ('W', 'meta')) if n in v['mods'])
+        bad = v['on'] and key in ARROW_GESTURE_TAKEN
+        if not v['on']:
+            self.msg.setText("Desactivado: solo se crean flechas desde el men\u00fa del widget.")
+        elif bad:
+            self.msg.setText("<b>Esa combinaci\u00f3n ya est\u00e1 en uso:</b> %s. Elige otra." % ARROW_GESTURE_TAKEN[key])
+        else:
+            self.msg.setText("Combinaci\u00f3n libre: <b>%s + arrastrar</b>." % _gesture_key_title(key))
+        self.bb.button(QDialogButtonBox.Ok).setEnabled(not bad)
+
+
 class ArrowStyleDialog(QDialog):
     """Apariencia de las flechas (la misma familia de opciones que los cables, pero propia): color y degradado, opacidad y grosor segun la longitud,
     curvatura, punta y cola, trazo, resplandor y etiqueta. Con vista previa."""
@@ -22895,6 +22989,7 @@ class WidgetManager(QObject):
         self._seed_global_history()          # [PACK54] estado inicial: tambien el primer cambio se puede deshacer
         self.connector_overlay = ConnectorOverlayGroup(self)
         self.arrow_layer = ArrowLayer(self)          # [PACK186]
+        self.arrow_gesture_key()          # [PACK189]
         self.app.aboutToQuit.connect(self.force_save_all_states)
         self.app.aboutToQuit.connect(self._autosave_current_profile)
         self.app.aboutToQuit.connect(self._persist_history)
@@ -23138,9 +23233,10 @@ class WidgetManager(QObject):
     def arrow_items(self):
         """Lo que hay que pintar ahora: [{src, dst, id, p0, p1, style, label, lane}] (coordenadas globales)."""
         g = self.arrow_style_general()
-        if g['mode'] == 'never':
+        gh = getattr(self, '_arrow_ghost', None)
+        if g['mode'] == 'never' and not gh:
             return []
-        allp = self.arrows_all()
+        allp = self.arrows_all() if g['mode'] != 'never' else []
         pairs = {(s, a['to']) for s, a in allp}
         rects = {}
 
@@ -23166,6 +23262,19 @@ class WidgetManager(QObject):
                 continue
             out.append({'src': src, 'dst': a['to'], 'id': a['id'], 'p0': ep[0], 'p1': ep[1], 'style': stl,
                         'label': str(a.get('label') or ''), 'lane': (a['to'], src) in pairs})
+        if gh and gh['src'] in self.widgets:                    # [PACK189] flecha provisional mientras se arrastra
+            ra, pt = rect_of(gh['src']), gh['pt']
+            if ra is not None:
+                gdst = self.widget_id_at(pt)
+                rb = rect_of(gdst) if gdst and gdst != gh['src'] else None
+                stl = dict(self.arrow_effective_style({'style': {}}, g))
+                if rb is not None:
+                    ep = arrow_endpoints(ra, rb, float(stl['gap']))                 # sobre un widget: asi quedara
+                else:
+                    stl['dash'] = 'dash'
+                    ep = arrow_endpoints(ra, QRect(pt.x() - 1, pt.y() - 1, 2, 2), float(stl['gap']))
+                if ep is not None:
+                    out.append({'src': gh['src'], 'dst': gdst if rb is not None else '', 'id': '_ghost', 'p0': ep[0], 'p1': ep[1], 'style': stl, 'label': '', 'lane': False})
         return out
 
     def widget_id_at(self, gp):
@@ -23189,6 +23298,76 @@ class WidgetManager(QObject):
             if self.widgets[k].isActiveWindow():
                 return k
         return hits[-1] if hits else None
+
+    def arrow_gesture(self):
+        """[PACK189] Ajuste del arrastre que crea flechas: {'on': bool, 'mods': ['ctrl', 'alt', 'shift', 'meta']}."""
+        d = self.global_state.get('arrow_gesture')
+        if isinstance(d, str):
+            try:
+                d = json.loads(d)
+            except Exception:
+                d = None
+        out = copy.deepcopy(ARROW_GESTURE_DEFAULT)
+        if isinstance(d, dict):
+            if 'on' in d:
+                out['on'] = bool(d['on'])
+            if isinstance(d.get('mods'), list):
+                out['mods'] = [m for m in ('ctrl', 'alt', 'shift', 'meta') if m in d['mods']]
+        return out
+
+    @staticmethod
+    def arrow_gesture_key_of(g):
+        key = ''.join(c for c, n in (('C', 'ctrl'), ('A', 'alt'), ('S', 'shift'), ('W', 'meta')) if n in g['mods'])
+        return key
+
+    def arrow_gesture_key(self):
+        """Combinacion activa (p. ej. 'AS'), o None si esta apagado o choca con otro gesto. Deja anotada la combinacion para la ayuda de gestos."""
+        g = self.arrow_gesture()
+        key = self.arrow_gesture_key_of(g)
+        res = key if (g['on'] and key not in ARROW_GESTURE_TAKEN) else None
+        _ARROW_GESTURE_KEY[0] = res or ''
+        return res
+
+    def arrow_gesture_matches(self, modifiers):
+        key = self.arrow_gesture_key()
+        if not key:
+            return False
+        have = ''.join(c for c, f in (('C', Qt.ControlModifier), ('A', Qt.AltModifier), ('S', Qt.ShiftModifier), ('W', Qt.MetaModifier)) if modifiers & f)
+        return have == key
+
+    def set_arrow_gesture(self, d):
+        self.global_state['arrow_gesture'] = json.dumps(d)
+        self.arrow_gesture_key()
+        self.save_global_state(record_history=False)
+
+    def edit_arrow_gesture(self, *_a):
+        dlg = ArrowGestureDialog(self.arrow_gesture(), self.dialog_parent)
+        if dlg.exec():
+            self.set_arrow_gesture(dlg.values())
+            k = self.arrow_gesture_key()
+            self._osd(("Flechas: " + _gesture_key_title(k) + " + arrastrar de un widget a otro") if k else "Flechas: gesto de arrastre desactivado")
+
+    def arrow_drag_begin(self, src, gp):
+        self._arrow_ghost = {'src': src, 'pt': QPoint(gp)}
+        self.arrow_layer.refresh()
+
+    def arrow_drag_update(self, gp):
+        gh = getattr(self, '_arrow_ghost', None)
+        if gh is not None:
+            gh['pt'] = QPoint(gp)
+            self.arrow_layer.tick()
+
+    def arrow_drag_end(self, gp):
+        gh = getattr(self, '_arrow_ghost', None)
+        self._arrow_ghost = None
+        dst = self.widget_id_at(gp) if (gp is not None and gh) else None
+        if gh and dst and dst != gh['src'] and dst in self.widgets:
+            if any(s == gh['src'] and a.get('to') == dst for s, a in self.arrows_all()):
+                self._osd("Ya hay una flecha entre esos dos widgets")
+            else:
+                self.add_arrow(gh['src'], dst)
+                self._osd("Flecha creada")
+        self.arrow_layer.refresh()
 
     def arrow_pick_start(self, src):
         p = getattr(self, '_arrow_picker', None)
@@ -23892,6 +24071,10 @@ class WidgetManager(QObject):
         arrow_action = QAction("Flechas: apariencia y visibilidad...", self)          # [PACK186]
         arrow_action.triggered.connect(self.edit_arrow_style)
         cfg_menu.insertAction(integ_menu.menuAction(), arrow_action)
+        arrow_g_action = QAction("Flechas: gesto de arrastre...", self)          # [PACK189]
+        arrow_g_action.setToolTip("Teclas con las que, arrastrando de un widget a otro, se crea una flecha (por defecto Alt + May\u00fas)")
+        arrow_g_action.triggered.connect(self.edit_arrow_gesture)
+        cfg_menu.insertAction(integ_menu.menuAction(), arrow_g_action)
         snap_action = QAction("Im\u00e1n y cuadr\u00edcula al mover...", self)          # [PACK185]
         snap_action.setToolTip("May\u00fas al arrastrar alinea con otros widgets y la pantalla; Ctrl+May\u00fas ajusta a una cuadr\u00edcula")
         snap_action.triggered.connect(self.edit_snap_settings)
