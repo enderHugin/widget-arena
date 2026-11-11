@@ -14076,7 +14076,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 195                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 196                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22106,6 +22106,9 @@ from PySide6.QtGui import QPolygonF
 
 ARROW_DEFAULTS = {
     'mode': 'hover',                        # always | hover | never (solo ajuste general). [PACK194] hover = al pasar el raton o al mover; por defecto
+    'hover_op': 35, 'hover_delay': 80,      # [PACK196] como los cables: opacidad (%) cuando el cursor reposa sobre uno de sus widgets y espera (ms)
+    'move_op': 100, 'move_hold': 600,       # opacidad (%) mientras se arrastra uno de sus widgets y cuanto siguen asi al soltarlo (ms)
+    'fade_in': 150, 'fade_out': 220,        # fundidos de entrada y de salida (ms)
     'color': '#ff9f43', 'grad': False, 'color2': '#ffd166',
     'color_from': 'fixed', 'color2_from': 'fixed',          # [PACK192] fixed | src | dst: el color elegido o el del widget de origen / destino
     'w_start': 100, 'w_end': 100,                           # [PACK192] grosor al salir y al llegar (% del grosor segun la longitud)
@@ -22129,11 +22132,12 @@ ARROW_TYPES_DEFAULT = [          # [PACK195] tipos de ejemplo: solo guardan lo q
     {'id': 'recta', 'name': "Recta y fina", 'style': {'curve': 0, 'curve_far': 0, 'w_near': 1.5, 'w_far': 1.0, 'head': 'open'}, 'wheel': False},
 ]
 ARROW_GENERAL_NAME = "Apariencia general"
+ARROW_GENERAL_ONLY = ('mode', 'hover_op', 'hover_delay', 'move_op', 'move_hold', 'fade_in', 'fade_out')          # [PACK196] solo del ajuste general
 
 
 def arrow_style_clean(d):
     """Solo claves de aspecto conocidas (sin 'mode', que es del ajuste general)."""
-    return {k: v for k, v in (d or {}).items() if k in ARROW_DEFAULTS and k != 'mode'} if isinstance(d, dict) else {}
+    return {k: v for k, v in (d or {}).items() if k in ARROW_DEFAULTS and k not in ARROW_GENERAL_ONLY} if isinstance(d, dict) else {}
 
 
 def arrow_type_pixmap(st, w=150, h=36, label=''):
@@ -22356,11 +22360,19 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
             ps.setDashPattern(dashes)
         return ps.createStroke(src_path)
     if int(st['glow']) > 0:
-        gc = QColor(col)
-        gc.setAlpha(int(255 * min(1.0, int(st['glow']) / 100.0) * 0.45))
+        _ga = int(255 * min(1.0, int(st['glow']) / 100.0) * 0.45)          # [PACK196] el resplandor sigue el color de la flecha (tambien su degradado)
+        gc, gc2 = QColor(col), QColor(col2 if st['grad'] else col)
+        gc.setAlpha(_ga)
+        gc2.setAlpha(_ga)
+        gbrush = QBrush(gc)
+        if st['grad']:
+            _gg = QLinearGradient(p0, p1)
+            _gg.setColorAt(0.0, gc)
+            _gg.setColorAt(1.0, gc2)
+            gbrush = QBrush(_gg)
         g2 = 2 * float(st['glow_size'])
         p.setPen(Qt.NoPen)
-        p.setBrush(gc)
+        p.setBrush(gbrush)
         p.drawPath(_arrow_taper_path(path, w0 + g2, w1 + g2, None, True) if taper else stroke(path, w + g2, Qt.RoundCap))
     # trazo, punta y cola en UNA sola figura: con transparencia no quedan solapes mas oscuros
     if taper:
@@ -22771,7 +22783,7 @@ class ArrowTypesDialog(QDialog):
         g = self.m.arrow_style_general()
         dlg = ArrowStyleDialog(self._eff(t), self, "Aspecto del tipo \u00ab%s\u00bb" % t['name'], on_reset=True, reset_label="Igual que la apariencia general")
         if dlg.exec():
-            t['style'] = {} if dlg.reset else {k: v for k, v in dlg.values().items() if k != 'mode' and v != g.get(k)}
+            t['style'] = {} if dlg.reset else {k: v for k, v in dlg.values().items() if k not in ARROW_GENERAL_ONLY and v != g.get(k)}
             self._fill(self.lst.currentRow())
 
     def _new_id(self):
@@ -22900,6 +22912,14 @@ class ArrowStyleDialog(QDialog):
                       ('label_bg', "Color del fondo", 'color', None), ('label_bg_op', "Opacidad del fondo", 'int', (0, 100, " %")))),
     )
 
+    VIS_SPEC = ("Visibilidad", (          # [PACK196] solo en el aspecto general; funciona como el de los cables
+        ('hover_op', "Opacidad al pasar el rat\u00f3n por uno de sus widgets (se multiplica por la de la flecha)", 'int', (0, 100, " %")),
+        ('hover_delay', "Espera con el cursor encima antes de mostrarlas (0 = al instante)", 'int', (0, 2000, " ms")),
+        ('move_op', "Opacidad mientras se arrastra uno de sus widgets", 'int', (0, 100, " %")),
+        ('move_hold', "Siguen as\u00ed despu\u00e9s de soltarlo", 'int', (0, 5000, " ms")),
+        ('fade_in', "Fundido de entrada (0 = aparecen de golpe)", 'int', (0, 3000, " ms")),
+        ('fade_out', "Fundido de salida (0 = desaparecen de golpe)", 'int', (0, 3000, " ms"))))
+
     def __init__(self, style, parent=None, title="Apariencia de las flechas", general=False, on_reset=None, reset_label=None):
         super().__init__(parent)
         from PySide6.QtWidgets import QTabWidget, QDoubleSpinBox, QColorDialog
@@ -22911,7 +22931,7 @@ class ArrowStyleDialog(QDialog):
         if general:
             fm = QFormLayout()
             self.cb_mode = QComboBox()
-            for k, lab in (('hover', "Al pasar el rat\u00f3n por uno de sus widgets o al moverlo (luego se desvanecen)"), ('always', "Siempre visibles"), ('never', "Ocultas")):
+            for k, lab in (('hover', "Como los cables: al pasar el rat\u00f3n por uno de sus widgets o al moverlo"), ('always', "Siempre visibles"), ('never', "Ocultas")):
                 self.cb_mode.addItem(lab, k)
             self.cb_mode.setCurrentIndex(max(0, self.cb_mode.findData(self.st['mode'])))
             fm.addRow("Mostrar las flechas:", self.cb_mode)
@@ -22920,7 +22940,7 @@ class ArrowStyleDialog(QDialog):
             self.cb_mode = None
         self.prev = _ArrowPreview(self)
         tabs = QTabWidget()
-        for tname, rows in self.SPEC:
+        for tname, rows in ((self.VIS_SPEC,) + tuple(self.SPEC) if general else self.SPEC):          # [PACK196]
             page = QWidget()
             form = QFormLayout(page)
             for key, lab, kind, arg in rows:
@@ -23634,7 +23654,7 @@ class WidgetManager(QObject):
         t = self.arrow_type_get(ar.get('type')) if ar.get('type') else None          # [PACK195] general + tipo + retoques de esta flecha
         for src_ in ((t or {}).get('style') or {}, ar.get('style') or {}):
             for k, v in src_.items():
-                if k in g and k != 'mode':
+                if k in g and k not in ARROW_GENERAL_ONLY:
                     g[k] = v
         return g
 
@@ -23701,6 +23721,19 @@ class WidgetManager(QObject):
         """Lo que recorre la rueda al crear una flecha: la apariencia general (None) y los tipos marcados, en su orden."""
         return [None] + [t['id'] for t in self.arrow_types() if t['wheel']]
 
+    def arrow_set_color_from(self, src, aid, mode):
+        """[PACK196] Color de UNA flecha: None = el de su tipo (o la apariencia general); 'src' / 'dst' = el del widget de origen / destino;
+        'grad' = degradado del color del origen al del destino."""
+        a = self.arrow_get(src, aid)
+        if not a:
+            return
+        st = {k: v for k, v in (a.get('style') or {}).items() if k not in ('color_from', 'color2_from', 'grad')}
+        if mode in ('src', 'dst'):
+            st.update({'color_from': mode, 'grad': False})
+        elif mode == 'grad':
+            st.update({'color_from': 'src', 'color2_from': 'dst', 'grad': True})
+        self.arrow_set(src, aid, style=st)
+
     def arrow_set_type(self, src, aid, tid):
         a = self.arrow_get(src, aid)
         if not a:
@@ -23731,28 +23764,69 @@ class WidgetManager(QObject):
     ARROW_SHOW_FADE = 0.45         # s que tardan en desvanecerse
     ARROW_BOOT_QUIET = 3.0         # al arrancar se colocan todos los widgets: eso no cuenta como moverlos
 
-    def _arrow_presence(self, wid, now):
-        w = self.widgets.get(wid)
-        if w is None:
-            return 0.0
-        if getattr(w, '_is_hovered', False) or getattr(w, '_is_window_dragging', False):
-            return 1.0
-        mv = getattr(w, '_moved_at', 0.0)
-        if mv < getattr(self, '_arrows_boot', 0.0) + self.ARROW_BOOT_QUIET:
-            mv = 0.0
-        t = max(getattr(w, '_hover_left_at', 0.0), mv)
-        if t <= 0.0:
-            return 0.0
-        dt = now - t
-        if dt <= self.ARROW_SHOW_HOLD:
-            return 1.0
-        return max(0.0, 1.0 - (dt - self.ARROW_SHOW_HOLD) / self.ARROW_SHOW_FADE)
+    def _arrow_levels(self, g, now):
+        """[PACK196] Nivel (0-1) de las flechas de cada widget, como los cables: el cursor REPOSA sobre el widget (sondeo de su posicion real,
+        con la espera 'hover_delay') -> 'hover_op'; mientras se arrastra el widget (o su padre) -> 'move_op', que dura 'move_hold' tras soltar.
+        Los cambios de nivel van con fundido de entrada / salida."""
+        lv = getattr(self, '_arrow_lv', None)
+        if lv is None:
+            lv = self._arrow_lv = {}
+        mv_at = getattr(self, '_arrow_move_at', None)
+        if mv_at is None:
+            mv_at = self._arrow_move_at = {}
+        last = getattr(self, '_arrow_lv_t', None)
+        dt = 0.0 if last is None else max(0.0, min(0.25, now - last))
+        self._arrow_lv_t = now
+        hov = None
+        if QApplication.mouseButtons() == Qt.NoButton:
+            try:
+                hit = self._note_hit_at(QCursor.pos())
+            except Exception:
+                hit = None
+            cand = getattr(self, '_arrow_hover_cand', None)
+            if hit is None:
+                self._arrow_hover_cand = None
+            else:
+                if cand is None or cand[0] != hit:
+                    cand = self._arrow_hover_cand = (hit, now)
+                if now - cand[1] >= max(0, int(g['hover_delay'])) / 1000.0:
+                    hov = hit
+        for wid, w in list(self.widgets.items()):
+            if getattr(w, '_is_window_dragging', False):
+                for d in [wid] + list(self.get_descendants(wid)):
+                    mv_at[d] = now
+        targets = {}
+        hold = max(0, int(g['move_hold'])) / 1000.0
+        for d, t in list(mv_at.items()):
+            if now - t <= hold:
+                targets[d] = max(0, min(100, int(g['move_op']))) / 100.0
+            else:
+                del mv_at[d]
+        if hov is not None:
+            targets[hov] = max(targets.get(hov, 0.0), max(0, min(100, int(g['hover_op']))) / 100.0)
+        fi, fo = max(0, int(g['fade_in'])) / 1000.0, max(0, int(g['fade_out'])) / 1000.0
+        pk = getattr(self, '_arrow_lv_peak', None)
+        if pk is None:
+            pk = self._arrow_lv_peak = {}
+        for wid in set(lv) | set(targets):
+            cur, tgt = lv.get(wid, 0.0), targets.get(wid, 0.0)
+            if tgt > cur:                                  # como los cables: llega a su nivel en 'fade_in' ms, sea cual sea ese nivel
+                cur = tgt if fi <= 0 else min(tgt, cur + tgt * dt / fi)
+            elif tgt < cur:                                # y se apaga desde donde estaba en 'fade_out' ms
+                cur = tgt if fo <= 0 else max(tgt, cur - max(pk.get(wid, cur), 0.05) * dt / fo)
+            if cur <= 0.004:
+                lv.pop(wid, None)
+                pk.pop(wid, None)
+            else:
+                lv[wid] = cur
+                pk[wid] = max(cur, tgt) if tgt >= cur else pk.get(wid, cur)
+        return lv
 
     def _arrow_mode_migrate(self):
         """[PACK194] Una sola vez: quien tenia guardado 'Siempre visibles' (era lo predeterminado) pasa a 'al pasar el raton o al mover'."""
-        if self.global_state.get('arrow_mode_v194'):
+        if self.global_state.get('arrow_mode_v196'):
             return
-        self.global_state['arrow_mode_v194'] = True
+        self.global_state['arrow_mode_v196'] = True          # [PACK196] (antes arrow_mode_v194)
         raw = self.global_state.get('arrow_style')
         if raw:
             g = self.arrow_style_general()
@@ -23772,6 +23846,7 @@ class WidgetManager(QObject):
         pairs = {(s, a['to']) for s, a in allp}
         rects = {}
         _now = time.monotonic()
+        _lv = self._arrow_levels(g, _now) if (g['mode'] == 'hover' and allp) else {}          # [PACK196]
 
         def rect_of(wid):
             if wid not in rects:
@@ -23788,8 +23863,8 @@ class WidgetManager(QObject):
             if ra is None or rb is None:
                 continue
             fade = 1.0
-            if g['mode'] == 'hover':                      # [PACK194] al pasar el raton por uno de sus widgets o al moverlo; despues se desvanece
-                fade = max(self._arrow_presence(src, _now), self._arrow_presence(a['to'], _now))
+            if g['mode'] == 'hover':                      # [PACK196] como los cables: cursor reposando o arrastre de uno de sus widgets
+                fade = max(_lv.get(src, 0.0), _lv.get(a['to'], 0.0))
                 if fade <= 0.0:
                     continue
             stl = self.arrow_effective_style(a, g)
@@ -23803,7 +23878,7 @@ class WidgetManager(QObject):
             if ep is None:
                 continue
             out.append({'src': src, 'dst': a['to'], 'id': a['id'], 'p0': ep[0], 'p1': ep[1], 'style': stl,
-                        'label': str(a.get('label') or ''), 'lane': (a['to'], src) in pairs, 'fade': round(fade, 2), 'type': a.get('type') or ''})
+                        'label': str(a.get('label') or ''), 'lane': (a['to'], src) in pairs, 'fade': round(fade, 3), 'type': a.get('type') or ''})
         if gh and gh['src'] in self.widgets:                    # [PACK189] flecha provisional mientras se arrastra
             ra, pt = rect_of(gh['src']), gh['pt']
             if ra is not None:
@@ -23984,7 +24059,7 @@ class WidgetManager(QObject):
             if dlg.reset:
                 self.arrow_set(src, aid, style={})
             else:
-                self.arrow_set(src, aid, style={k: v for k, v in dlg.values().items() if k != 'mode' and v != base.get(k)})
+                self.arrow_set(src, aid, style={k: v for k, v in dlg.values().items() if k not in ARROW_GENERAL_ONLY and v != base.get(k)})
 
     def arrow_label_dialog(self, src, aid, parent=None):
         ar = self.arrow_get(src, aid)
@@ -24079,6 +24154,15 @@ class WidgetManager(QObject):
             for t in types:
                 a_ = add(sub, t['name'], lambda c, s=src, i=ar['id'], tid=t['id']: self.arrow_set_type(s, i, tid), checked=cur == t['id'])
                 a_.setIcon(QIcon(arrow_type_pixmap(self.arrow_effective_style({'type': t['id'], 'style': {}}), 60, 18)))
+            sub.addSeparator()
+            _eff = self.arrow_effective_style(ar)                 # [PACK196] color de esta flecha: el de su tipo o el de uno de sus widgets
+            _own = ar.get('style') or {}
+            _cm = None if not any(k in _own for k in ('color_from', 'color2_from', 'grad')) else (
+                'grad' if (_eff['grad'] and _eff['color_from'] == 'src' and _eff['color2_from'] == 'dst') else
+                ('src' if _eff['color_from'] == 'src' and not _eff['grad'] else ('dst' if _eff['color_from'] == 'dst' and not _eff['grad'] else 'own')))
+            for _k, _t in ((None, "Color: el de su tipo"), ('src', "Color: el del widget de origen"), ('dst', "Color: el del widget de destino"),
+                           ('grad', "Color: degradado del origen al destino")):
+                add(sub, _t, lambda c, s=src, i=ar['id'], k=_k: self.arrow_set_color_from(s, i, k), checked=_cm == _k)
             sub.addSeparator()
             add(sub, "Retocar solo esta flecha...", lambda s=src, i=ar['id']: self.edit_arrow_style_of(s, i),
                 tip="Color, grosor, punta, trazo y resplandor solo de esta flecha, encima de su tipo")

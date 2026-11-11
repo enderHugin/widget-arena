@@ -1,3 +1,15 @@
+## Pack 196 · 2026-11-11
+- **Las flechas se ven igual que los cables.** Antes dependían de los eventos de «entrar/salir» del widget y de cualquier movimiento de su ventana, y eso podía dejarlas encendidas (en Windows llegan movimientos sueltos, y un «salir» que no llega deja el widget como si siguiera con el ratón encima). Ahora usan el mismo mecanismo que los cables. Se sondea la **posición real del cursor**: cuando reposa sobre uno de sus widgets (origen o destino), sus flechas aparecen **tenues** tras una breve espera. **Mientras arrastras** uno de sus widgets (o su padre, que lo mueve) se ven a **opacidad plena**, siguen así un momento al soltarlo y luego se desvanecen. Mover un widget por programa ya no las enciende.
+- **Todo editable**, como en los cables: en *Ajustes ▸ Apariencia ▸ Flechas (apariencia y visibilidad)…*, pestaña nueva **«Visibilidad»**:
+  - opacidad al pasar el ratón (**35 %** por defecto, como los cables; se multiplica por la de cada flecha);
+  - espera con el cursor encima (80 ms);
+  - opacidad mientras se arrastra (100 %) y cuánto dura al soltar (600 ms);
+  - fundido de entrada (150 ms) y de salida (220 ms).
+  Son ajustes generales: los tipos y los retoques de cada flecha no los cambian.
+- Si seguías con «Siempre visibles» guardado, pasa una vez al modo de los cables; si después lo vuelves a elegir, se respeta.
+- **Color de cada flecha según sus widgets, directo en el menú:** *Aspecto de las flechas ▸ (la flecha)* tiene ahora **Color: el de su tipo / el del widget de origen / el del widget de destino / degradado del origen al destino** (marcado el actual). Usa el mismo color que los cables, y si el widget cambia de color, la flecha lo sigue. Antes solo se podía desde «Retocar solo esta flecha…».
+- **Arreglo:** el resplandor no seguía el color de la flecha. Usaba solo el primer color, así que con degradado (por ejemplo, del origen al destino) el final de la flecha brillaba del color equivocado. Ahora el resplandor lleva el mismo degradado que el trazo.
+
 ## Pack 195 · 2026-11-11
 - **Arrastrar al revés borra la flecha.** Con el gesto de flechas (Alt + Mayús + arrastrar), si arrastras en sentido contrario a una flecha que ya existe (de su destino a su origen), al soltar se **borra** esa flecha. Antes de soltar, la flecha provisional se pone roja, a rayas y con la etiqueta «✕ borrar». Repetir el arrastre en el mismo sentido con otro tipo cambia el tipo de la flecha, sin duplicarla.
 - **La rueda elige el tipo de flecha mientras la creas.** Durante el arrastre (antes de soltar), cada paso de la rueda pasa al tipo siguiente o al anterior. La flecha provisional ya se dibuja con ese tipo y un aviso dice cuál es («Flecha: Rayas (3/7)»). Funciona con el cursor sobre cualquier widget, y también cuando con Alt pulsado el sistema manda la rueda como horizontal; las ruedas finas o de panel táctil acumulan hasta completar un paso. El siguiente arrastre empieza con el último tipo usado.
