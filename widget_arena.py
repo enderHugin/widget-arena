@@ -3257,6 +3257,15 @@ class StickerWindow(QMainWindow):
         except Exception as e_cb:
             log_warn(self.widget_id, f"_canon_buttons: {e_cb}")
 
+    def load_template_data_frame(self, data):
+        """[PACK188] Carga los datos de un marco regenerado: el marco ya crece desde su centro y la capa 2 sigue a su hueco, asi que la
+        compensacion de PACK147 (pensada para cambiar solo el ancho/alto del papel) no debe sumarse y desplazar la ventana otra vez."""
+        self._l2_keep_off = True
+        try:
+            self.load_template_data(data)
+        finally:
+            self._l2_keep_off = False
+
     def load_template_data(self, data):
         log_debug(self.widget_id, "Cargando datos del widget...")
         _ensure_generated_layer(data)          # [PACK112] la imagen de una nota base no viaja en los estilos: si falta, se dibuja de nuevo
@@ -3290,7 +3299,7 @@ class StickerWindow(QMainWindow):
         """[PACK147] Si solo cambia el ANCHO/ALTO del papel (mismo contenido y giro, ventana sin mover), devuelve el punto de pantalla donde
         debe seguir su centro: el actual, desplazado solo por lo que se haya movido la esquina (X/Y). None = no hay nada que compensar."""
         prev = getattr(self, '_l2_prev', None)
-        if prev is None or not self.layer2_label.isVisible():
+        if prev is None or not self.layer2_label.isVisible() or getattr(self, '_l2_keep_off', False):     # [PACK188] _l2_keep_off: lo cambia el marco, que ya crece desde su centro
             return None
         l2 = data.get('layer2') or {}
         g = l2.get('geometry') or {}
@@ -14033,7 +14042,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 187                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 188                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -27196,7 +27205,7 @@ class WidgetManager(QObject):
         win = self.widgets.get(widget_id)
         if win is not None:
             win._paper_frame_cache = None
-            win.load_template_data(td)
+            win.load_template_data_frame(td)
             try:
                 win._recalculate_and_normalize()
             except Exception as e:
@@ -27253,7 +27262,7 @@ class WidgetManager(QObject):
         td = copy.deepcopy(st['template_data'])
         self._frame_fill_td(td, st['template_data'], p, rel, fit)
         win._paper_frame_cache = None
-        win.load_template_data(td)
+        win.load_template_data_frame(td)
 
     def _frame_dialog(self, widget_id, editing):
         """[PACK133] Abre el editor de marcos con vista en vivo sobre el widget y, si se acepta, devuelve (parametros, ajustar)."""
@@ -27265,7 +27274,7 @@ class WidgetManager(QObject):
                 self._live_wid = None
                 if state['on'] and win is not None:
                     win._paper_frame_cache = None
-                    win.load_template_data(st['template_data'])
+                    win.load_template_data_frame(st['template_data'])
                     state['on'] = False
                 return
             self._live_wid = widget_id           # mientras tanto, guardar o cambiar de set no toma la vista previa como estado
