@@ -14065,7 +14065,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 189                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 190                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -20160,7 +20160,7 @@ def _gesture_rows(key, layer_sel=0, linking=None):
         if cond is None or (cond == 'layer') == bool(layer_sel):
             rows.append((kind, text))
     if key and key == _ARROW_GESTURE_KEY[0]:          # [PACK189]
-        rows.append(("Arrastrar", "FLECHA: arrastra hasta otro widget y suelta sobre \u00e9l para crear una flecha hacia \u00e9l (Ajustes > Flechas: gesto de arrastre)"))
+        rows.append(("Arrastrar", "FLECHA: arrastra hasta otro widget y suelta sobre \u00e9l para crear una flecha hacia \u00e9l (Ajustes > Apariencia > Flechas: gesto de arrastre)"))
     return rows
 
 
@@ -23396,6 +23396,14 @@ class WidgetManager(QObject):
             else:
                 self.arrow_set(src, aid, style={k: v for k, v in dlg.values().items() if k != 'mode' and v != g.get(k)})
 
+    def arrow_label_dialog(self, src, aid, parent=None):
+        ar = self.arrow_get(src, aid)
+        if not ar:
+            return
+        text, ok = QInputDialog.getText(parent or self.dialog_parent, "Etiqueta de la flecha", "Texto (vac\u00edo = sin etiqueta):", text=ar.get('label', ''))
+        if ok:
+            self.arrow_set(src, aid, label=text.strip()[:60])
+
     def edit_widget_arrows(self, widget_id):
         dlg = ArrowsDialog(self, widget_id, self.dialog_parent)
         dlg.exec()
@@ -23435,6 +23443,27 @@ class WidgetManager(QObject):
                 a.triggered.connect(lambda checked=False, t=wid: self.add_arrow(widget_id, t))
                 sub.addAction(a)
             am.addMenu(sub)
+        if not full:
+            mine = self.arrows_of(widget_id)
+            if mine:
+                am.addSeparator()
+                hd = am.addAction("Cada flecha (apariencia, etiqueta, sentido):")
+                hd.setEnabled(False)
+            for src, ar in mine[:16]:
+                outgoing = src == widget_id
+                other = ar['to'] if outgoing else src
+                lab = "%s %s%s" % ("\u2192" if outgoing else "\u2190", self._get_widget_display_name(other)[:40], ("  \u00ab%s\u00bb" % ar['label'][:20]) if ar.get('label') else "")
+                sub = QMenu(lab, am)
+                for text, fn in (("Apariencia de esta flecha...", lambda s=src, i=ar['id']: self.edit_arrow_style_of(s, i)),
+                                 ("Etiqueta...", lambda s=src, i=ar['id']: self.arrow_label_dialog(s, i)),
+                                 ("Invertir el sentido", lambda s=src, i=ar['id']: self.arrow_invert(s, i)),
+                                 ("Borrar esta flecha", lambda s=src, i=ar['id']: self.arrow_remove(s, i))):
+                    a_ = QAction(text, self)
+                    a_.triggered.connect(lambda checked=False, f=fn: QTimer.singleShot(0, f))
+                    sub.addAction(a_)
+                am.addMenu(sub)
+            if mine:
+                am.addSeparator()
         add(am, "Flechas de este widget...", lambda: self.edit_widget_arrows(widget_id),
             tip="Las que salen de \u00e9l y las que le llegan: cambiar su apariencia, su etiqueta o su sentido, o borrarlas")
         add(am, "Quitar todas las flechas de este widget", lambda: self.arrows_clear_of(widget_id), enabled=bool(n) or full)
@@ -24015,6 +24044,14 @@ class WidgetManager(QObject):
         cables_action = QAction("Cables (opacidad y grosor)...", self)
         cables_action.triggered.connect(self._edit_cable_settings)
         look_menu.addAction(cables_action)
+        arrow_action = QAction("Flechas (apariencia y visibilidad)...", self)          # [PACK186] [PACK190] en Apariencia, junto a los cables
+        arrow_action.setToolTip("Aspecto general de las flechas entre widgets (la de cada flecha se cambia en el men\u00fa del widget: Relaciones > Flechas)")
+        arrow_action.triggered.connect(self.edit_arrow_style)
+        look_menu.addAction(arrow_action)
+        arrow_g_action = QAction("Flechas: gesto de arrastre...", self)          # [PACK189] [PACK190]
+        arrow_g_action.setToolTip("Teclas con las que, arrastrando de un widget a otro, se crea una flecha (por defecto Alt + May\u00fas)")
+        arrow_g_action.triggered.connect(self.edit_arrow_gesture)
+        look_menu.addAction(arrow_g_action)
         crown_cfg_action = QAction("Corona del ancestro (tama\u00f1o, posici\u00f3n, opacidad)...", self)      # [PACK79]
         crown_cfg_action.triggered.connect(lambda checked=False: self._edit_crown_settings())
         look_menu.addAction(crown_cfg_action)
@@ -24068,13 +24105,6 @@ class WidgetManager(QObject):
         child_cfg_action = QAction("Tipo de hijo al crear con el rat\u00f3n...", self)            # [PACK62]
         child_cfg_action.triggered.connect(self.edit_child_types)
         cfg_menu.insertAction(integ_menu.menuAction(), child_cfg_action)
-        arrow_action = QAction("Flechas: apariencia y visibilidad...", self)          # [PACK186]
-        arrow_action.triggered.connect(self.edit_arrow_style)
-        cfg_menu.insertAction(integ_menu.menuAction(), arrow_action)
-        arrow_g_action = QAction("Flechas: gesto de arrastre...", self)          # [PACK189]
-        arrow_g_action.setToolTip("Teclas con las que, arrastrando de un widget a otro, se crea una flecha (por defecto Alt + May\u00fas)")
-        arrow_g_action.triggered.connect(self.edit_arrow_gesture)
-        cfg_menu.insertAction(integ_menu.menuAction(), arrow_g_action)
         snap_action = QAction("Im\u00e1n y cuadr\u00edcula al mover...", self)          # [PACK185]
         snap_action.setToolTip("May\u00fas al arrastrar alinea con otros widgets y la pantalla; Ctrl+May\u00fas ajusta a una cuadr\u00edcula")
         snap_action.triggered.connect(self.edit_snap_settings)
