@@ -14080,7 +14080,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 198                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 199                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22360,7 +22360,7 @@ def _arrow_bounds(p0, p1, st, label, reverse_lane):
     return r
 
 
-def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
+def paint_arrow(p, p0, p1, st, label='', reverse_lane=False, fast=False):
     """[PACK197] Pinta una flecha de p0 a p1. Si es semitransparente o tiene resplandor, se pinta entera OPACA en una imagen (guardada en
     cache) y se le aplica la opacidad una sola vez: asi no se ven el trazo por dentro del halo ni los solapes entre piezas."""
     import math
@@ -22371,8 +22371,8 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
     op = max(0.0, min(1.0, (st['op_near'] + (st['op_far'] - st['op_near']) * t) / 100.0))
     if op <= 0.0:
         return
-    if op >= 0.995 and int(st['glow']) <= 0:
-        return _paint_arrow_raw(p, p0, p1, st, label, reverse_lane)
+    if fast or (op >= 0.995 and int(st['glow']) <= 0):
+        return _paint_arrow_raw(p, p0, p1, st, label, reverse_lane)          # [PACK199] la ventana de flechas: directo (fondo transparente)
     try:
         dpr = float(p.device().devicePixelRatioF()) if p.device() is not None else 1.0
     except Exception:
@@ -22409,7 +22409,7 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
     p.restore()
 
 
-def _arrow_taper_draw(p, path, w0, w1, pat_px, round_cap, brush, extra=0.0):
+def _arrow_taper_draw(p, path, w0, w1, pat_px, round_cap, brush, extra=0.0, coarse=False):
     """[PACK198] Trazo cuyo grosor pasa de w0 a w1 (con rayas o puntos opcionales, en px): tramos cortos, cada uno con su grosor, que Qt pinta
     de forma nativa (antes se construia un contorno punto a punto, en Python). Se pinta opaco (o en la imagen de grupo), asi que los solapes
     entre tramos no se notan."""
@@ -22447,7 +22447,7 @@ def _arrow_taper_draw(p, path, w0, w1, pat_px, round_cap, brush, extra=0.0):
         d = ts[k] - ts[k - 1]
         f = (s - ts[k - 1]) / d if d > 1e-9 else 0.0
         return QPointF(tx[k - 1] + (tx[k] - tx[k - 1]) * f, ty[k - 1] + (ty[k] - ty[k - 1]) * f)
-    step = max(3.0, Lp / 140.0)
+    step = max(4.0, Lp / (36.0 if coarse else 80.0))          # [PACK199] el grosor cambia despacio: bastan menos tramos
     p.setBrush(Qt.NoBrush)
 
     def piece(a, b):
@@ -22597,7 +22597,8 @@ def _paint_arrow_raw(p, p0, p1, st, label='', reverse_lane=False, _op=None, _dpr
     path.cubicTo(c1, c2, s1)
     p.save()
     p.setRenderHint(QPainter.Antialiasing, True)
-    p.setOpacity(max(0.0, min(1.0, op)))
+    op = max(0.0, min(1.0, op))
+    p.setOpacity(op)
     col, col2 = QColor(st['color']), QColor(st['color2'])
     brush = QBrush(col)
     if st['grad']:
@@ -22632,8 +22633,37 @@ def _paint_arrow_raw(p, p0, p1, st, label='', reverse_lane=False, _op=None, _dpr
             heads.append((poly, mode, ww))
     body_cap = Qt.RoundCap if (pat and st['dash'] in ('dot', 'dashdot')) else cap
     targs = (w0, w1, [x * (w0 + w1) / 2.0 for x in pat] if pat else None, rc) if taper else None
-    if int(st['glow']) > 0:                          # [PACK197] halo suave alrededor de TODA la flecha, del color de la flecha
-        _arrow_glow_paint(p, path, None, heads, st, col, col2, p0, p1, max(w, w0, w1), body_cap, pat, _dpr, taper_args=targs)
+
+    # [PACK199] cada pieza con su propia transparencia y en modo "reemplazar": donde se solapan halo, trazo, punta y cola manda la ultima
+    # pieza y la opacidad no se acumula (sin esqueleto), sin imagen intermedia.
+    def mk(alpha):
+        a1, a2 = QColor(col), QColor(col2)
+        a1.setAlphaF(max(0.0, min(1.0, alpha)))
+        a2.setAlphaF(max(0.0, min(1.0, alpha)))
+        if st['grad']:
+            lg = QLinearGradient(p0, p1)
+            lg.setColorAt(0.0, a1)
+            lg.setColorAt(1.0, a2)
+            return QBrush(lg)
+        return QBrush(a1)
+    p.setOpacity(1.0)
+    p.setCompositionMode(QPainter.CompositionMode_Source)
+    if int(st['glow']) > 0:                          # resplandor como el de los cables: dos trazos mas anchos y transparentes debajo
+        gs = max(1.0, float(st['glow_size']))
+        ga = min(1.0, int(st['glow']) / 100.0)
+        for ext, k in ((gs * 2.0, 0.22), (gs, 0.42)):
+            gb = mk(op * ga * k)
+            if targs is not None:
+                _arrow_taper_draw(p, path, targs[0], targs[1], None, True, gb, extra=ext, coarse=True)
+            else:
+                gp = QPen(gb, w + ext)
+                gp.setCapStyle(Qt.RoundCap)
+                gp.setJoinStyle(Qt.RoundJoin)
+                p.setPen(gp)
+                p.setBrush(Qt.NoBrush)
+                p.drawPath(path)
+            _arrow_heads_paint(p, heads, gb, ext)
+    brush = mk(op)
     if targs is not None:
         _arrow_taper_draw(p, path, targs[0], targs[1], targs[2], targs[3], brush)
     else:
@@ -22646,6 +22676,8 @@ def _paint_arrow_raw(p, p0, p1, st, label='', reverse_lane=False, _op=None, _dpr
         p.setBrush(Qt.NoBrush)
         p.drawPath(path)
     _arrow_heads_paint(p, heads, brush, 0.0)
+    p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    p.setOpacity(op)
     if label:
         mid = path.pointAtPercent(0.5)
         f = QFont()
@@ -22690,6 +22722,7 @@ class _ArrowOverlay(QWidget):
         gdirty = dirty.translated(o)
         bnds = getattr(self, 'bounds', {})
         p.translate(-o.x(), -o.y())
+        drawn = []                                         # [PACK199] zonas ya pintadas en este repintado
         for it in self.items:
             b_ = bnds.get((it['src'], it['id']))
             if b_ is not None and not b_[0].intersects(gdirty):
@@ -22699,7 +22732,12 @@ class _ArrowOverlay(QWidget):
                 box = QRectF(it['p0'], it['p1']).normalized().adjusted(-200, -200, 200, 200).toAlignedRect()
                 regs = [(k, r) for k, r in regs if r.boundingRect().intersects(box)]
             if not regs:
-                paint_arrow(p, it['p0'], it['p1'], it['style'], it['label'], it['lane'])
+                # [PACK199] directa (modo reemplazar, sin imagen intermedia) salvo si se cruza con otra ya pintada: entonces se compone
+                # aparte para no borrarla
+                cross = b_ is not None and any(b_[0].intersects(d_) for d_ in drawn)
+                paint_arrow(p, it['p0'], it['p1'], it['style'], it['label'], it['lane'], fast=not cross)
+                if b_ is not None:
+                    drawn.append(b_[0])
                 continue
             # un widget transparente que no es ni el origen ni el destino: la flecha se ve difuminada a traves de el
             union = QRegion()
@@ -22707,8 +22745,11 @@ class _ArrowOverlay(QWidget):
                 union = union.united(r)
             p.save()
             p.setClipRegion(QRegion(QRect(o, self.size())).subtracted(union))
-            paint_arrow(p, it['p0'], it['p1'], it['style'], it['label'], it['lane'])
+            cross = b_ is not None and any(b_[0].intersects(d_) for d_ in drawn)          # [PACK199] igual: si se cruza, aparte
+            paint_arrow(p, it['p0'], it['p1'], it['style'], it['label'], it['lane'], fast=not cross)
             p.restore()
+            if b_ is not None:
+                drawn.append(b_[0])
             for _k, reg in regs:
                 bb = reg.boundingRect().intersected(QRect(o, self.size()))
                 if bb.isEmpty():
@@ -22717,7 +22758,7 @@ class _ArrowOverlay(QWidget):
                 img.fill(Qt.transparent)
                 p2 = QPainter(img)
                 p2.translate(-bb.topLeft())
-                paint_arrow(p2, it['p0'], it['p1'], it['style'], it['label'], it['lane'])
+                paint_arrow(p2, it['p0'], it['p1'], it['style'], it['label'], it['lane'], fast=True)
                 p2.end()
                 al = np.frombuffer(img.constBits(), dtype=np.uint8).reshape((img.height(), img.width(), 4))[:, :, 3]
                 rows, cols = np.flatnonzero(al.any(axis=1)), np.flatnonzero(al.any(axis=0))

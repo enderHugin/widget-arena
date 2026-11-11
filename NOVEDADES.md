@@ -1,3 +1,9 @@
+## Pack 199 · 2026-11-11
+- **Flechas gordas con resplandor sin bajada de fps.** El pack 198 seguía siendo pesado con flechas gruesas y resplandor amplio, sobre todo con la pantalla escalada (125–150 %, lo habitual en Windows): una flecha gorda en diagonal costaba unos 55 ms por fotograma, y ahora unos 7. En arrastres normales con flechas gordas, de 4–14 ms a 1,3–3,8 ms.
+- **Resplandor como el de los cables:** dos trazos más anchos y muy transparentes alrededor del trazo, la punta y la cola, sin difuminados ni imágenes intermedias. Sigue el grosor variable y el degradado. «Intensidad» y «Alcance» funcionan igual (el alcance es lo que sobresale a cada lado).
+- **Sin esqueleto, sin imagen intermedia:** en la ventana de flechas, cada pieza (halo, trazo, punta, cola) lleva su propia transparencia y se pinta reemplazando lo que hay debajo, así que donde se solapan no se acumula opacidad. Solo cuando una flecha se cruza con otra ya pintada se compone aparte, para no borrarla.
+- Las vistas previas y las miniaturas (diálogos de aspecto y de tipos, menús) se pintan como antes.
+
 ## Pack 198 · 2026-11-11
 - **Flechas sin bajada de fps (mismo aspecto).** Medido en un arrastre con una flecha, en milisegundos por fotograma:
 
