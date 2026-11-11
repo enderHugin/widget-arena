@@ -1,3 +1,8 @@
+## Pack 192 · 2026-11-11
+- **Flechas con grosor distinto al salir y al llegar.** En la apariencia de las flechas (la general y la de cada flecha), pestaña *Opacidad y grosor*: **«Grosor al salir del origen»** y **«Grosor al llegar al destino»**, en % del grosor que ya toca por la longitud (100 % = como antes). Así se hacen flechas que empiezan finas y acaban gruesas, o al revés; funciona también con rayas, puntos y resplandor. La punta (y la cola) crecen con el grosor del extremo para no quedar más estrechas que el trazo.
+- **Colores tomados de los widgets, como los cables.** Pestaña *Color*: el color de salida y el segundo color (el de la punta, con degradado) pueden ser **el color elegido**, **el del widget de origen** o **el del widget de destino** (con el mismo tono más vivo que usan los cables). Origen → destino con degradado reproduce el aspecto de los cables. Si cambia el color de un widget, sus flechas lo siguen. La vista previa del diálogo muestra un origen amarillo y un destino azul para verlo.
+- **Arreglo:** con flechas semitransparentes se veía una zona más opaca donde el trazo se junta con la punta o la cola. Ahora trazo, punta y cola se pintan como una sola figura.
+
 ## Pack 191 · 2026-11-11
 - **Corrección de sitio:** *Flechas: gesto de arrastre…* no es apariencia (decide qué teclas crean flechas al arrastrar), así que sale de Apariencia y queda en **Ajustes**, junto a *Tipo de hijo al crear con el ratón…* e *Imán y cuadrícula al mover…*. En **Ajustes ▸ Apariencia** queda solo *Flechas (apariencia y visibilidad)…*, junto a *Cables*, y ahora, igual que Cables, también se ve en modo usuario.
 

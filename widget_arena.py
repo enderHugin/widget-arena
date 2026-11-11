@@ -14065,7 +14065,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 191                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 192                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22092,6 +22092,8 @@ from PySide6.QtGui import QPolygonF
 ARROW_DEFAULTS = {
     'mode': 'always',                       # always | hover | never (solo ajuste general)
     'color': '#ff9f43', 'grad': False, 'color2': '#ffd166',
+    'color_from': 'fixed', 'color2_from': 'fixed',          # [PACK192] fixed | src | dst: el color elegido o el del widget de origen / destino
+    'w_start': 100, 'w_end': 100,                           # [PACK192] grosor al salir y al llegar (% del grosor segun la longitud)
     'op_near': 100, 'op_far': 60, 'len_near': 300, 'len_far': 1500,
     'w_near': 2.5, 'w_far': 1.5,
     'curve': 25, 'curve_far': 50, 'gap': 4,
@@ -22100,6 +22102,95 @@ ARROW_DEFAULTS = {
     'glow': 0, 'glow_size': 6,
     'label_size': 11, 'label_color': '#ffffff', 'label_bg': '#1f2737', 'label_bg_op': 75,
 }
+
+
+ARROW_COLOR_FROM = (('fixed', "El color elegido"), ('src', "El del widget de origen"), ('dst', "El del widget de destino"))
+
+
+def arrow_resolve_colors(st, src_col=None, dst_col=None):
+    """[PACK192] Cambia 'color' / 'color2' por el color del widget de origen o de destino si el estilo lo pide (mismo tono que los cables)."""
+    out = dict(st)
+    for key in ('color', 'color2'):
+        frm = out.get(key + '_from', 'fixed')
+        c = src_col if frm == 'src' else (dst_col if frm == 'dst' else None)
+        if c:
+            try:
+                out[key] = _cable_color(c, 255).name()
+            except Exception:
+                pass
+    return out
+
+
+def _arrow_taper_path(path, w0, w1, pat_px, round_cap):
+    """[PACK192] Contorno relleno de un trazo cuyo grosor pasa de w0 (salida) a w1 (llegada), con trazos/huecos opcionales (en px)."""
+    import math
+    from PySide6.QtGui import QPolygonF
+    Lp = path.length()
+    out = QPainterPath()
+    out.setFillRule(Qt.WindingFill)
+    if Lp < 1.0:
+        return out
+    step = max(1.5, Lp / 400.0)
+
+    def at(s):
+        s = max(0.0, min(Lp, s))
+        return path.pointAtPercent(path.percentAtLength(s))
+
+    def wid(s):
+        return max(0.2, w0 + (w1 - w0) * (s / Lp))
+
+    def piece(a, b):
+        ss = [a]
+        k = math.floor(a / step) + 1
+        while k * step < b:
+            ss.append(k * step)
+            k += 1
+        ss.append(b)
+        pts = [at(s) for s in ss]
+        if len(pts) < 2:
+            return
+        left, right, us = [], [], []
+        for i, s in enumerate(ss):
+            j0, j1 = max(0, i - 1), min(len(pts) - 1, i + 1)
+            tx, ty = pts[j1].x() - pts[j0].x(), pts[j1].y() - pts[j0].y()
+            n = math.hypot(tx, ty)
+            if n < 1e-9:
+                q, q2 = at(s - 0.5), at(s + 0.5)
+                tx, ty = q2.x() - q.x(), q2.y() - q.y()
+                n = math.hypot(tx, ty) or 1.0
+            ux, uy = tx / n, ty / n
+            nx, ny = -uy, ux
+            r = wid(s) / 2.0
+            left.append(QPointF(pts[i].x() + nx * r, pts[i].y() + ny * r))
+            right.append(QPointF(pts[i].x() - nx * r, pts[i].y() - ny * r))
+            us.append((ux, uy, nx, ny, r))
+        poly = list(left)
+        if round_cap:                                  # media luna de la punta: de la izquierda a la derecha pasando por delante
+            ux, uy, nx, ny, r = us[-1]
+            c = pts[-1]
+            for kk in range(1, 8):
+                f = math.pi * kk / 8.0
+                poly.append(QPointF(c.x() + r * (nx * math.cos(f) + ux * math.sin(f)), c.y() + r * (ny * math.cos(f) + uy * math.sin(f))))
+        poly += list(reversed(right))
+        if round_cap:                                  # y la de la cola, pasando por detras
+            ux, uy, nx, ny, r = us[0]
+            c = pts[0]
+            for kk in range(1, 8):
+                f = math.pi * kk / 8.0
+                poly.append(QPointF(c.x() - r * (nx * math.cos(f) + ux * math.sin(f)), c.y() - r * (ny * math.cos(f) + uy * math.sin(f))))
+        out.addPolygon(QPolygonF(poly))
+        out.closeSubpath()
+    if not pat_px:
+        piece(0.0, Lp)
+        return out
+    s, i = 0.0, 0
+    while s < Lp:
+        seg = max(0.05, pat_px[i % len(pat_px)])
+        if i % 2 == 0:
+            piece(s, min(Lp, s + seg))
+        s += seg
+        i += 1
+    return out
 
 
 def arrow_endpoints(ra, rb, gap=0.0):
@@ -22171,6 +22262,8 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
     c2 = QPointF(p0.x() + dx * 2 / 3.0 + nx * off, p0.y() + dy * 2 / 3.0 + ny * off)
     hs = max(4.0, float(st['head_size']))
     head, tail = st['head'], st['tail']
+    _ws, _we = w * max(5, int(st.get('w_start', 100))) / 100.0, w * max(5, int(st.get('w_end', 100))) / 100.0
+    hs_h, hs_t = max(hs, _we * 2.6), max(hs, _ws * 2.6)          # [PACK192] la punta (y la cola) nunca mas estrechas que el trazo
 
     def unit(a, b):
         ex, ey = b.x() - a.x(), b.y() - a.y()
@@ -22180,11 +22273,11 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
     us = unit(c1, p0)                                  # direccion en la salida (hacia fuera del trazo)
     s0, s1 = QPointF(p0), QPointF(p1)
     if head in ('triangle', 'diamond', 'circle'):
-        k = hs * 0.7
+        k = hs_h * 0.7
         s1 = QPointF(p1.x() - ue[0] * k, p1.y() - ue[1] * k)
         c2 = QPointF(c2.x() - ue[0] * k, c2.y() - ue[1] * k)
     if tail in ('triangle', 'diamond', 'circle'):
-        k = hs * 0.7
+        k = hs_t * 0.7
         s0 = QPointF(p0.x() - us[0] * k, p0.y() - us[1] * k)
         c1 = QPointF(c1.x() - us[0] * k, c1.y() - us[1] * k)
     path = QPainterPath(s0)
@@ -22200,47 +22293,56 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False):
         g.setColorAt(1.0, col2)
         brush = QBrush(g)
     cap = Qt.RoundCap if st['cap'] == 'round' else Qt.FlatCap
+    w0, w1 = _ws, _we                                   # [PACK192] grosor al salir y al llegar
+    pat = {'dash': [4.0, 3.0], 'dot': [0.1, 2.6], 'dashdot': [4.0, 2.0, 0.1, 2.0]}.get(st['dash'])
+    rc = st['cap'] == 'round' or st['dash'] in ('dot', 'dashdot')
+    taper = abs(w0 - w1) > 0.05
+    from PySide6.QtGui import QPainterPathStroker
+
+    def stroke(src_path, width, capst, dashes=None):
+        ps = QPainterPathStroker()
+        ps.setWidth(max(0.2, width))
+        ps.setCapStyle(capst)
+        ps.setJoinStyle(Qt.RoundJoin)
+        if dashes:
+            ps.setDashPattern(dashes)
+        return ps.createStroke(src_path)
     if int(st['glow']) > 0:
         gc = QColor(col)
         gc.setAlpha(int(255 * min(1.0, int(st['glow']) / 100.0) * 0.45))
-        pen = QPen(gc, w + 2 * float(st['glow_size']))
-        pen.setCapStyle(Qt.RoundCap)
-        p.setPen(pen)
-        p.setBrush(Qt.NoBrush)
-        p.drawPath(path)
-    pen = QPen(brush, w)
-    pen.setCapStyle(cap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    pat = {'dash': [4.0, 3.0], 'dot': [0.1, 2.6], 'dashdot': [4.0, 2.0, 0.1, 2.0]}.get(st['dash'])
-    if pat:
-        pen.setDashPattern(pat)
-        if st['dash'] in ('dot', 'dashdot'):
-            pen.setCapStyle(Qt.RoundCap)
-    p.setPen(pen)
-    p.setBrush(Qt.NoBrush)
-    p.drawPath(path)
-    for kind, tip, u, colr in ((head, p1, ue, col2 if st['grad'] else col), (tail, p0, us, col)):
+        g2 = 2 * float(st['glow_size'])
+        p.setPen(Qt.NoPen)
+        p.setBrush(gc)
+        p.drawPath(_arrow_taper_path(path, w0 + g2, w1 + g2, None, True) if taper else stroke(path, w + g2, Qt.RoundCap))
+    # trazo, punta y cola en UNA sola figura: con transparencia no quedan solapes mas oscuros
+    if taper:
+        wm = (w0 + w1) / 2.0
+        body = _arrow_taper_path(path, w0, w1, [x * wm for x in pat] if pat else None, rc)
+    else:
+        body = stroke(path, w, Qt.RoundCap if (pat and st['dash'] in ('dot', 'dashdot')) else cap, pat)
+    shape = body
+    for kind, tip, u in ((head, p1, ue), (tail, p0, us)):
         if kind in ('', 'none', None):
             continue
-        poly, mode = _arrow_head_poly(kind, tip, u[0], u[1], hs, w)
+        ww = w1 if tip is p1 else w0
+        poly, mode = _arrow_head_poly(kind, tip, u[0], u[1], hs_h if tip is p1 else hs_t, ww)
         if poly is None:
             continue
+        piece = QPainterPath()
         if mode == 'fill':
-            p.setPen(Qt.NoPen)
-            p.setBrush(QBrush(colr))
-            p.drawPolygon(poly)
+            piece.addPolygon(poly)
+            piece.closeSubpath()
         elif mode == 'open':
-            hp = QPen(colr, w)
-            hp.setCapStyle(Qt.RoundCap)
-            hp.setJoinStyle(Qt.RoundJoin)
-            p.setPen(hp)
-            p.setBrush(Qt.NoBrush)
-            p.drawPolyline(poly)
+            pl = QPainterPath(poly[0])
+            for q in list(poly)[1:]:
+                pl.lineTo(q)
+            piece = stroke(pl, ww, Qt.RoundCap)
         elif mode == 'circle':
-            c_, r_ = poly[0], poly[1].x()
-            p.setPen(Qt.NoPen)
-            p.setBrush(QBrush(colr))
-            p.drawEllipse(c_, r_, r_)
+            piece.addEllipse(poly[0], poly[1].x(), poly[1].x())
+        shape = shape.united(piece)
+    p.setPen(Qt.NoPen)
+    p.setBrush(brush)
+    p.drawPath(shape)
     if label:
         mid = path.pointAtPercent(0.5)
         f = QFont()
@@ -22490,11 +22592,15 @@ class ArrowStyleDialog(QDialog):
     """Apariencia de las flechas (la misma familia de opciones que los cables, pero propia): color y degradado, opacidad y grosor segun la longitud,
     curvatura, punta y cola, trazo, resplandor y etiqueta. Con vista previa."""
     SPEC = (
-        ("Color", (('color', "Color", 'color', None), ('grad', "Degradado hasta un segundo color", 'check', None), ('color2', "Segundo color (punta)", 'color', None))),
+        ("Color", (('color_from', "Color (en la salida)", 'choice', ARROW_COLOR_FROM), ('color', "Color elegido", 'color', None),
+                   ('grad', "Degradado hasta un segundo color", 'check', None),
+                   ('color2_from', "Segundo color (en la punta)", 'choice', ARROW_COLOR_FROM), ('color2', "Segundo color elegido", 'color', None))),
         ("Opacidad y grosor", (
             ('len_near', "Es 'corta' hasta esta longitud", 'int', (0, 6000, " px")), ('len_far', "Es 'larga' desde esta longitud", 'int', (50, 10000, " px")),
             ('op_near', "Opacidad de una flecha corta", 'int', (5, 100, " %")), ('op_far', "Opacidad de una flecha larga", 'int', (5, 100, " %")),
-            ('w_near', "Grosor de una flecha corta", 'float', (0.3, 12.0, " px")), ('w_far', "Grosor de una flecha larga", 'float', (0.3, 12.0, " px")))),
+            ('w_near', "Grosor de una flecha corta", 'float', (0.3, 12.0, " px")), ('w_far', "Grosor de una flecha larga", 'float', (0.3, 12.0, " px")),
+            ('w_start', "Grosor al salir del origen (100 % = el de arriba)", 'int', (5, 500, " %")),
+            ('w_end', "Grosor al llegar al destino (100 % = el de arriba)", 'int', (5, 500, " %")))),
         ("Forma", (
             ('curve', "Curvatura (0 = recta; negativo = hacia el otro lado)", 'int', (-300, 300, " %")),
             ('curve_far', "Curvatura que conserva una flecha larga", 'int', (0, 400, " %")),
@@ -22622,13 +22728,17 @@ class _ArrowPreview(QWidget):
         p.fillRect(self.rect(), QColor(38, 42, 54))
         ra = QRect(24, self.height() // 2 - 26, 90, 52)
         rb = QRect(self.width() - 114, self.height() // 2 - 26, 90, 52)
-        for r in (ra, rb):
+        cols = ('#fef08a', '#a5d8ff')          # [PACK192] origen y destino de muestra
+        for r, c in zip((ra, rb), cols):
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(254, 240, 138))
+            p.setBrush(QColor(c))
             p.drawRoundedRect(r, 8, 8)
+        p.setPen(QColor(60, 60, 70))
+        p.drawText(ra, Qt.AlignCenter, "origen")
+        p.drawText(rb, Qt.AlignCenter, "destino")
         ep = arrow_endpoints(ra, rb, float(self.st['gap']))
         if ep is not None:
-            paint_arrow(p, ep[0], ep[1], self.st, "etiqueta")
+            paint_arrow(p, ep[0], ep[1], arrow_resolve_colors(self.st, cols[0], cols[1]), "etiqueta")
         p.end()
 
 
@@ -23131,6 +23241,9 @@ class WidgetManager(QObject):
                     out[k] = v
         if out['mode'] not in ('always', 'hover', 'never'):
             out['mode'] = 'always'
+        for k in ('color_from', 'color2_from'):          # [PACK192]
+            if out[k] not in ('fixed', 'src', 'dst'):
+                out[k] = 'fixed'
         return out
 
     def _arrow_changed(self, save=True):
@@ -23230,6 +23343,15 @@ class WidgetManager(QObject):
                 g[k] = v
         return g
 
+    def _arrow_widget_color(self, wid):
+        w = self.widgets.get(wid)
+        if w is None:
+            return None
+        try:
+            return w._get_layer2_button_color()
+        except Exception:
+            return None
+
     def arrow_items(self):
         """Lo que hay que pintar ahora: [{src, dst, id, p0, p1, style, label, lane}] (coordenadas globales)."""
         g = self.arrow_style_general()
@@ -23257,6 +23379,8 @@ class WidgetManager(QObject):
             if g['mode'] == 'hover' and not (getattr(self.widgets[src], '_is_hovered', False) or getattr(self.widgets[a['to']], '_is_hovered', False)):
                 continue
             stl = self.arrow_effective_style(a, g)
+            if stl.get('color_from', 'fixed') != 'fixed' or stl.get('color2_from', 'fixed') != 'fixed':          # [PACK192]
+                stl = arrow_resolve_colors(stl, self._arrow_widget_color(src), self._arrow_widget_color(a['to']))
             ep = arrow_endpoints(ra, rb, float(stl['gap']))
             if ep is None:
                 continue
@@ -23267,7 +23391,8 @@ class WidgetManager(QObject):
             if ra is not None:
                 gdst = self.widget_id_at(pt)
                 rb = rect_of(gdst) if gdst and gdst != gh['src'] else None
-                stl = dict(self.arrow_effective_style({'style': {}}, g))
+                stl = arrow_resolve_colors(self.arrow_effective_style({'style': {}}, g), self._arrow_widget_color(gh['src']),
+                                           self._arrow_widget_color(gdst) if (gdst and gdst != gh['src']) else None)
                 if rb is not None:
                     ep = arrow_endpoints(ra, rb, float(stl['gap']))                 # sobre un widget: asi quedara
                 else:
