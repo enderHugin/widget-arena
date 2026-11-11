@@ -3268,6 +3268,7 @@ class StickerWindow(QMainWindow):
 
     def load_template_data(self, data):
         log_debug(self.widget_id, "Cargando datos del widget...")
+        self._veil_rev = getattr(self, '_veil_rev', 0) + 1          # [PACK200] su contenido cambia: el difuminado de lo que se ve de el se rehace
         _ensure_generated_layer(data)          # [PACK112] la imagen de una nota base no viaja en los estilos: si falta, se dibuja de nuevo
         try:
             _keep = self._l2_keep_plan(data)           # [PACK147] cambiar el tamano del papel no lo desplaza: crece desde su centro
@@ -6191,6 +6192,7 @@ class StickerWindow(QMainWindow):
         self.update_window_mask()
 
     def _save_changes_to_manager(self):
+        self._veil_rev = getattr(self, '_veil_rev', 0) + 1          # [PACK200]
         
         if self.manager.app_is_quitting:
             return
@@ -6672,6 +6674,19 @@ class StickerWindow(QMainWindow):
     def paper_translucent(self):
         """True si el papel de esta nota deja ver lo que hay detras (la parte central de su imagen no es opaca)."""
         try:
+            _pmf = self.layer2_label.pixmap()
+            _fk = (_pmf.cacheKey() if _pmf is not None else 0, getattr(self, '_veil_rev', 0), self.layer2_label.isVisible())
+            _fc = getattr(self, '_transl_fast', None)
+            if _fc is not None and _fc[0] == _fk:
+                return _fc[1]                          # [PACK200] mismo contenido: misma respuesta (se pregunta en cada fotograma)
+            _v = self._paper_translucent_calc()
+            self._transl_fast = (_fk, _v)
+            return _v
+        except Exception:
+            return False
+
+    def _paper_translucent_calc(self):
+        try:
             if _widget_kind({'template_data': self.current_template_data}) != 'nota':
                 return False
             pm = self.layer2_label.pixmap()
@@ -6783,7 +6798,7 @@ class StickerWindow(QMainWindow):
         except Exception:
             return fb
 
-    def set_under_veil(self, global_regions, op_pct, blur_regions=None, blur_px=0):
+    def set_under_veil(self, global_regions, op_pct, blur_regions=None, blur_px=0, refresh=False):
         """Resta opacidad (hasta dejar op_pct %) a lo que este widget dibuja bajo esas regiones globales, y [PACK187] difumina (blur_px) lo que se
         ve bajo las regiones de blur_regions (widgets transparentes de encima que no son padre ni hijo de este)."""
         v = getattr(self, '_under_veil', None)
@@ -6811,26 +6826,27 @@ class StickerWindow(QMainWindow):
                 v.blur_region, v.blur_img = QRegion(), None
                 v.hide()
             return
-        if not breg.isEmpty():                          # [PACK187] lo que este widget dibuja bajo la zona, difuminado (sin el propio velo)
+        # [PACK200] se difumina el contenido ENTERO del widget una sola vez (y de nuevo solo si cambia su contenido, su tamano o el radio):
+        # al mover otro widget por encima solo cambia la zona que se muestra difuminada, no hay que capturar ni difuminar nada
+        bkey = (int(blur_px), self.central_widget.size().toTuple(), getattr(self, '_veil_rev', 0))
+        if not breg.isEmpty() and (refresh or v.blur_img is None or bkey != getattr(v, '_bkey_done', None)):
             v.skip = True
             try:
                 v.hide()
                 pm = self.central_widget.grab()
             finally:
                 v.skip = False
-            bb = breg.boundingRect().intersected(pm.rect())
-            if pm.isNull() or bb.isEmpty():
+            if pm.isNull():
                 breg = QRegion()
             else:
-                pad = 3 * int(blur_px) + 2
-                crop = bb.adjusted(-pad, -pad, pad, pad).intersected(pm.rect())
-                src = pm.toImage().copy(crop)
-                v.blur_img = _blur_image(src, int(blur_px))
-                v.blur_at = crop.topLeft()
+                v.blur_img = _blur_image(pm.toImage(), int(blur_px))
+                v.blur_at = QPoint(0, 0)
+                v._bkey_done = bkey
         if breg.isEmpty():
             v.blur_img = None
-        if reg == v.region and breg == v.blur_region and alpha == v.alpha and v.isVisible() and breg.isEmpty():
-            v.raise_()
+            v._bkey_done = None
+        if reg == v.region and breg == v.blur_region and alpha == v.alpha and v.isVisible() and (breg.isEmpty() or not refresh):
+            v.raise_()                                  # [PACK200] nada nuevo que pintar
             return
         v.setGeometry(self.central_widget.rect())
         v.region, v.alpha, v.blur_region = reg, alpha, breg
@@ -14080,7 +14096,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 199                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 200                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22711,6 +22727,13 @@ class _ArrowOverlay(QWidget):
     def paintEvent(self, e):
         if self.blank:
             return
+        _pt0 = time.perf_counter()
+        try:
+            self._paint_body(e)
+        finally:
+            self.layer.m._perf_add('flechas (pintado)', (time.perf_counter() - _pt0) * 1000)
+
+    def _paint_body(self, e):
         dirty = e.region().boundingRect()                  # [PACK198] solo la zona que ha cambiado
         p = QPainter(self)
         p.setCompositionMode(QPainter.CompositionMode_Source)
@@ -22804,23 +22827,51 @@ class ArrowLayer(QObject):
         m = self.m
         if not force and not self.has_arrows() and not any(ov.isVisible() for ov in self.overlays.values()):
             return                                         # [PACK198] sin flechas: nada que calcular
+        _pt0 = time.perf_counter()
+        try:
+            self._tick_body(force)
+        finally:
+            m._perf_add('flechas (calculo)', (time.perf_counter() - _pt0) * 1000)
+
+    def _tick_body(self, force=False):
+        m = self.m
         try:
             items = m.arrow_items()
         except Exception as e:
             log_warn("Flechas", "no se pudo calcular: %s" % e)
             return
         _tr = ()
+        tr_dirty = QRegion()
         if int(m.get_cable_param('_under_blur')) > 0 and items:          # [PACK187] si se mueve un widget transparente, lo que se ve a traves de el cambia
-            _tr = tuple(sorted((k, w.geometry().getRect()) for k, w in m.widgets.items() if w.isVisible() and w.paper_translucent()))
+            cur = {k: w.geometry() for k, w in m.widgets.items() if w.isVisible() and w.paper_translucent() and not w.layer1_editor.isVisible()}
+            _tr = tuple(sorted((k, g_.getRect()) for k, g_ in cur.items()))
+            prev = getattr(self, '_tr_geo', None) or {}
+            tc = getattr(self, 'tregs', None)
+            if tc is None:
+                tc = self.tregs = {}
+            for k in set(prev) | set(cur):                 # [PACK200] solo se recalculan las regiones de los que han cambiado
+                if prev.get(k) != cur.get(k):
+                    if k in prev:
+                        tr_dirty = tr_dirty.united(prev[k])
+                    if k in cur:
+                        tr_dirty = tr_dirty.united(cur[k])
+                        try:
+                            tc[k] = QRegion(m.widgets[k].paper_shape_global())
+                        except Exception:
+                            tc.pop(k, None)
+                    else:
+                        tc.pop(k, None)
+            self._tr_geo = cur
         sig = (m._arrow_rev, _tr, int(m.get_cable_param('_under_blur')),
                tuple((it['src'], it['id'], it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane'], it.get('fade', 1.0), it.get('type', '')) for it in items))
         if sig == self._sig and not force:
             return
-        full = force or self._sig is None or sig[:3] != self._sig[:3]          # [PACK198] cambio general (estilos, transparencias): todo
+        full = force or self._sig is None or sig[0] != self._sig[0] or sig[2] != self._sig[2]          # [PACK198] cambio general (estilos, ajustes): todo
         self._sig = sig
         self.items = items
         if full and int(m.get_cable_param('_under_blur')) > 0:
             self.tregs = m.translucent_regions()               # [PACK198] una vez por cambio, no en cada pintado
+            self._tr_geo = {k: m.widgets[k].geometry() for k in self.tregs if k in m.widgets}
         now = time.monotonic()
         screens = QApplication.screens()
         for scr in screens:
@@ -22847,7 +22898,8 @@ class ArrowLayer(QObject):
             dirty = QRegion()
             for k in set(oldb) | set(newb):
                 o_, n_ = oldb.get(k), newb.get(k)
-                if full or o_ is None or n_ is None or o_ != n_:
+                if (full or o_ is None or n_ is None or o_ != n_
+                        or (not tr_dirty.isEmpty() and n_ is not None and tr_dirty.intersects(n_[0]))):          # [PACK200] un transparente se movio por encima
                     if o_ is not None:
                         dirty = dirty.united(o_[0])
                     if n_ is not None:
@@ -30876,47 +30928,111 @@ class WidgetManager(QObject):
                            w.layer2_label.pixmap().cacheKey() if w.layer2_label.pixmap() is not None else 0)
                           for w in self._veil_order()))
 
+    def _perf_add(self, kind, ms):
+        d = getattr(self, '_perf_acc', None)
+        if d is None:
+            d = self._perf_acc = {}
+        a = d.setdefault(kind, [0.0, 0, 0.0])
+        a[0] += ms
+        a[1] += 1
+        a[2] = max(a[2], ms)
+
+    def _perf_flush(self):
+        d = getattr(self, '_perf_acc', None) or {}
+        self._perf_acc = {}
+        if not d or max(a[2] for a in d.values()) < 25.0 or time.monotonic() - getattr(self, '_perf_last', 0.0) < 5.0:
+            return
+        self._perf_last = time.monotonic()
+        try:
+            n_tr = sum(1 for w in self.widgets.values() if w.isVisible() and w.paper_translucent())
+            n_ar = len(self.arrows_all())
+        except Exception:
+            n_tr = n_ar = -1
+        parts = ", ".join("%s %.1f ms/vez (max %.1f, %d veces)" % (k, a[0] / max(1, a[1]), a[2], a[1]) for k, a in sorted(d.items()))
+        _perf_log("Lento en el ultimo medio segundo: %s | widgets %d, transparentes %d, flechas %d, difuminado %d px"
+                  % (parts, len(self.widgets), n_tr, n_ar, int(self.get_cable_param('_under_blur'))))
+
     def _veil_poll_tick(self):
+        self._perf_flush()
         try:
             s = self._veil_sig()
-            if s != getattr(self, '_veil_last', None) or getattr(self, '_veil_blur_live', False):          # [PACK187] con difuminado, lo de debajo puede cambiar (reloj...): se refresca
+            if s != getattr(self, '_veil_last', None):
                 self._veil_apply()
+            elif getattr(self, '_veil_blur_live', False) and not (QApplication.mouseButtons() & Qt.LeftButton):
+                # [PACK187] [PACK200] con difuminado, lo de debajo puede cambiar solo (reloj, web): se refresca POR TURNOS, un widget cada vez
+                live = [w for w in self._veil_order() if getattr(getattr(w, '_under_veil', None), 'blur_img', None) is not None]
+                if live:
+                    self._veil_rr = (getattr(self, '_veil_rr', -1) + 1) % len(live)
+                    self._veil_apply(refresh=live[self._veil_rr])
         except Exception:
             pass
 
-    def _veil_apply(self):
+    def _veil_apply(self, refresh=None):
+        _pt0 = time.perf_counter()
+        try:
+            self._veil_apply_body(refresh)
+        finally:
+            self._perf_add('difuminado', (time.perf_counter() - _pt0) * 1000)
+
+    def _veil_apply_body(self, refresh=None):
         try:
             op = int(self.get_cable_param('_under_op'))
             blur = int(self.get_cable_param('_under_blur'))
             order = self._veil_order()
             self._veil_last = self._veil_sig()
-            self._veil_blur_live = False
+            ids = [w.widget_id for w in order]
+            geo = {w.widget_id: w.geometry() for w in order}
+            prev = getattr(self, '_veil_prev', None)
+            affected = None
+            if prev is not None and refresh is None and prev[0] == ids and prev[2] == (op, blur):
+                moved = [k for k in ids if geo[k] != prev[1].get(k)]
+                if moved:                                 # solo se han movido algunos: cambia lo que tienen debajo y lo que tapan, nada mas
+                    zones = [prev[1][k].united(geo[k]) for k in moved]
+                    affected = {k for k in ids if k in moved or any(geo[k].intersects(z) for z in zones)}
+            self._veil_prev = (ids, geo, (op, blur))
+            info = {}                                     # [PACK200] lo caro de cada widget, una sola vez por repaso
+
+            def inf(u):
+                d = info.get(id(u))
+                if d is None:
+                    d = info[id(u)] = [u.geometry(), None, None, None]          # geometria, transparente, editando, silueta
+                return d
+
+            def transl(u):
+                d = inf(u)
+                if d[1] is None:
+                    d[1] = bool(u.paper_translucent())
+                    d[2] = bool(u.layer1_editor.isVisible())
+                return d[1] and not d[2]
+
+            def shape(u):
+                d = inf(u)
+                if d[3] is None:
+                    d[3] = QRegion(u.paper_shape_global())
+                return d[3]
             for i, w in enumerate(order):
+                if affected is not None and w.widget_id not in affected and (refresh is None or refresh is not w):
+                    continue
                 rects = []
                 brects = []
+                wg0 = inf(w)[0]
                 if blur > 0:                              # [PACK187] lo que queda bajo un widget transparente (que no es su padre ni su hijo) se ve difuminado
-                    wg0 = w.geometry()
                     rel = {self.global_state.get(w.widget_id, {}).get('parent_id')} | set(self.get_children(w.widget_id))
                     for u in order[i + 1:]:
-                        if u.widget_id in rel or not u.geometry().intersects(wg0) or not u.paper_translucent() or u.layer1_editor.isVisible():
+                        if u.widget_id in rel or not inf(u)[0].intersects(wg0) or not transl(u):
                             continue
-                        r0 = QRegion(u.paper_shape_global()).intersected(QRegion(wg0))
+                        r0 = shape(u).intersected(QRegion(wg0))
                         if not r0.isEmpty():
                             brects.append(r0)
-                    if brects:
-                        self._veil_blur_live = True
                 if op < 100 and w.paper_glassy():       # [PACK139] solo se atenua un papel transparente: los opacos siguen opacos
-                    wg = w.geometry()
                     for u in order[i + 1:]:
-                        ug = u.geometry()
-                        if not ug.intersects(wg) or not u.paper_translucent():
-                            continue
-                        if u.layer1_editor.isVisible():
+                        if not inf(u)[0].intersects(wg0) or not transl(u):
                             continue                     # [PACK147] mientras se edita el texto de un widget, no atenua los que quedan bajo su recuadro de edicion
-                        r = QRegion(u.paper_shape_global()).intersected(QRegion(wg))
+                        r = shape(u).intersected(QRegion(wg0))
                         if not r.isEmpty():
                             rects.append(r)
-                w.set_under_veil(rects, op, brects, blur)
+                w.set_under_veil(rects, op, brects, blur, refresh=(refresh is w))
+            self._veil_blur_live = any(getattr(getattr(w, '_under_veil', None), 'blur_img', None) is not None for w in order)
             for w in self.widgets.values():                  # los que ya no se ven: sin velo
                 if w not in order:
                     w.set_under_veil([], 100)

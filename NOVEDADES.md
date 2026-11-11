@@ -1,3 +1,20 @@
+## Pack 200 · 2026-11-11
+- **El verdadero culpable de la lentitud al mover widgets: el difuminado de lo que se ve a través de los widgets transparentes (pack 187), no las flechas.** Cada movimiento de un widget recapturaba y volvía a difuminar *todos* los widgets que tenían otro transparente encima, y comparaba todos con todos recalculando la forma de cada papel. Además, con el difuminado activo, todo se repetía cada medio segundo aunque no se moviera nada. Medido arrastrando un widget con una flecha gorda con resplandor:
+
+  | Widgets transparentes | Antes | Ahora |
+  |---|---|---|
+  | 20 | ~36 ms por fotograma | ~4,6 ms |
+  | 60 | ~810 ms por fotograma | ~6,6 ms |
+
+  Antes, con 60 widgets, casi un segundo por fotograma.
+- Cómo se hace ahora (se ve exactamente igual):
+  - El contenido de cada widget se difumina entero **una sola vez**, y de nuevo solo si cambia lo que muestra, su tamaño o el radio. Al arrastrar otro widget por encima solo cambia qué zona se ve difuminada: durante un arrastre no se captura ni se difumina nada.
+  - Al mover widgets **solo se revisan los que están, o estaban, debajo o encima de ellos**, no todos.
+  - Lo caro de cada widget (forma del papel, si es transparente) se calcula una vez por repaso. Si un papel es transparente se guarda junto con su contenido.
+  - El contenido que cambia solo (relojes, webs) se refresca **por turnos**, un widget cada medio segundo, y nunca durante un arrastre.
+  - La capa de flechas tampoco recalcula todas las regiones transparentes ni se repinta entera cuando se mueve un widget transparente: solo las flechas que tiene cerca.
+- **Si algo sigue yendo lento, queda apuntado:** cuando el cálculo o el pintado de las flechas, o el difuminado, pasan de 25 ms, se escribe una línea en `rendimiento.log` (carpeta de registros, como mucho una cada 5 s). Dice qué parte tardó cuánto, con cuántos widgets, transparentes y flechas. Con esa línea se sabe exactamente qué falla.
+
 ## Pack 199 · 2026-11-11
 - **Flechas gordas con resplandor sin bajada de fps.** El pack 198 seguía siendo pesado con flechas gruesas y resplandor amplio, sobre todo con la pantalla escalada (125–150 %, lo habitual en Windows): una flecha gorda en diagonal costaba unos 55 ms por fotograma, y ahora unos 7. En arrastres normales con flechas gordas, de 4–14 ms a 1,3–3,8 ms.
 - **Resplandor como el de los cables:** dos trazos más anchos y muy transparentes alrededor del trazo, la punta y la cola, sin difuminados ni imágenes intermedias. Sigue el grosor variable y el degradado. «Intensidad» y «Alcance» funcionan igual (el alcance es lo que sobresale a cada lado).
