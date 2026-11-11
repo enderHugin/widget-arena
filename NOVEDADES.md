@@ -1,3 +1,9 @@
+## Pack 194 · 2026-11-11
+- **Flechas: solo se ven al pasar el ratón o al mover.** Nuevo comportamiento predeterminado: las flechas de un widget aparecen cuando pasas el ratón por él (por su origen o por su destino) y mientras lo mueves (arrastrándolo, o porque se mueve con su padre). Al salir el ratón o dejar de moverlo siguen visibles un momento (0,9 s) y se desvanecen suavemente (0,45 s). Al arrancar la aplicación los widgets se colocan en su sitio, pero eso no cuenta como moverlos, así que no aparecen todas de golpe.
+- Se elige en *Ajustes ▸ Apariencia ▸ Flechas (apariencia y visibilidad)…* ▸ «Mostrar las flechas»: **Al pasar el ratón por uno de sus widgets o al moverlo** (la primera opción y la predeterminada), *Siempre visibles* u *Ocultas*.
+- Si tenías guardado «Siempre visibles» (era lo que venía por defecto), pasa una sola vez al nuevo modo; si después vuelves a elegir «Siempre visibles», se respeta.
+- La flecha provisional del gesto de arrastre (Alt + Mayús) se ve siempre, sea cual sea el modo.
+
 ## Pack 193 · 2026-11-11
 - **Menú del widget: el aspecto de las flechas, separado de Relaciones.** *Relaciones* (mismo nombre: las flechas también son relaciones) queda para la estructura: crear hijo, enlazar, y en *Flechas* crear, poner etiqueta, invertir el sentido, borrar y la lista *Flechas de este widget…*. La apariencia sale de ahí a un submenú nuevo, **«Aspecto de las flechas»**, en la zona de aspecto del menú (justo después de *Corona*): una entrada por cada flecha del widget (→ las que salen, ← las que llegan, con su etiqueta) que abre la apariencia de esa flecha, y **«Todas las flechas (aspecto general)…»**. Solo aparece si el widget tiene flechas.
 - Si tenías un atajo o una tecla de menú en *Relaciones ▸ Flechas ▸ Apariencia de todas las flechas…*, pasa solo a la nueva ruta.

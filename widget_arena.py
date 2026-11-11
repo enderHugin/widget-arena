@@ -3870,6 +3870,8 @@ class StickerWindow(QMainWindow):
         QToolTip.hideText()
         if not getattr(self, '_is_link_dragging', False):
             self.manager.set_hierarchy_highlight(self.widget_id, False)
+        if self._is_hovered:
+            self._hover_left_at = time.monotonic()          # [PACK194] sus flechas se desvanecen despues
         self._is_hovered = False
         self._update_fold_badge()
         super().leaveEvent(event)
@@ -3892,6 +3894,8 @@ class StickerWindow(QMainWindow):
             self.save_timer.start()
         self.manager.flush_pending_save()
         self.manager.set_hierarchy_highlight(self.widget_id, False)
+        if self._is_hovered:
+            self._hover_left_at = time.monotonic()          # [PACK194]
         self._is_hovered = False
         self._update_fold_badge()
         super().focusOutEvent(event)
@@ -6632,6 +6636,8 @@ class StickerWindow(QMainWindow):
     # ---------------------------------------------------------------- [PACK136] velo bajo widgets transparentes y orden de apilamiento
     def moveEvent(self, event):
         super().moveEvent(event)
+        if self.isVisible():
+            self._moved_at = time.monotonic()                # [PACK194] mientras se mueve se ven sus flechas
         try:                                                 # [PACK170] el sistema (no la aplicacion) ha puesto el widget en otro sitio del pedido
             rq = getattr(self, '_req_pos', None)
             if rq is not None and getattr(self, "_is_window_dragging", False) and (self.pos() - rq).manhattanLength() > 3 and time.monotonic() - getattr(self, '_req_warn_t', 0.0) > 5.0:
@@ -14070,7 +14076,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 193                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 194                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22095,7 +22101,7 @@ from PySide6.QtGui import QPolygonF
 
 
 ARROW_DEFAULTS = {
-    'mode': 'always',                       # always | hover | never (solo ajuste general)
+    'mode': 'hover',                        # always | hover | never (solo ajuste general). [PACK194] hover = al pasar el raton o al mover; por defecto
     'color': '#ff9f43', 'grad': False, 'color2': '#ffd166',
     'color_from': 'fixed', 'color2_from': 'fixed',          # [PACK192] fixed | src | dst: el color elegido o el del widget de origen / destino
     'w_start': 100, 'w_end': 100,                           # [PACK192] grosor al salir y al llegar (% del grosor segun la longitud)
@@ -22466,7 +22472,7 @@ class ArrowLayer(QObject):
         if int(m.get_cable_param('_under_blur')) > 0 and items:          # [PACK187] si se mueve un widget transparente, lo que se ve a traves de el cambia
             _tr = tuple(sorted((k, w.geometry().getRect()) for k, w in m.widgets.items() if w.isVisible() and w.paper_translucent()))
         sig = (m._arrow_rev, _tr, int(m.get_cable_param('_under_blur')),
-               tuple((it['src'], it['id'], it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane']) for it in items))
+               tuple((it['src'], it['id'], it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane'], it.get('fade', 1.0)) for it in items))
         if sig == self._sig and not force:
             return
         self._sig = sig
@@ -22632,7 +22638,7 @@ class ArrowStyleDialog(QDialog):
         if general:
             fm = QFormLayout()
             self.cb_mode = QComboBox()
-            for k, lab in (('always', "Siempre visibles"), ('hover', "Solo al pasar el rat\u00f3n por un widget con flechas"), ('never', "Ocultas")):
+            for k, lab in (('hover', "Al pasar el rat\u00f3n por uno de sus widgets o al moverlo (luego se desvanecen)"), ('always', "Siempre visibles"), ('never', "Ocultas")):
                 self.cb_mode.addItem(lab, k)
             self.cb_mode.setCurrentIndex(max(0, self.cb_mode.findData(self.st['mode'])))
             fm.addRow("Mostrar las flechas:", self.cb_mode)
@@ -23105,6 +23111,11 @@ class WidgetManager(QObject):
         self.connector_overlay = ConnectorOverlayGroup(self)
         self.arrow_layer = ArrowLayer(self)          # [PACK186]
         self.arrow_gesture_key()          # [PACK189]
+        self._arrows_boot = time.monotonic()          # [PACK194]
+        try:
+            self._arrow_mode_migrate()
+        except Exception as e_am:
+            log_warn("Flechas", "migracion del modo de visibilidad: %s" % e_am)
         self.app.aboutToQuit.connect(self.force_save_all_states)
         self.app.aboutToQuit.connect(self._autosave_current_profile)
         self.app.aboutToQuit.connect(self._persist_history)
@@ -23245,7 +23256,7 @@ class WidgetManager(QObject):
                                  or isinstance(v, type(out[k]))):
                     out[k] = v
         if out['mode'] not in ('always', 'hover', 'never'):
-            out['mode'] = 'always'
+            out['mode'] = 'hover'
         for k in ('color_from', 'color2_from'):          # [PACK192]
             if out[k] not in ('fixed', 'src', 'dst'):
                 out[k] = 'fixed'
@@ -23357,6 +23368,41 @@ class WidgetManager(QObject):
         except Exception:
             return None
 
+    ARROW_SHOW_HOLD = 0.9          # [PACK194] s que siguen visibles al salir el raton o dejar de moverse
+    ARROW_SHOW_FADE = 0.45         # s que tardan en desvanecerse
+    ARROW_BOOT_QUIET = 3.0         # al arrancar se colocan todos los widgets: eso no cuenta como moverlos
+
+    def _arrow_presence(self, wid, now):
+        w = self.widgets.get(wid)
+        if w is None:
+            return 0.0
+        if getattr(w, '_is_hovered', False) or getattr(w, '_is_window_dragging', False):
+            return 1.0
+        mv = getattr(w, '_moved_at', 0.0)
+        if mv < getattr(self, '_arrows_boot', 0.0) + self.ARROW_BOOT_QUIET:
+            mv = 0.0
+        t = max(getattr(w, '_hover_left_at', 0.0), mv)
+        if t <= 0.0:
+            return 0.0
+        dt = now - t
+        if dt <= self.ARROW_SHOW_HOLD:
+            return 1.0
+        return max(0.0, 1.0 - (dt - self.ARROW_SHOW_HOLD) / self.ARROW_SHOW_FADE)
+
+    def _arrow_mode_migrate(self):
+        """[PACK194] Una sola vez: quien tenia guardado 'Siempre visibles' (era lo predeterminado) pasa a 'al pasar el raton o al mover'."""
+        if self.global_state.get('arrow_mode_v194'):
+            return
+        self.global_state['arrow_mode_v194'] = True
+        raw = self.global_state.get('arrow_style')
+        if raw:
+            g = self.arrow_style_general()
+            if g.get('mode') == 'always':
+                g['mode'] = 'hover'
+                self.set_arrow_style_general(g)
+                return
+        self.save_global_state(record_history=False)
+
     def arrow_items(self):
         """Lo que hay que pintar ahora: [{src, dst, id, p0, p1, style, label, lane}] (coordenadas globales)."""
         g = self.arrow_style_general()
@@ -23366,6 +23412,7 @@ class WidgetManager(QObject):
         allp = self.arrows_all() if g['mode'] != 'never' else []
         pairs = {(s, a['to']) for s, a in allp}
         rects = {}
+        _now = time.monotonic()
 
         def rect_of(wid):
             if wid not in rects:
@@ -23381,16 +23428,23 @@ class WidgetManager(QObject):
             ra, rb = rect_of(src), rect_of(a['to'])
             if ra is None or rb is None:
                 continue
-            if g['mode'] == 'hover' and not (getattr(self.widgets[src], '_is_hovered', False) or getattr(self.widgets[a['to']], '_is_hovered', False)):
-                continue
+            fade = 1.0
+            if g['mode'] == 'hover':                      # [PACK194] al pasar el raton por uno de sus widgets o al moverlo; despues se desvanece
+                fade = max(self._arrow_presence(src, _now), self._arrow_presence(a['to'], _now))
+                if fade <= 0.0:
+                    continue
             stl = self.arrow_effective_style(a, g)
+            if fade < 1.0:
+                stl = dict(stl)
+                stl['op_near'] = float(stl['op_near']) * fade
+                stl['op_far'] = float(stl['op_far']) * fade
             if stl.get('color_from', 'fixed') != 'fixed' or stl.get('color2_from', 'fixed') != 'fixed':          # [PACK192]
                 stl = arrow_resolve_colors(stl, self._arrow_widget_color(src), self._arrow_widget_color(a['to']))
             ep = arrow_endpoints(ra, rb, float(stl['gap']))
             if ep is None:
                 continue
             out.append({'src': src, 'dst': a['to'], 'id': a['id'], 'p0': ep[0], 'p1': ep[1], 'style': stl,
-                        'label': str(a.get('label') or ''), 'lane': (a['to'], src) in pairs})
+                        'label': str(a.get('label') or ''), 'lane': (a['to'], src) in pairs, 'fade': round(fade, 2)})
         if gh and gh['src'] in self.widgets:                    # [PACK189] flecha provisional mientras se arrastra
             ra, pt = rect_of(gh['src']), gh['pt']
             if ra is not None:
