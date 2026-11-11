@@ -9484,6 +9484,7 @@ _MOVES_175 = (
 )
 # [PACK176] El menu del widget se reparte por funcion (Widget / Contenido / Forma y borde / Color y efectos / Posici\u00f3n y tama\u00f1o / Corona):
 # de lo especifico a lo general; lo que no cambia de sitio no esta aqui.
+_MOVES_193 = (("widget/Relaciones/Flechas/Apariencia de todas las flechas...", "widget/Aspecto de las flechas/Todas las flechas (aspecto general)..."),)
 _MOVES_176 = tuple([
     ("widget/Aspecto/Modelo/Cambiar el modelo de este widget...", "widget/Widget/Sustituir widget..."),
     ("widget/Aspecto/Modelo/Guardar este widget como modelo...", "widget/Widget/Guardar widget..."),
@@ -9608,7 +9609,7 @@ _MENU_RULES_W = (
     ("Renombrar", "este"), ("Cancelar temporizador", "este"), ("Establecer temporizador", "este"),
     ("Copiar \u00e1rbol", "gestion"), ("Pegar \u00e1rbol", "gestion"), ("Exportar \u00e1rbol", "gestion"), ("Mover \u00e1rbol", "gestion"), ("Usar como predeterminado", "gestion"),
     ("Ocultar", "este"), ("Mostrar", "este"), ("Siempre encima", "este"), ("Ver en el navegador", "este"), ("Widget", "este"),
-    ("Contenido", "aspecto"), ("Forma y borde", "aspecto"), ("Color y efectos", "aspecto"), ("Posici\u00f3n y tama\u00f1o", "aspecto"), ("Corona", "aspecto"),
+    ("Contenido", "aspecto"), ("Forma y borde", "aspecto"), ("Color y efectos", "aspecto"), ("Posici\u00f3n y tama\u00f1o", "aspecto"), ("Corona", "aspecto"), ("Aspecto de las flechas", "aspecto"),
     ("Relaciones", "familia"), ("Clonar", "copia"), ("Eliminar", "peligro"),
 )
 _MENU_GROUPS_T = (
@@ -10117,6 +10118,10 @@ class HotkeyManager(QObject):
                     p_ = new_ + p_[len(old_):]
                     break
             for old_, new_ in _MOVES_175:            # [PACK175]
+                if p_ == old_ or p_.startswith(old_ + "/"):
+                    p_ = new_ + p_[len(old_):]
+                    break
+            for old_, new_ in _MOVES_193:            # [PACK193]
                 if p_ == old_ or p_.startswith(old_ + "/"):
                     p_ = new_ + p_[len(old_):]
                     break
@@ -14065,7 +14070,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 192                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 193                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -23572,15 +23577,14 @@ class WidgetManager(QObject):
             mine = self.arrows_of(widget_id)
             if mine:
                 am.addSeparator()
-                hd = am.addAction("Cada flecha (apariencia, etiqueta, sentido):")
+                hd = am.addAction("Cada flecha (etiqueta, sentido, borrar):")
                 hd.setEnabled(False)
             for src, ar in mine[:16]:
                 outgoing = src == widget_id
                 other = ar['to'] if outgoing else src
                 lab = "%s %s%s" % ("\u2192" if outgoing else "\u2190", self._get_widget_display_name(other)[:40], ("  \u00ab%s\u00bb" % ar['label'][:20]) if ar.get('label') else "")
                 sub = QMenu(lab, am)
-                for text, fn in (("Apariencia de esta flecha...", lambda s=src, i=ar['id']: self.edit_arrow_style_of(s, i)),
-                                 ("Etiqueta...", lambda s=src, i=ar['id']: self.arrow_label_dialog(s, i)),
+                for text, fn in (("Etiqueta...", lambda s=src, i=ar['id']: self.arrow_label_dialog(s, i)),
                                  ("Invertir el sentido", lambda s=src, i=ar['id']: self.arrow_invert(s, i)),
                                  ("Borrar esta flecha", lambda s=src, i=ar['id']: self.arrow_remove(s, i))):
                     a_ = QAction(text, self)
@@ -23590,10 +23594,29 @@ class WidgetManager(QObject):
             if mine:
                 am.addSeparator()
         add(am, "Flechas de este widget...", lambda: self.edit_widget_arrows(widget_id),
-            tip="Las que salen de \u00e9l y las que le llegan: cambiar su apariencia, su etiqueta o su sentido, o borrarlas")
+            tip="Las que salen de \u00e9l y las que le llegan, en una lista: etiqueta, sentido, borrar (y su apariencia)")
         add(am, "Quitar todas las flechas de este widget", lambda: self.arrows_clear_of(widget_id), enabled=bool(n) or full)
-        add(am, "Apariencia de todas las flechas...", lambda: self.edit_arrow_style())
         menu.addMenu(am)
+
+    def _add_arrow_look_menu(self, menu, widget_id, full, add):
+        """[PACK193] Aspecto de las flechas del widget (zona de aspecto del menu, junto a Corona): la de cada flecha y la general."""
+        mine = [] if full else self.arrows_of(widget_id)
+        if not mine and not full:
+            return None
+        lm = QMenu("Aspecto de las flechas", menu)
+        lm.setToolTipsVisible(True)
+        for src, ar in mine[:16]:
+            outgoing = src == widget_id
+            other = ar['to'] if outgoing else src
+            lab = "%s %s%s..." % ("\u2192" if outgoing else "\u2190", self._get_widget_display_name(other)[:40], ("  \u00ab%s\u00bb" % ar['label'][:20]) if ar.get('label') else "")
+            add(lm, lab, lambda s=src, i=ar['id']: self.edit_arrow_style_of(s, i),
+                tip="Color, grosor, punta, trazo y resplandor solo de esta flecha (\u00abUsar la apariencia general\u00bb la devuelve al aspecto com\u00fan)")
+        if mine:
+            lm.addSeparator()
+        add(lm, "Todas las flechas (aspecto general)...", lambda: self.edit_arrow_style(),
+            tip="El aspecto que comparten todas las flechas (tambi\u00e9n en Ajustes > Apariencia > Flechas)")
+        menu.addMenu(lm)
+        return lm
 
     # ---- [PACK185] iman y cuadricula al mover widgets
     def get_snap_settings(self):
@@ -24170,7 +24193,7 @@ class WidgetManager(QObject):
         cables_action.triggered.connect(self._edit_cable_settings)
         look_menu.addAction(cables_action)
         arrow_action = QAction("Flechas (apariencia y visibilidad)...", self)          # [PACK186] [PACK190] en Apariencia, junto a los cables
-        arrow_action.setToolTip("Aspecto general de las flechas entre widgets (la de cada flecha se cambia en el men\u00fa del widget: Relaciones > Flechas)")
+        arrow_action.setToolTip("Aspecto general de las flechas entre widgets (la de cada flecha se cambia en el men\u00fa del widget: Aspecto de las flechas)")
         arrow_action.triggered.connect(self.edit_arrow_style)
         look_menu.addAction(arrow_action)
         crown_cfg_action = QAction("Corona del ancestro (tama\u00f1o, posici\u00f3n, opacidad)...", self)      # [PACK79]
@@ -25830,6 +25853,7 @@ class WidgetManager(QObject):
         aspect_menu.addMenu(crown_menu)
         self._add_gesture_menus(layers_menu, aspect_menu, widget_id, lmenus, full)       # Transformar (por capa) y Girar widget
         self._regroup_widget_menu(menu, lmenus, aspect_menu, tpl_menu, sty_menu, fr_menu, crown_menu)          # [PACK176]
+        self._add_arrow_look_menu(menu, widget_id, full, add)          # [PACK193] junto a Corona, en la zona de aspecto
 
         # ---- Relaciones: padre, hijos y enlaces
         rel_menu = QMenu("Relaciones", menu)
@@ -25838,7 +25862,7 @@ class WidgetManager(QObject):
                                   lambda: self.create_child_note(widget_id, independent=bool(QApplication.keyboardModifiers() & Qt.MetaModifier)))
         self._bind_independent_child_action(rel_menu, create_child_action)
         self._add_link_menus(rel_menu, widget_id, full)
-        self._add_arrow_menus(rel_menu, widget_id, full, add)          # [PACK186]
+        self._add_arrow_menus(rel_menu, widget_id, full, add)          # [PACK186] (estructura; el aspecto va en "Aspecto de las flechas")
         if state.get('parent_id') or full:
             add(rel_menu, "Independizar posici\u00f3n de este hijo", lambda c, wid=widget_id: self.set_position_independent(wid, c),
                 checked=bool(state.get('pos_independent', False)), tip="No se mueve cuando se arrastra a su padre",
