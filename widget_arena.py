@@ -14096,7 +14096,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 200                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 201                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22361,9 +22361,9 @@ def _arrow_bounds(p0, p1, st, label, reverse_lane):
            (p0.x() + dx * 2 / 3.0 + nx * (off + sh), p0.y() + dy * 2 / 3.0 + ny * (off + sh))]
     xs, ys = [q[0] for q in pts], [q[1] for q in pts]
     wmax = w * max(int(st.get('w_start', 100)), int(st.get('w_end', 100)), 100) / 100.0
-    m = max(float(st['head_size']), wmax * 2.6) * 1.6 + wmax * 2 + 8
+    m = max(float(st['head_size']), wmax * 2.6) * 1.15 + wmax / 2.0 + 6          # [PACK201] lo justo: punta, trazo
     if int(st['glow']) > 0:
-        m += float(st['glow_size']) * 3.5 + 4
+        m += float(st['glow_size']) * 1.1 + 2                                     # y el borde del resplandor (sobresale 'alcance' px)
     r = QRectF(min(xs) - m, min(ys) - m, max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m)
     if label:
         f = QFont()
@@ -22916,21 +22916,36 @@ class ArrowLayer(QObject):
                 whole = True
                 if was:
                     ov.show()
-            if ov.geometry() != sg:
-                ov.blank = True
-                if ov.isVisible():
-                    ov.repaint()
-                ov.setGeometry(sg)
-                ov.blank = False
-                whole = True
+            # [PACK201] como los cables: la ventana solo ocupa la zona de las flechas (+margen), nunca toda la pantalla, y solo cambia de
+            # tamano cuando se le quedan cortas o le sobra mucho (no en cada pixel de un arrastre)
+            need = QRect()
+            for b_, _s in newb.values():
+                need = need.united(b_)
+            need = need.adjusted(-30, -30, 30, 30).intersected(sg)
+            if need.isEmpty():
+                need = QRect(sg.center(), QSize(2, 2))
+            cur = ov.geometry()
+            too_big = cur.width() > need.width() + 700 or cur.height() > need.height() + 700
+            if not cur.contains(need) or too_big or not sg.contains(cur):
+                target = need.adjusted(-180, -180, 180, 180).intersected(sg)
+                if target != cur:
+                    ov.blank = True
+                    if ov.isVisible():
+                        ov.repaint()                       # el dibujo anterior no debe verse en el sitio nuevo
+                    ov.setGeometry(target)
+                    ov.blank = False
+                    whole = True
             shown = False
             if not ov.isVisible():
                 ov.show()
                 shown = whole = True
+            _pt0 = time.perf_counter()
             if whole:
-                ov.update()
+                ov.repaint()
             elif not dirty.isEmpty():
-                ov.update(dirty.translated(-sg.topLeft()))
+                ov.repaint(dirty.translated(-ov.geometry().topLeft()))
+            if whole or not dirty.isEmpty():               # [PACK201] pintado + envio a la pantalla (lo que de verdad cuesta en Windows)
+                m._perf_add('flechas (pintado y pantalla)', (time.perf_counter() - _pt0) * 1000)
             # [PACK198] subir la ventana de flechas solo al mostrarla, cuando se activa un widget o, como mucho, cada 2 s (no en cada fotograma)
             if QApplication.applicationState() == Qt.ApplicationActive and not aot:
                 if shown or getattr(m, '_arrow_raise_due', False) or now - getattr(ov, '_raised_at', 0.0) > 2.0:
@@ -22947,13 +22962,16 @@ class ArrowLayer(QObject):
         return self._has or getattr(m, '_arrow_ghost', None) is not None
 
     def kick(self):
-        """[PACK198] Un widget se ha movido: sus flechas se recalculan enseguida (no esperan al temporizador)."""
+        """[PACK198] Un widget se ha movido: sus flechas se recalculan enseguida (no esperan al temporizador).
+        [PACK201] Como mucho ~60 veces por segundo: un raton que informa a 500-1000 Hz no dispara cientos de repintados."""
         if not getattr(self, '_kick_pending', False) and self.has_arrows():
             self._kick_pending = True
-            QTimer.singleShot(0, self._kicked)
+            el = (time.monotonic() - getattr(self, '_kick_t', 0.0)) * 1000.0
+            QTimer.singleShot(max(0, int(15 - el)), self._kicked)
 
     def _kicked(self):
         self._kick_pending = False
+        self._kick_t = time.monotonic()
         self.tick()
 
     def refresh(self):

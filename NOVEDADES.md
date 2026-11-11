@@ -1,3 +1,12 @@
+## Pack 201 · 2026-11-11
+- **La ventana de las flechas, como la de los cables.** Era la causa de la saturación al mover widgets con flechas: las flechas se pintaban en una ventana transparente **del tamaño de toda la pantalla**, y en Windows cada actualización de una ventana así obliga al sistema a recomponer esa superficie entera. Los cables siempre han usado una ventana ajustada a su zona, y por eso iban fluidos. Ahora las flechas también:
+  - la ventana solo ocupa la zona de las flechas visibles, con margen;
+  - solo cambia de tamaño cuando se le quedan cortas o le sobra mucho, no en cada píxel de un arrastre (en la prueba, ningún cambio de tamaño en 40 movimientos);
+  - cuando las flechas se van lejos, la ventana se va con ellas y deja libre el sitio de antes.
+- **Como mucho ~60 repintados por segundo.** Desde el pack 198 las flechas se recalculaban en cada movimiento del ratón, y un ratón que informa a 500–1000 Hz disparaba cientos de actualizaciones por segundo. Ahora siguen al widget sin retraso, pero a un ritmo de pantalla.
+- **Zona de cada flecha ajustada a lo que ocupa de verdad.** Se había quedado calculada para el halo difuminado del pack 197, que llegaba mucho más lejos: era 2–3 veces más grande de lo necesario. Comprobado con estilos extremos (puntas grandes, curvas fuertes, resplandor amplio, etiquetas) que no queda nada fuera.
+- **`rendimiento.log` mide ahora también el envío a la pantalla** («flechas (pintado y pantalla)»), que es lo que de verdad cuesta en Windows. Si algo pasa de 25 ms, queda apuntado con cifras del propio equipo.
+
 ## Pack 200 · 2026-11-11
 - **El verdadero culpable de la lentitud al mover widgets: el difuminado de lo que se ve a través de los widgets transparentes (pack 187), no las flechas.** Cada movimiento de un widget recapturaba y volvía a difuminar *todos* los widgets que tenían otro transparente encima, y comparaba todos con todos recalculando la forma de cada papel. Además, con el difuminado activo, todo se repetía cada medio segundo aunque no se moviera nada. Medido arrastrando un widget con una flecha gorda con resplandor:
 
