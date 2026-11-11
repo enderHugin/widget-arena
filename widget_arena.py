@@ -4255,12 +4255,90 @@ class StickerWindow(QMainWindow):
             self._link_drag_role = None
             self._link_from_window = False
         elif self._is_window_dragging and getattr(self, '_dragging_children_windows', None) is not None:
+            self.manager.snap_guides_hide()          # [PACK185]
             geom = self.current_template_data.setdefault('geometry', {})
             geom['x'] = self.pos().x()
             geom['y'] = self.pos().y()
             self._save_changes_to_manager()
             for cw in self._dragging_children_windows:
                 cw._save_changes_to_manager()
+
+    def _snap_mode(self, mods):
+        """[PACK185] 'grid' (Ctrl+Mayus), 'align' (Mayus) o lo que diga el ajuste ('off' | 'align' | 'grid') si no hay teclas."""
+        qm = QApplication.queryKeyboardModifiers() | mods
+        sh, ct = bool(qm & Qt.ShiftModifier), bool(qm & Qt.ControlModifier)
+        if sh and ct:
+            return 'grid'
+        if sh:
+            return 'align'
+        return self.manager.get_snap_settings()['default']
+
+    def _visible_rect_off(self):
+        """Lo que se ve del widget (la mascara de la ventana) relativo a la ventana; la ventana entera si no hay mascara."""
+        try:
+            m = self.mask()
+            if not m.isEmpty():
+                return m.boundingRect()
+        except Exception:
+            pass
+        return QRect(0, 0, self.width(), self.height())
+
+    def _snap_pos(self, new_pos, mods):
+        """[PACK185] Ajusta la posicion que va a tomar el widget: alinea con otros widgets / pantalla o la cuadricula."""
+        mode = self._snap_mode(mods)
+        mgr = self.manager
+        if mode == 'off':
+            mgr.snap_guides_hide()
+            return new_pos
+        s = mgr.get_snap_settings()
+        br = self._visible_rect_off()
+        r = QRect(new_pos + br.topLeft(), br.size())
+        scr = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        sg = scr.availableGeometry()
+        px = (r.left(), r.left() + r.width() // 2, r.left() + r.width())
+        py = (r.top(), r.top() + r.height() // 2, r.top() + r.height())
+        grid = None
+        if mode == 'grid':
+            cw, ch = sg.width() / float(s['cols']), sg.height() / float(s['rows'])
+            tx = [int(round(sg.left() + i * cw)) for i in range(s['cols'] + 1)]
+            ty = [int(round(sg.top() + i * ch)) for i in range(s['rows'] + 1)]
+            grid = (tx, ty)
+            ex, ey = (px[0], px[2]), (py[0], py[2])          # los bordes del widget son los que se pegan a las lineas
+            tol = None
+        else:
+            tx, ty = [], []
+            if s['screen']:
+                tx += [sg.left(), sg.left() + sg.width() // 2, sg.left() + sg.width()]
+                ty += [sg.top(), sg.top() + sg.height() // 2, sg.top() + sg.height()]
+            if s['widgets']:
+                mine = {self.widget_id}
+                mine.update(getattr(w, 'widget_id', None) for w in (getattr(self, '_dragging_children_windows', None) or []))
+                for wid, w in mgr.widgets.items():
+                    if wid in mine or not w.isVisible():
+                        continue
+                    o = w._visible_rect_off()
+                    wr = QRect(w.pos() + o.topLeft(), o.size())
+                    tx += [wr.left(), wr.left() + wr.width() // 2, wr.left() + wr.width()]
+                    ty += [wr.top(), wr.top() + wr.height() // 2, wr.top() + wr.height()]
+            ex, ey = px, py
+            tol = s['tol']
+
+        def best(pts, targets):
+            b = None
+            for p_ in pts:
+                for t in targets:
+                    d = t - p_
+                    if (tol is None or abs(d) <= tol) and (b is None or abs(d) < abs(b[0])):
+                        b = (d, t)
+            return b
+        bx, by = best(ex, tx), best(ey, ty)
+        dx = bx[0] if bx else 0
+        dy = by[0] if by else 0
+        if s['guides']:
+            mgr.snap_guides_show(sg, [bx[1]] if bx else [], [by[1]] if by else [], grid)
+        else:
+            mgr.snap_guides_hide()
+        return QPoint(new_pos.x() + dx, new_pos.y() + dy)
 
     def mouseMoveEvent(self, event):
         if event.buttons() & Qt.LeftButton:
@@ -4276,6 +4354,10 @@ class StickerWindow(QMainWindow):
 
         if self._is_window_dragging:
             new_pos = event.globalPosition().toPoint() - self.offset
+            try:
+                new_pos = self._snap_pos(new_pos, event.modifiers())          # [PACK185]
+            except Exception as e_snap:
+                log_warn(self.widget_id, "Iman al arrastrar: %s" % e_snap)
             if getattr(self, '_dragging_children_windows', None) is None:
                 self._dragging_children_windows = [
                     self.manager.widgets[cid] for cid in (
@@ -4414,6 +4496,7 @@ class StickerWindow(QMainWindow):
             
             if self._is_window_dragging:
                 self._is_window_dragging = False
+                self.manager.snap_guides_hide()          # [PACK185]
                 current_main_geom = self.current_template_data.setdefault('geometry', {})
                 current_main_geom['x'] = self.pos().x()
                 current_main_geom['y'] = self.pos().y()
@@ -13863,7 +13946,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 184                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 185                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -18385,6 +18468,102 @@ def _bn_body_path(bp):
     return body, pw + 2 * mg, ph + 2 * mg, mg
 
 
+SNAP_DEFAULTS = {'default': 'off', 'tol': 10, 'cols': 12, 'rows': 8, 'screen': True, 'widgets': True, 'guides': True}          # [PACK185]
+
+
+class _SnapGuides(QWidget):
+    """[PACK185] Lineas guia del iman / cuadricula mientras se arrastra un widget: una ventana transparente a los clics sobre la pantalla."""
+
+    def __init__(self):
+        super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowTransparentForInput | Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.vl, self.hl, self.grid = [], [], None          # lineas que han imantado (x / y) y cuadricula (xs, ys)
+        self._sig = None
+
+    def show_for(self, geom, vl, hl, grid):
+        sig = (tuple(vl), tuple(hl), None if grid is None else (len(grid[0]), len(grid[1]), grid[0][0], grid[1][0]), geom.getRect())
+        if sig == self._sig and self.isVisible():
+            return
+        self._sig = sig
+        self.vl, self.hl, self.grid = list(vl), list(hl), grid
+        if self.geometry() != geom:
+            self.setGeometry(geom)
+        if not self.isVisible():
+            self.show()
+        self.update()
+
+    def hide_now(self):
+        self._sig = None
+        if self.isVisible():
+            self.hide()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        o = self.geometry().topLeft()
+        if self.grid is not None:
+            p.setPen(QPen(QColor(120, 170, 255, 70), 1))
+            for x in self.grid[0]:
+                p.drawLine(int(x - o.x()), 0, int(x - o.x()), self.height())
+            for y in self.grid[1]:
+                p.drawLine(0, int(y - o.y()), self.width(), int(y - o.y()))
+        p.setPen(QPen(QColor(255, 80, 160, 230), 1, Qt.DashLine))
+        for x in self.vl:
+            p.drawLine(int(x - o.x()), 0, int(x - o.x()), self.height())
+        for y in self.hl:
+            p.drawLine(0, int(y - o.y()), self.width(), int(y - o.y()))
+        p.end()
+
+
+class SnapSettingsDialog(QDialog):
+    """[PACK185] Ajustes del iman y la cuadricula al mover widgets."""
+
+    def __init__(self, cur, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Im\u00e1n y cuadr\u00edcula al mover widgets")
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("Al arrastrar un widget: <b>May\u00fas</b> lo alinea con los bordes y centros de otros widgets y de la pantalla; "
+                             "<b>Ctrl + May\u00fas</b> lo ajusta a una cuadr\u00edcula de la pantalla."))
+        form = QFormLayout()
+        self.cb = QComboBox()
+        for k, lab in (('off', "Nada (solo con las teclas)"), ('align', "Alinear siempre"), ('grid', "Cuadr\u00edcula siempre")):
+            self.cb.addItem(lab, k)
+        self.cb.setCurrentIndex(max(0, self.cb.findData(cur.get('default', 'off'))))
+        form.addRow("Sin pulsar teclas:", self.cb)
+        self.sp_tol = QSpinBox()
+        self.sp_tol.setRange(1, 100)
+        self.sp_tol.setSuffix(" px")
+        self.sp_tol.setValue(int(cur.get('tol', 10)))
+        self.sp_tol.setToolTip("A qu\u00e9 distancia \"se pega\" a un borde o centro al alinear")
+        form.addRow("Distancia de alineaci\u00f3n:", self.sp_tol)
+        self.sp_c = QSpinBox()
+        self.sp_c.setRange(1, 200)
+        self.sp_c.setValue(int(cur.get('cols', 12)))
+        self.sp_r = QSpinBox()
+        self.sp_r.setRange(1, 200)
+        self.sp_r.setValue(int(cur.get('rows', 8)))
+        form.addRow("Cuadr\u00edcula: columnas:", self.sp_c)
+        form.addRow("Cuadr\u00edcula: filas:", self.sp_r)
+        lay.addLayout(form)
+        self.ch_s = QCheckBox("Alinear con los bordes y el centro de la pantalla")
+        self.ch_s.setChecked(bool(cur.get('screen', True)))
+        self.ch_w = QCheckBox("Alinear con los otros widgets (bordes y centros)")
+        self.ch_w.setChecked(bool(cur.get('widgets', True)))
+        self.ch_g = QCheckBox("Mostrar l\u00edneas gu\u00eda mientras arrastro")
+        self.ch_g.setChecked(bool(cur.get('guides', True)))
+        for c in (self.ch_s, self.ch_w, self.ch_g):
+            lay.addWidget(c)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def values(self):
+        return {'default': self.cb.currentData(), 'tol': self.sp_tol.value(), 'cols': self.sp_c.value(), 'rows': self.sp_r.value(),
+                'screen': self.ch_s.isChecked(), 'widgets': self.ch_w.isChecked(), 'guides': self.ch_g.isChecked()}
+
+
 class _HitOverlay(QWidget):
     """[PACK173] Muestra durante unos segundos la zona que agarra el raton de un widget (rojo) y los limites de su ventana (azul)."""
 
@@ -19772,11 +19951,12 @@ GESTURE_TABLE = {
     ],
 
     "S": [
-        ("Arrastrar", "Mover todo el widget aunque haya una capa seleccionada", None),
+        ("Arrastrar", "Mover todo el widget aunque haya una capa seleccionada; ALINEA con los bordes y centros de otros widgets y de la pantalla", None),
         ("Rueda", "Capa seleccionada: alto de la capa (\u00b110)", 'layer'),
     ],
 
     "CS": [
+        ("Arrastrar", "Mover el widget AJUSTANDO a la cuadr\u00edcula de la pantalla (Ajustes > Im\u00e1n y cuadr\u00edcula...)", None),
         ("Rueda", "Sobre una imagen (sin capa seleccionada): tono FINO (1\u00b0)", 'nolayer'),
         ("Rueda", "Capa seleccionada (texto o imagen): ancho y alto a la vez", 'layer'),
         ("Teclas", "\u2191/\u2193: set anterior / siguiente \u00b7 P: men\u00fa r\u00e1pido de sets", None),
@@ -22142,6 +22322,46 @@ class WidgetManager(QObject):
         self.save_global_state(record_history=False)
         self.build_tray_menu()   # el submenu de la nota muestra "Cancelar temporizador"
 
+    # ---- [PACK185] iman y cuadricula al mover widgets
+    def get_snap_settings(self):
+        out = dict(SNAP_DEFAULTS)
+        st = self.global_state.get('snap_settings')
+        if isinstance(st, str):
+            try:
+                st = json.loads(st)
+            except Exception:
+                st = None
+        if isinstance(st, dict):
+            for k, v in st.items():
+                if k in out and isinstance(v, type(out[k])):
+                    out[k] = v
+        if out['default'] not in ('off', 'align', 'grid'):
+            out['default'] = 'off'
+        out['tol'] = max(1, min(100, int(out['tol'])))
+        out['cols'] = max(1, min(200, int(out['cols'])))
+        out['rows'] = max(1, min(200, int(out['rows'])))
+        return out
+
+    def set_snap_settings(self, d):
+        self.global_state['snap_settings'] = json.dumps(d)
+        self.save_global_state(record_history=False)
+
+    def edit_snap_settings(self, *_a):
+        dlg = SnapSettingsDialog(self.get_snap_settings(), self.dialog_parent)
+        if dlg.exec():
+            self.set_snap_settings(dlg.values())
+
+    def snap_guides_show(self, geom, vl, hl, grid):
+        g = getattr(self, '_snap_guides', None)
+        if g is None:
+            g = self._snap_guides = _SnapGuides()
+        g.show_for(geom, vl, hl, grid)
+
+    def snap_guides_hide(self):
+        g = getattr(self, '_snap_guides', None)
+        if g is not None:
+            g.hide_now()
+
     def get_hierarchy_settings(self):
         """Ajustes del resaltado = valores por defecto + lo guardado (compatible con el formato antiguo)."""
         out = copy.deepcopy(HIERARCHY_DEFAULTS)
@@ -22729,6 +22949,10 @@ class WidgetManager(QObject):
         child_cfg_action = QAction("Tipo de hijo al crear con el rat\u00f3n...", self)            # [PACK62]
         child_cfg_action.triggered.connect(self.edit_child_types)
         cfg_menu.insertAction(integ_menu.menuAction(), child_cfg_action)
+        snap_action = QAction("Im\u00e1n y cuadr\u00edcula al mover...", self)          # [PACK185]
+        snap_action.setToolTip("May\u00fas al arrastrar alinea con otros widgets y la pantalla; Ctrl+May\u00fas ajusta a una cuadr\u00edcula")
+        snap_action.triggered.connect(self.edit_snap_settings)
+        cfg_menu.insertAction(integ_menu.menuAction(), snap_action)
         auto_action = QAction("Iniciar con el sistema", self)          # [PACK179]
         auto_action.setCheckable(True)
         auto_action.setChecked(autostart_is_on())

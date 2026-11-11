@@ -8,7 +8,7 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
 - [x] 2b. (Pack 173) **Zona sensible más allá del widget con marco.** La zona de clic se limita al contorno exterior del marco (sin sombra) y se corrige el pintado de la zona con capa web + marco.
 
 ## Funciones
-- [ ] 3. **Ajuste al mover widgets** (atajos de teclado o por defecto en la configuración): a otros widgets, a una rejilla configurable de líneas × columnas, a los límites de la pantalla.
+- [x] 3. (Pack 185) **Ajuste al mover widgets** (atajos de teclado o por defecto en la configuración): a otros widgets, a una rejilla configurable de líneas × columnas, a los límites de la pantalla.
 
 ## Diseño (acordar antes de tocar)
 - [ ] 4. **Qué viaja al copiar/pegar forma de papel, marco o widget** (rotación, hue, dimensiones actuales…): qué se copia, qué se conserva del destino y cómo elegirlo. Caso típico: pegar un marco generado por el programa, modificado como imagen en el origen, y que el destino ajuste tamaños/hue y se pierda lo que se quería conservar.
