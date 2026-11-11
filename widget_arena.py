@@ -9755,7 +9755,7 @@ _UI_T_DROP = ("Nuevo con un aspecto", "Nueva nota", "Mostrar u ocultar la consol
 _UI_T_SUB = {      # submenus: (lo que se conserva, lo que se quita), por el principio del texto
     "Sets de widgets": (None, ("Duplicar el set", "Guardar el set activo al cambiar", "Precargar", "Importar y exportar", "Eliminar todos")),      # [PACK149] "Elegir los sets de la rotacion" se queda: los gestos de rotacion siguen en modo usuario
     "Ajustes": (("Apariencia", "Atajos de teclado", "Importar y exportar"), None),
-    "Apariencia": (("Cables (opacidad", "Fuente predeterminada", "Mostrar ayuda de gestos"), None),
+    "Apariencia": (("Cables (opacidad", "Flechas (apariencia", "Fuente predeterminada", "Mostrar ayuda de gestos"), None),      # [PACK191] flechas como cables
 }
 _UI_W_DROP = ("Contenido", "Forma y borde", "Color y efectos", "Posici\u00f3n y tama\u00f1o", "Copiar \u00e1rbol", "Pegar \u00e1rbol", "Exportar \u00e1rbol", "Mover \u00e1rbol", "Usar como predeterminado")
 _UI_W_SUB = {"Widget": (None, None)}
@@ -14065,7 +14065,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 190                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 191                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -20160,7 +20160,7 @@ def _gesture_rows(key, layer_sel=0, linking=None):
         if cond is None or (cond == 'layer') == bool(layer_sel):
             rows.append((kind, text))
     if key and key == _ARROW_GESTURE_KEY[0]:          # [PACK189]
-        rows.append(("Arrastrar", "FLECHA: arrastra hasta otro widget y suelta sobre \u00e9l para crear una flecha hacia \u00e9l (Ajustes > Apariencia > Flechas: gesto de arrastre)"))
+        rows.append(("Arrastrar", "FLECHA: arrastra hasta otro widget y suelta sobre \u00e9l para crear una flecha hacia \u00e9l (Ajustes > Flechas: gesto de arrastre)"))
     return rows
 
 
@@ -24048,10 +24048,6 @@ class WidgetManager(QObject):
         arrow_action.setToolTip("Aspecto general de las flechas entre widgets (la de cada flecha se cambia en el men\u00fa del widget: Relaciones > Flechas)")
         arrow_action.triggered.connect(self.edit_arrow_style)
         look_menu.addAction(arrow_action)
-        arrow_g_action = QAction("Flechas: gesto de arrastre...", self)          # [PACK189] [PACK190]
-        arrow_g_action.setToolTip("Teclas con las que, arrastrando de un widget a otro, se crea una flecha (por defecto Alt + May\u00fas)")
-        arrow_g_action.triggered.connect(self.edit_arrow_gesture)
-        look_menu.addAction(arrow_g_action)
         crown_cfg_action = QAction("Corona del ancestro (tama\u00f1o, posici\u00f3n, opacidad)...", self)      # [PACK79]
         crown_cfg_action.triggered.connect(lambda checked=False: self._edit_crown_settings())
         look_menu.addAction(crown_cfg_action)
@@ -24109,6 +24105,10 @@ class WidgetManager(QObject):
         snap_action.setToolTip("May\u00fas al arrastrar alinea con otros widgets y la pantalla; Ctrl+May\u00fas ajusta a una cuadr\u00edcula")
         snap_action.triggered.connect(self.edit_snap_settings)
         cfg_menu.insertAction(integ_menu.menuAction(), snap_action)
+        arrow_g_action = QAction("Flechas: gesto de arrastre...", self)          # [PACK189] [PACK191] comportamiento del raton, no apariencia
+        arrow_g_action.setToolTip("Teclas con las que, arrastrando de un widget a otro, se crea una flecha (por defecto Alt + May\u00fas)")
+        arrow_g_action.triggered.connect(self.edit_arrow_gesture)
+        cfg_menu.insertAction(integ_menu.menuAction(), arrow_g_action)
         auto_action = QAction("Iniciar con el sistema", self)          # [PACK179]
         auto_action.setCheckable(True)
         auto_action.setChecked(autostart_is_on())

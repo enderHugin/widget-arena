@@ -1,3 +1,6 @@
+## Pack 191 · 2026-11-11
+- **Corrección de sitio:** *Flechas: gesto de arrastre…* no es apariencia (decide qué teclas crean flechas al arrastrar), así que sale de Apariencia y queda en **Ajustes**, junto a *Tipo de hijo al crear con el ratón…* e *Imán y cuadrícula al mover…*. En **Ajustes ▸ Apariencia** queda solo *Flechas (apariencia y visibilidad)…*, junto a *Cables*, y ahora, igual que Cables, también se ve en modo usuario.
+
 ## Pack 190 · 2026-11-11
 - **Flechas: sus opciones, en Apariencia.** *Flechas (apariencia y visibilidad)…* y *Flechas: gesto de arrastre…* pasan de colgar sueltas en Ajustes a **Ajustes ▸ Apariencia**, junto a los cables.
 - **Apariencia de CADA flecha, desde el menú del widget.** En *Relaciones ▸ Flechas*, bajo «Cada flecha», aparece una entrada por cada flecha que sale del widget (→) o le llega (←), con su etiqueta si la tiene; cada una tiene su submenú: **Apariencia de esta flecha…** (color, grosor, punta, trazo… solo para esa flecha; el botón «Usar la apariencia general» la devuelve al aspecto común), **Etiqueta…**, **Invertir el sentido** y **Borrar esta flecha**. Lo mismo sigue disponible, con lista y botones, en *Flechas de este widget…*.
