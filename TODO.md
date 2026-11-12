@@ -2,6 +2,9 @@
 
 Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
 
+## Normas (se cumplen siempre)
+- **Edición en vivo:** mientras se edita algo que cambia el aspecto, cada cambio se ve en el momento sobre lo de verdad (no solo en una vista previa del diálogo); **Cancelar / cerrar sin aceptar lo deja todo como estaba**; y lo que se está editando **se ve aunque normalmente esté oculto** (por ejemplo, flechas en modo «al pasar el ratón»). Los selectores de color, igual: el color se ve mientras se elige. Vale para todo diálogo nuevo. (Pack 203)
+
 ## Bugs
 - [x] 1. (Pack 171) **Notas: respetar la alineación a la izquierda.** Si el texto está alineado a la izquierda debe obedecer; solo se centra automáticamente en vertical (ejemplo: «personales» sale centrado aunque está alineado a la izquierda).
 - [x] 2. (Pack 172) **La corona se mueve con Ctrl+rueda (hue).** Revisar si pasa con otras acciones de rueda (tamaño, giro, zoom…) y arreglar la causa común.

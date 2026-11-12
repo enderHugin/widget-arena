@@ -1,3 +1,13 @@
+## Pack 203 · 2026-11-12
+- **Norma general: mientras editas, cada cambio se ve en el momento**, sobre lo de verdad y no solo en la vista previa del diálogo. **Cancelar o cerrar sin aceptar lo deja todo como estaba**, y lo que estás editando se ve aunque normalmente esté oculto. Queda escrita en `TODO.md` («Normas») para todo lo que se haga a partir de ahora. Se ha repasado cada diálogo que cambia el aspecto, y faltaba en estos:
+  - **Apariencia de las flechas.** La general, la de cada flecha («Retocar solo esta flecha…») y la de cada tipo: las flechas cambian a la vez que tocas cualquier control. Mientras editas se ven completas, aunque estén en modo «al pasar el ratón»: al editar la general se ven todas, al retocar una se ve esa, y en el navegador de tipos se ven todas.
+  - **Navegador de tipos de flecha.** Al editar el aspecto de un tipo, sus flechas, y solo las suyas, cambian en el momento. Lo aceptado en el aspecto de un tipo se sigue viendo mientras el navegador está abierto. Si cancelas el navegador, todo queda como estaba.
+  - **Selectores de color** (en los diálogos de flechas): el color se ve en las flechas mientras lo eliges. Si cancelas el selector, vuelve el anterior.
+  - **«Girar un ángulo personalizado…»**: antes pedía un número a ciegas. Ahora tiene barra y casilla, y el widget gira mientras eliges el ángulo. Cancelar lo devuelve a su ángulo.
+  - **«Fuente predeterminada…»**: las notas cambian de fuente al marcar una opción. Si cierras sin aceptar, vuelve la de antes, y no se guarda nada hasta aceptar.
+  - **«Color base de varias imágenes…»**: las imágenes marcadas cambian mientras eliges el color. Si cancelas el selector, quedan como estaban.
+- Ya lo hacían, y siguen igual: forma de papel, marco, corona, cables, resaltado al pasar el ratón, efectos de imagen y enderezar.
+
 ## Pack 202 · 2026-11-12
 - **Lo que de verdad congelaba el programa (según el `rendimiento.log` del usuario): los widgets web.** Cada widget web (relojes en HTML, páginas) hacía una foto de su página **cada 2 segundos** para saber qué zona agarra el ratón (pack 169). En Windows esa foto, más su reescalado con suavizado por la escala de pantalla y el análisis, tardaba **400–560 ms**, y mientras tanto el programa se quedaba congelado: 111 de los 118 segundos de bloqueos registrados con el pack 201. Al arrastrar widgets, con o sin flechas, se notaba como tirones constantes. Ahora:
   - **Nunca mientras usas el ratón** (arrastrar, hacer clic, cambiar de tamaño) **ni justo después de mover algo** (1,5 s): se deja para luego.

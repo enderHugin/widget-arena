@@ -11335,6 +11335,59 @@ class MoveTreeDialog(QDialog):
         return self.lst.currentItem().data(2, Qt.UserRole), None, self.chk.isChecked()
 
 
+class RotateLiveDialog(QDialog):
+    """[PACK203] Girar un angulo personalizado: el widget gira EN EL MOMENTO mientras se elige; Cancelar lo deja como estaba."""
+
+    def __init__(self, win, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QDoubleSpinBox, QSlider
+        self.win = win
+        self.base = float(win.current_template_data.get('layer2', {}).get('rotation', 0) or 0)
+        self.setWindowTitle("Girar este widget")
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("Grados a girar (positivo = sentido horario, negativo = antihorario):"))
+        row = QHBoxLayout()
+        self.sl = QSlider(Qt.Horizontal)
+        self.sl.setRange(-180, 180)
+        self.sp = QDoubleSpinBox()
+        self.sp.setRange(-360.0, 360.0)
+        self.sp.setDecimals(1)
+        self.sp.setSuffix(" \u00b0")
+        row.addWidget(self.sl, 1)
+        row.addWidget(self.sp)
+        lay.addLayout(row)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self._t = QTimer(self)
+        self._t.setSingleShot(True)
+        self._t.setInterval(30)
+        self._t.timeout.connect(self._apply)
+        self.sl.valueChanged.connect(lambda v: (self.sp.blockSignals(True), self.sp.setValue(float(v)), self.sp.blockSignals(False), self._t.start()))
+        self.sp.valueChanged.connect(lambda v: (self.sl.blockSignals(True), self.sl.setValue(int(round(max(-180, min(180, v))))), self.sl.blockSignals(False), self._t.start()))
+        self._applied = 0.0
+
+    def _target(self, delta):
+        new = round((self.base + float(delta)) % 360.0, 2)
+        return int(new) if abs(new - round(new)) < 1e-9 else new
+
+    def _apply(self):
+        d = float(self.sp.value())
+        if abs(d - self._applied) > 1e-9:
+            self._applied = d
+            self.win.act_rotate_note(self._target(d))
+
+    def done(self, r):
+        self._t.stop()
+        if r:
+            self._apply()
+        elif abs(self._applied) > 1e-9:
+            self._applied = 0.0
+            self.win.act_rotate_note(self._target(0.0))       # cancelar: como estaba
+        super().done(r)
+
+
 class SetRotationDialog(QDialog):
     """[PACK122] Elige y ordena los sets de widgets por los que se rota con Ctrl / Alt + doble clic en el icono de bandeja
     y con Ctrl+May\u00fas+flechas. Sin ninguno marcado rotan todos, por orden alfab\u00e9tico."""
@@ -14126,7 +14179,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 202                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 203                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -16069,6 +16122,13 @@ class FontChooserDialog(QDialog):
         from PySide6.QtWidgets import QScrollArea, QButtonGroup
         self.m = manager
         self.first_run = first_run
+        self._font_orig = font_cfg().get('default_font')          # [PACK203] para dejarla como estaba si no se acepta
+        self._font_live = self._font_orig
+        self._font_ok = False
+        self._font_t = QTimer(self)
+        self._font_t.setSingleShot(True)
+        self._font_t.setInterval(250)
+        self._font_t.timeout.connect(self._font_preview)
         self.setWindowTitle("Elige la fuente de tus notas" if first_run else "Fuente predeterminada")
         self.setAttribute(Qt.WA_QuitOnClose, False)
         if first_run:
@@ -16134,6 +16194,8 @@ class FontChooserDialog(QDialog):
         elif not sel:
             self.opts[0][0].setChecked(True)             # Kalam: la mas parecida a Segoe Print
         self.group.buttonToggled.connect(self._sync_cards)
+        self.group.buttonToggled.connect(lambda *_a: self._font_t.start())          # [PACK203] las notas cambian de fuente en el momento
+        self.other.currentFontChanged.connect(lambda *_a: self._font_t.start())
         self.status = QLabel("")
         self.status.setStyleSheet("color:#9aa0aa;")
         root.addWidget(self.status)
@@ -16207,6 +16269,31 @@ class FontChooserDialog(QDialog):
                 return fam
         return "Inter"
 
+    def _font_preview(self):
+        """[PACK203] Las notas se ven ya con la fuente elegida (sin guardarla hasta aceptar)."""
+        fam = self.chosen()
+        if fam and fam != self._font_live:
+            self._font_live = fam
+            font_cfg()['default_font'] = fam
+            font_apply_substitutions()
+            self.m.font_refresh_widgets()
+
+    def _font_restore(self):
+        self._font_t.stop()
+        if self._font_live != self._font_orig:
+            self._font_live = self._font_orig
+            if self._font_orig is None:
+                font_cfg().pop('default_font', None)
+            else:
+                font_cfg()['default_font'] = self._font_orig
+            font_apply_substitutions()
+            self.m.font_refresh_widgets()
+
+    def closeEvent(self, e):
+        if not self._font_ok:
+            self._font_restore()                          # cerrar sin aceptar: como estaba
+        super().closeEvent(e)
+
     def _later(self):
         if self.first_run:
             font_cfg()['asked'] = True
@@ -16215,6 +16302,8 @@ class FontChooserDialog(QDialog):
 
     def _accept(self):
         fam = self.chosen()
+        self._font_ok = True
+        self._font_t.stop()
         font_set_default(fam)
         self.m.font_refresh_widgets()
         self.close()
@@ -23172,6 +23261,8 @@ class ArrowTypesDialog(QDialog):
 
     def _fill(self, row=0):
         from PySide6.QtWidgets import QListWidgetItem
+        if getattr(self.m, '_arrow_pv', None) is not None:
+            self.m._arrow_pv_set(types=self.types)           # [PACK203]
         self.lst.blockSignals(True)
         self.lst.clear()
         for t in self.types:
@@ -23238,8 +23329,19 @@ class ArrowTypesDialog(QDialog):
         if t is None:
             return
         g = self.m.arrow_style_general()
-        dlg = ArrowStyleDialog(self._eff(t), self, "Aspecto del tipo \u00ab%s\u00bb" % t['name'], on_reset=True, reset_label="Igual que la apariencia general")
-        if dlg.exec():
+
+        live_on = getattr(self.m, '_arrow_pv', None) is not None
+
+        def live(v, t=t):                                  # [PACK203] las flechas de este tipo cambian en el momento
+            if live_on:
+                tmp = [dict(x, style={k: y for k, y in v.items() if k not in ARROW_GENERAL_ONLY and y != g.get(k)}) if x is t else x for x in self.types]
+                self.m._arrow_pv_set(types=tmp)
+        dlg = ArrowStyleDialog(self._eff(t), self, "Aspecto del tipo \u00ab%s\u00bb" % t['name'], on_reset=True, reset_label="Igual que la apariencia general",
+                               on_change=live)
+        ok_ = dlg.exec()
+        if live_on:
+            self.m._arrow_pv_set(types=self.types)
+        if ok_:
             t['style'] = {} if dlg.reset else {k: v for k, v in dlg.values().items() if k not in ARROW_GENERAL_ONLY and v != g.get(k)}
             self._fill(self.lst.currentRow())
 
@@ -23377,10 +23479,15 @@ class ArrowStyleDialog(QDialog):
         ('fade_in', "Fundido de entrada (0 = aparecen de golpe)", 'int', (0, 3000, " ms")),
         ('fade_out', "Fundido de salida (0 = desaparecen de golpe)", 'int', (0, 3000, " ms"))))
 
-    def __init__(self, style, parent=None, title="Apariencia de las flechas", general=False, on_reset=None, reset_label=None):
+    def __init__(self, style, parent=None, title="Apariencia de las flechas", general=False, on_reset=None, reset_label=None, on_change=None):
         super().__init__(parent)
         from PySide6.QtWidgets import QTabWidget, QDoubleSpinBox, QColorDialog
         self.setWindowTitle(title)
+        self._on_change = on_change                     # [PACK203] cada cambio se ve en las flechas de verdad, en el momento
+        self._live_t = QTimer(self)
+        self._live_t.setSingleShot(True)
+        self._live_t.setInterval(40)
+        self._live_t.timeout.connect(self._emit_live)
         self.st = dict(ARROW_DEFAULTS)
         self.st.update({k: v for k, v in (style or {}).items() if k in ARROW_DEFAULTS})
         self._ctl = {}
@@ -23391,6 +23498,7 @@ class ArrowStyleDialog(QDialog):
             for k, lab in (('hover', "Como los cables: al pasar el rat\u00f3n por uno de sus widgets o al moverlo"), ('always', "Siempre visibles"), ('never', "Ocultas")):
                 self.cb_mode.addItem(lab, k)
             self.cb_mode.setCurrentIndex(max(0, self.cb_mode.findData(self.st['mode'])))
+            self.cb_mode.currentIndexChanged.connect(lambda _i: self._live_t.start())          # [PACK203]
             fm.addRow("Mostrar las flechas:", self.cb_mode)
             lay.addLayout(fm)
         else:
@@ -23448,11 +23556,20 @@ class ArrowStyleDialog(QDialog):
             self._paint_btn(w, v)
 
             def pick(_c=False, k=key, b=w):
-                col = QColorDialog.getColor(QColor(self.st[k]), self, "Elegir color")
-                if col.isValid():
-                    self._set(k, col.name())
-                    self._paint_btn(b, col.name())
-                    b.setText(col.name())
+                old = self.st[k]                        # [PACK203] el color se ve mientras se elige; Cancelar lo deja como estaba
+                cd = QColorDialog(QColor(old), self)
+                cd.setWindowTitle("Elegir color")
+
+                def cur(c, k=k, b=b):
+                    if c.isValid():
+                        self._set(k, c.name())
+                        self._paint_btn(b, c.name())
+                        b.setText(c.name())
+                cd.currentColorChanged.connect(cur)
+                if cd.exec() and cd.selectedColor().isValid():
+                    cur(cd.selectedColor())
+                else:
+                    cur(QColor(old))
             w.clicked.connect(pick)
         self._ctl[key] = w
         return w
@@ -23465,6 +23582,15 @@ class ArrowStyleDialog(QDialog):
     def _set(self, k, v):
         self.st[k] = v
         self.prev.set_style(self.st)
+        if self._on_change is not None:
+            self._live_t.start()
+
+    def _emit_live(self):
+        if self._on_change is not None:
+            try:
+                self._on_change(self.values())
+            except Exception as e:
+                log_warn("Flechas", "vista en vivo: %s" % e)
 
     def values(self):
         d = dict(self.st)
@@ -23996,7 +24122,8 @@ class WidgetManager(QObject):
 
     def arrow_style_general(self):
         out = dict(ARROW_DEFAULTS)
-        st = self.global_state.get('arrow_style')
+        _pv = getattr(self, '_arrow_pv', None)
+        st = _pv['general'] if (_pv and _pv.get('general') is not None) else self.global_state.get('arrow_style')          # [PACK203] editandose
         if isinstance(st, str):
             try:
                 st = json.loads(st)
@@ -24109,7 +24236,9 @@ class WidgetManager(QObject):
     def arrow_effective_style(self, ar, general=None):
         g = dict(general or self.arrow_style_general())
         t = self.arrow_type_get(ar.get('type')) if ar.get('type') else None          # [PACK195] general + tipo + retoques de esta flecha
-        for src_ in ((t or {}).get('style') or {}, ar.get('style') or {}):
+        _pv = getattr(self, '_arrow_pv', None)
+        own = _pv['own'][ar.get('id')] if (_pv and ar.get('id') in _pv['own']) else ar.get('style')          # [PACK203] retoques editandose
+        for src_ in ((t or {}).get('style') or {}, own or {}):
             for k, v in src_.items():
                 if k in g and k not in ARROW_GENERAL_ONLY:
                     g[k] = v
@@ -24138,6 +24267,9 @@ class WidgetManager(QObject):
     def arrow_type_get(self, tid):
         if not tid:
             return None
+        _pv = getattr(self, '_arrow_pv', None)
+        if _pv and _pv.get('types') is not None:          # [PACK203] tipos editandose
+            return next((t for t in _pv['types'] if t.get('id') == tid), None)
         c = getattr(self, '_arrow_types_cache', None)
         raw = self.global_state.get('arrow_types')
         if c is None or c[0] is not raw:
@@ -24204,8 +24336,14 @@ class WidgetManager(QObject):
         self._arrow_changed()
 
     def edit_arrow_types(self, *_a, select=None):
+        prev = getattr(self, '_arrow_pv', None)
         dlg = ArrowTypesDialog(self, self.dialog_parent, select=select)
-        if dlg.exec():
+        self._arrow_pv_set(types=dlg.types, show='all')    # [PACK203] mientras se editan los tipos, las flechas los muestran en el momento
+        try:
+            ok = dlg.exec()
+        finally:
+            self._arrow_pv_restore(prev)
+        if ok:
             self.set_arrow_types(dlg.types, dlg.removed)
 
     def _arrow_widget_color(self, wid):
@@ -24320,7 +24458,8 @@ class WidgetManager(QObject):
             if ra is None or rb is None:
                 continue
             fade = 1.0
-            if g['mode'] == 'hover':                      # [PACK196] como los cables: cursor reposando o arrastre de uno de sus widgets
+            _pvs = (getattr(self, '_arrow_pv', None) or {}).get('show')          # [PACK203] lo que se esta editando se ve entero
+            if g['mode'] == 'hover' and not (_pvs == 'all' or (isinstance(_pvs, (set, frozenset)) and a['id'] in _pvs)):          # [PACK196] como los cables
                 fade = max(_lv.get(src, 0.0), _lv.get(a['to'], 0.0))
                 if fade <= 0.0:
                     continue
@@ -24498,9 +24637,33 @@ class WidgetManager(QObject):
                 pass
         self._arrow_picker = _ArrowPicker(self, src)
 
+    def _arrow_pv_set(self, **kw):
+        """[PACK203] Vista en vivo de lo que se esta editando: general / retoques {id: estilo} / tipos / que flechas se ven ('all' o {ids})."""
+        pv = getattr(self, '_arrow_pv', None) or {'general': None, 'own': {}, 'types': None, 'show': None}
+        pv.update(kw)
+        self._arrow_pv = pv
+        self._arrow_rev += 1
+        lay = getattr(self, 'arrow_layer', None)
+        if lay is not None:
+            lay.tick(force=True)
+
+    def _arrow_pv_restore(self, prev):
+        self._arrow_pv = copy.copy(prev) if prev else None
+        self._arrow_rev += 1
+        lay = getattr(self, 'arrow_layer', None)
+        if lay is not None:
+            lay.tick(force=True)
+
     def edit_arrow_style(self, *_a):
-        dlg = ArrowStyleDialog(self.arrow_style_general(), self.dialog_parent, "Flechas: apariencia y visibilidad", general=True)
-        if dlg.exec():
+        prev = getattr(self, '_arrow_pv', None)
+        dlg = ArrowStyleDialog(self.arrow_style_general(), self.dialog_parent, "Flechas: apariencia y visibilidad", general=True,
+                               on_change=lambda v: self._arrow_pv_set(general=dict(v), show='all'))
+        self._arrow_pv_set(show='all')                     # [PACK203] mientras se edita se ven todas, y cada cambio en el momento
+        try:
+            ok = dlg.exec()
+        finally:
+            self._arrow_pv_restore(prev)
+        if ok:
             self.set_arrow_style_general(dlg.values())
 
     def edit_arrow_style_of(self, src, aid, parent=None):
@@ -24510,9 +24673,18 @@ class WidgetManager(QObject):
         g = self.arrow_style_general()
         base = self.arrow_effective_style({'type': ar.get('type'), 'style': {}}, g)          # [PACK195] general + su tipo
         ttl = "Retocar esta flecha (tipo: %s)" % self.arrow_type_name(ar.get('type'))
+        prev = getattr(self, '_arrow_pv', None)
+
+        def live(v):                                       # [PACK203] la flecha cambia en el momento
+            self._arrow_pv_set(own={aid: {k: x for k, x in v.items() if k not in ARROW_GENERAL_ONLY and x != base.get(k)}}, show={aid})
         dlg = ArrowStyleDialog(self.arrow_effective_style(ar, g), parent or self.dialog_parent, ttl, on_reset=True,
-                               reset_label="Quitar los retoques (como su tipo)")
-        if dlg.exec():
+                               reset_label="Quitar los retoques (como su tipo)", on_change=live)
+        self._arrow_pv_set(show={aid})
+        try:
+            ok = dlg.exec()
+        finally:
+            self._arrow_pv_restore(prev)
+        if ok:
             if dlg.reset:
                 self.arrow_set(src, aid, style={})
             else:
@@ -26566,10 +26738,7 @@ class WidgetManager(QObject):
             rn.addAction(a)
 
         def _custom_rot():
-            v, ok = QInputDialog.getDouble(self.dialog_parent, "Girar este widget", "Grados a girar (positivo = sentido horario, negativo = antihorario):",
-                                           0.0, -360.0, 360.0, 1)
-            if ok and abs(v) > 1e-9:
-                win.act_rotate_note_by(v)
+            RotateLiveDialog(win, self.dialog_parent).exec()          # [PACK203] el widget gira mientras se elige el angulo
         a = QAction("Girar un \u00e1ngulo personalizado...", self)
         a.triggered.connect(lambda checked=False: _custom_rot())
         rn.addAction(a)
@@ -31699,14 +31868,54 @@ class WidgetManager(QObject):
         self._bulk_action = None
 
         def pick_color():
-            c = QColorDialog.getColor(Qt.white, dlg, "Elegir color base")
-            if c.isValid():
-                if c.hsvHue() < 0:
-                    QMessageBox.information(dlg, "Color sin tono", "El color elegido es gris (sin matiz).")
-                    return
-                self._bulk_hue = int(c.hsvHue())
-                self._bulk_action = 'color'
-                dlg.accept()
+            # [PACK203] las imagenes marcadas cambian mientras se elige el color; Cancelar las deja como estaban
+            ids = [lst.item(i).data(Qt.UserRole) for i in range(lst.count()) if lst.item(i).checkState() == Qt.Checked]
+            orig = {}
+            for wid in ids:
+                td = (self.global_state.get(wid) or {}).get('template_data', {})
+                orig[wid] = {lk: (dict(td.get(lk, {})).get('base_hue'), dict(td.get(lk, {})).get('base_hue_src'))
+                             for lk in ('layer1', 'layer2') if td.get(lk, {}).get('type') == 'png'}
+
+            def put(hue_by_layer):
+                for wid in ids:
+                    td = (self.global_state.get(wid) or {}).get('template_data', {})
+                    for lk, val in hue_by_layer(wid).items():
+                        ld = td.get(lk, {})
+                        if val[0] is None:
+                            ld.pop('base_hue', None)
+                            ld.pop('base_hue_src', None)
+                        else:
+                            ld['base_hue'], ld['base_hue_src'] = val
+                    if wid in self.widgets:
+                        self.widgets[wid].load_template_data(td)
+            pend = {'c': None}
+            tm = QTimer(dlg)
+            tm.setSingleShot(True)
+            tm.setInterval(120)
+
+            def live():
+                c = pend['c']
+                if c is not None and c.isValid() and c.hsvHue() >= 0:
+                    h = int(c.hsvHue())
+                    put(lambda wid: {lk: (h, ((self.global_state.get(wid) or {}).get('template_data', {}).get(lk, {}) or {}).get('content'))
+                                     for lk in orig[wid]})
+            tm.timeout.connect(live)
+            cd = QColorDialog(Qt.white, dlg)
+            cd.setWindowTitle("Elegir color base")
+            cd.currentColorChanged.connect(lambda c: (pend.__setitem__('c', c), tm.start()) if ids else None)
+            ok = cd.exec()
+            tm.stop()
+            c = cd.selectedColor()
+            if not ok or not c.isValid():
+                put(lambda wid: orig[wid])                 # como estaban
+                return
+            if c.hsvHue() < 0:
+                put(lambda wid: orig[wid])
+                QMessageBox.information(dlg, "Color sin tono", "El color elegido es gris (sin matiz).")
+                return
+            self._bulk_hue = int(c.hsvHue())
+            self._bulk_action = 'color'
+            dlg.accept()
 
         def set_auto():
             self._bulk_action = 'auto'
