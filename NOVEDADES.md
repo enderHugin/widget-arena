@@ -1,3 +1,14 @@
+## Pack 202 · 2026-11-12
+- **Lo que de verdad congelaba el programa (según el `rendimiento.log` del usuario): los widgets web.** Cada widget web (relojes en HTML, páginas) hacía una foto de su página **cada 2 segundos** para saber qué zona agarra el ratón (pack 169). En Windows esa foto, más su reescalado con suavizado por la escala de pantalla y el análisis, tardaba **400–560 ms**, y mientras tanto el programa se quedaba congelado: 111 de los 118 segundos de bloqueos registrados con el pack 201. Al arrastrar widgets, con o sin flechas, se notaba como tirones constantes. Ahora:
+  - **Nunca mientras usas el ratón** (arrastrar, hacer clic, cambiar de tamaño) **ni justo después de mover algo** (1,5 s): se deja para luego.
+  - **Si la página no cambia, se mira cada vez menos:** 2 s, 4, 8, 16, 32… hasta 1 minuto. Si cambia lo que dibuja o se recarga, vuelve a 2 s.
+  - **Si mirar sale caro en tu equipo, se espacia en proporción:** como mucho ~2 % del tiempo. Una foto de 500 ms no se repite hasta pasados 25 s.
+  - El reescalado de la foto es el rápido: para saber qué zona agarra no hace falta suavizado.
+- **Flechas:** el temporizador ya no repite el cálculo que acaba de hacer un movimiento. Antes, durante un arrastre, eran hasta 85 cálculos por segundo; ahora unos 60. Además, para el difuminado solo se miran los widgets transparentes cerca de las flechas, no todos.
+- **`rendimiento.log` más útil:**
+  - apunta también la **carga sostenida**, es decir, muchos pasos medianos seguidos que ocupan más del 35 % del tiempo aunque ninguno pase de 25 ms, con cuántas veces por segundo ocurre cada cosa;
+  - mide **cuánto tarda en tu equipo mirar cada página web** («web: mirar la página»).
+
 ## Pack 201 · 2026-11-11
 - **La ventana de las flechas, como la de los cables.** Era la causa de la saturación al mover widgets con flechas: las flechas se pintaban en una ventana transparente **del tamaño de toda la pantalla**, y en Windows cada actualización de una ventana así obliga al sistema a recomponer esa superficie entera. Los cables siempre han usado una ventana ajustada a su zona, y por eso iban fluidos. Ahora las flechas también:
   - la ventana solo ocupa la zona de las flechas visibles, con margen;

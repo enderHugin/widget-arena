@@ -2571,7 +2571,7 @@ class StickerWindow(QMainWindow):
         self._web_hit_timer.setInterval(2000)
         self._web_hit_timer.timeout.connect(self._web_hit_tick)
         self._web_hit_timer.start()
-        view.loadFinished.connect(lambda _ok: (QTimer.singleShot(700, self._web_hit_tick), QTimer.singleShot(2500, self._web_hit_tick)))
+        view.loadFinished.connect(lambda _ok: (self._web_hit_reset(), QTimer.singleShot(700, self._web_hit_tick), QTimer.singleShot(2500, self._web_hit_tick)))
         try:                                                                   # [PACK164] la consola de la pagina y los fallos de carga, al registro
             view.setPage(_WaWebPage(self.manager.web_profile, view, self.widget_id))
         except Exception as e_pg:
@@ -3706,7 +3706,7 @@ class StickerWindow(QMainWindow):
             img = v.grab().toImage()
             if not img.isNull():
                 if img.size() != g.size():
-                    img = img.scaled(g.size(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                    img = img.scaled(g.size(), Qt.IgnoreAspectRatio, Qt.FastTransformation)          # [PACK202] para una zona basta el rapido
                 a = _image_alpha(img)
                 sig = (g.width(), g.height(), hash(np.ascontiguousarray(a[::3, ::3]).tobytes()))
                 c = getattr(self, '_web_hit_cache', None)
@@ -3721,26 +3721,55 @@ class StickerWindow(QMainWindow):
         self._web_hit_cache = (sig, reg)
         return sig
 
-    def _web_hit_tick(self):
-        """[PACK169] Cada par de segundos (y tras cargar la pagina) vuelve a mirar; si lo dibujado cambio, se recalcula la zona que agarra."""
+    def _web_hit_tick(self, force=False):
+        """[PACK169] Cada par de segundos (y tras cargar la pagina) vuelve a mirar; si lo dibujado cambio, se recalcula la zona que agarra.
+        [PACK202] Mirar (foto del visor + analisis) puede tardar cientos de ms en Windows y congela el programa, asi que: nunca mientras se usa
+        el raton ni justo despues de mover algo; si la pagina no cambia, cada vez menos a menudo (2, 4, 8 ... 60 s; vuelve a 2 s si cambia o se
+        recarga); y si mirar sale caro, se espacia en proporcion (como mucho ~2 % del tiempo)."""
         try:
             if not USE_WINDOW_MASK or not getattr(self, '_web_is_real', False) or not self.isVisible() or not self.layer2_web.isVisible():
                 return
+            now = time.monotonic()
+            if not force:
+                if QApplication.mouseButtons() != Qt.NoButton or now - getattr(self.manager, '_last_move_t', 0.0) < 1.5:
+                    return                                   # se esta usando el raton o moviendo algo: luego
+                if now < getattr(self, '_web_hit_next', 0.0):
+                    return
             old = getattr(self, '_web_hit_cache', None)
+            t0 = time.perf_counter()
             self._web_hit_refresh()
+            cost = time.perf_counter() - t0
+            try:
+                self.manager._perf_add('web: mirar la pagina', cost * 1000)
+            except Exception:
+                pass
             new = getattr(self, '_web_hit_cache', None)
             if (old[0] if old else None) != (new[0] if new else None):
+                self._web_hit_iv = 2.0
                 self.update_window_mask()
+            else:
+                self._web_hit_iv = min(60.0, max(2.0, getattr(self, '_web_hit_iv', 2.0) * 2.0))
+            self._web_hit_iv = max(self._web_hit_iv, cost * 50.0)
+            self._web_hit_next = now + self._web_hit_iv
         except RuntimeError:
             pass
+
+    def _web_hit_reset(self):
+        """[PACK202] La pagina ha cargado o cambiado de tamano: se vuelve a mirar pronto."""
+        self._web_hit_iv = 2.0
+        self._web_hit_next = 0.0
 
     def _web_hit_region(self):
         """[PACK169] Zona (coordenadas del visor) que agarra la capa web: su recorte, si lo hay, y lo que la pagina dibuja."""
         v = self.layer2_web
         c = getattr(self, '_web_hit_cache', None)
         if c is None or (c[0] is not None and c[0][:2] != (v.width(), v.height())):
-            self._web_hit_refresh()
-            c = getattr(self, '_web_hit_cache', None)
+            if QApplication.mouseButtons() != Qt.NoButton:          # [PACK202] cambiando de tamano con el raton: el rectangulo, y se mira al soltar
+                self._web_hit_reset()
+                c = None
+            else:
+                self._web_hit_refresh()
+                c = getattr(self, '_web_hit_cache', None)
         base = v.mask()
         if base.isEmpty():
             base = QRegion(0, 0, v.width(), v.height())
@@ -6640,6 +6669,7 @@ class StickerWindow(QMainWindow):
         super().moveEvent(event)
         if self.isVisible():
             self._moved_at = time.monotonic()                # [PACK194] mientras se mueve se ven sus flechas
+            self.manager._last_move_t = self._moved_at       # [PACK202] para no mirar paginas web justo ahora
             lay = getattr(self.manager, 'arrow_layer', None)
             if lay is not None:
                 lay.kick()                                   # [PACK198] sus flechas le siguen en el mismo momento
@@ -14096,7 +14126,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 201                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 202                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22809,7 +22839,7 @@ class ArrowLayer(QObject):
         self.items = []
         self._t = QTimer(self)
         self._t.setInterval(40)
-        self._t.timeout.connect(self.tick)
+        self._t.timeout.connect(self._timer_tick)          # [PACK202]
         self._t.start()
 
     def _overlay_for(self, scr):
@@ -22843,7 +22873,12 @@ class ArrowLayer(QObject):
         _tr = ()
         tr_dirty = QRegion()
         if int(m.get_cable_param('_under_blur')) > 0 and items:          # [PACK187] si se mueve un widget transparente, lo que se ve a traves de el cambia
-            cur = {k: w.geometry() for k, w in m.widgets.items() if w.isVisible() and w.paper_translucent() and not w.layer1_editor.isVisible()}
+            near = QRect()                                  # [PACK202] solo importan los transparentes cerca de alguna flecha
+            for it_ in items:
+                near = near.united(QRectF(it_['p0'], it_['p1']).normalized().toAlignedRect())
+            near = near.adjusted(-400, -400, 400, 400)
+            cur = {k: g_ for k, w in m.widgets.items() for g_ in (w.geometry(),)
+                   if g_.intersects(near) and w.isVisible() and w.paper_translucent() and not w.layer1_editor.isVisible()}
             _tr = tuple(sorted((k, g_.getRect()) for k, g_ in cur.items()))
             prev = getattr(self, '_tr_geo', None) or {}
             tc = getattr(self, 'tregs', None)
@@ -22952,6 +22987,12 @@ class ArrowLayer(QObject):
                     ov.raise_()
                     ov._raised_at = now
         m._arrow_raise_due = False
+
+    def _timer_tick(self):
+        """[PACK202] El temporizador (fundidos, cursor encima): no repite lo que acaba de hacer un movimiento."""
+        if getattr(self, '_kick_pending', False) or time.monotonic() - getattr(self, '_kick_t', 0.0) < 0.035:
+            return
+        self.tick()
 
     def has_arrows(self):
         """[PACK198] Hay alguna flecha (se recalcula solo cuando cambian)."""
@@ -30958,17 +30999,21 @@ class WidgetManager(QObject):
     def _perf_flush(self):
         d = getattr(self, '_perf_acc', None) or {}
         self._perf_acc = {}
-        if not d or max(a[2] for a in d.values()) < 25.0 or time.monotonic() - getattr(self, '_perf_last', 0.0) < 5.0:
+        now = time.monotonic()
+        win = max(0.05, now - getattr(self, '_perf_t0', now - 0.5))
+        self._perf_t0 = now
+        busy = sum(a[0] for a in d.values()) / (win * 1000.0)          # [PACK202] fraccion del tiempo ocupada (carga sostenida)
+        if not d or (max(a[2] for a in d.values()) < 25.0 and busy < 0.35) or now - getattr(self, '_perf_last', 0.0) < 5.0:
             return
-        self._perf_last = time.monotonic()
+        self._perf_last = now
         try:
             n_tr = sum(1 for w in self.widgets.values() if w.isVisible() and w.paper_translucent())
             n_ar = len(self.arrows_all())
         except Exception:
             n_tr = n_ar = -1
-        parts = ", ".join("%s %.1f ms/vez (max %.1f, %d veces)" % (k, a[0] / max(1, a[1]), a[2], a[1]) for k, a in sorted(d.items()))
-        _perf_log("Lento en el ultimo medio segundo: %s | widgets %d, transparentes %d, flechas %d, difuminado %d px"
-                  % (parts, len(self.widgets), n_tr, n_ar, int(self.get_cable_param('_under_blur'))))
+        parts = ", ".join("%s %.1f ms/vez (max %.1f, %.0f veces/s)" % (k, a[0] / max(1, a[1]), a[2], a[1] / win) for k, a in sorted(d.items()))
+        _perf_log("Lento en el ultimo %.1f s (ocupado %d %% del tiempo): %s | widgets %d, transparentes %d, flechas %d, difuminado %d px"
+                  % (win, int(busy * 100), parts, len(self.widgets), n_tr, n_ar, int(self.get_cable_param('_under_blur'))))
 
     def _veil_poll_tick(self):
         self._perf_flush()
