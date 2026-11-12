@@ -1,3 +1,21 @@
+## Pack 205 · 2026-11-12
+- **Sombra para las flechas** (nueva pestaña **«Sombra»** en la apariencia general, en la de cada tipo y en «Retocar solo esta flecha…»): intensidad (0 = sin sombra, lo predeterminado), color, desplazamiento a la derecha y hacia abajo (también negativos) y borde difuso. Se ve en vivo mientras la ajustas.
+  - Es barata, como el resplandor: la misma forma de la flecha (trazo, punta y cola), oscura y desplazada, con el borde suavizado en franjas y dibujada a media resolución. No hay difuminados. Una flecha que no cambia reutiliza su sombra.
+  - Va siempre **detrás**: nunca oscurece el trazo y se ve a través del resplandor. Sus piezas no se suman entre sí, así que no se le ve el esqueleto.
+- **Al pasar el ratón por un widget se ven también las flechas encadenadas**, como los cables de dependencias. Se ajusta en la pestaña **«Visibilidad»** de la apariencia general:
+  - **«Mostrar también las flechas encadenadas»:** *hacia delante y hacia atrás* (lo predeterminado), *solo hacia delante* (las que siguen: de B a C, de C a D…), *solo hacia atrás* (las que llevan hasta él: de A a B, de Z a A…) o *no* (solo las del propio widget, como antes).
+  - **Cada recorrido va en un solo sentido**, como los cables, que muestran los descendientes y la línea de antepasados pero no los hermanos. Si hay A→B→C y también X→C, con el cursor en B no se ve X→C: X llega a C por un lado, no sigue la cadena de B. Con el cursor en X sí se ven X→C, C→D…
+  - **«Cuántos pasos de la cadena»** (0 = toda) y **«Cada paso más lejos se ve a este % del anterior»** (80 % por defecto; como poco, a la cuarta parte). Las flechas del propio widget se ven siempre en los dos sentidos.
+  - **«Encadenar también al arrastrar»** (activado): al mover un widget se ve su cadena entera.
+  - Los bucles no la cuelgan (cada widget se recorre una vez por sentido) y no pasa por widgets ocultos. Una red de 40 widgets y unas 80 flechas se calcula en unos 4 ms por fotograma.
+- **Clonar repite las flechas, con ids nuevos.**
+  - **Con sus descendientes:** las flechas entre widgets del árbol van entre sus clones. Las que unían el árbol con widgets de fuera se repiten entre el clon y ese mismo widget, igual que el clon conserva el padre del original.
+  - **Un solo widget:** sus flechas de salida y de llegada se repiten en el clon.
+  - Clonar y sus flechas son un solo paso de deshacer.
+- **Arreglo: las flechas se perdían al abrir un set desde su archivo.** Pasaba también con los sets que se precargan para cambiar rápido. Al abrirlo, sus widgets se renombran, pero las flechas seguían apuntando a los nombres viejos y dejaban de verse. Ahora se reapuntan. Lo mismo al **pegar un árbol** (json) o al **agregar widgets desde un archivo**: las flechas internas van entre los widgets nuevos y las que van a un widget que ya está aquí se conservan.
+  - **Las que ya se habían perdido se recuperan** al arrancar y al abrir cada set, cuando se sabe sin duda a qué widget apuntaban.
+- Las flechas semitransparentes se componen en píxeles enteros: ya no se reescalan medio píxel y quedan un poco más nítidas.
+
 ## Pack 204 · 2026-11-12
 - **Arreglo: las flechas no respetaban la separación del widget.** Calculaban dónde salir y dónde llegar sobre el rectángulo de la ventana del widget, que incluye la sombra y los márgenes transparentes y, si el widget está girado o tiene esquinas redondeadas, también las esquinas vacías. Con la separación a 0, la flecha se quedaba a 14–24 px del papel, y más si el widget estaba girado. Ahora salen y llegan al **borde real del papel** (su silueta, la misma con la que se recortan los cables), también girado o con esquinas redondeadas. La separación se mide desde ahí: con 0 tocan el borde, con 12 quedan a 12 px, y con valores negativos se meten dentro. Igual en la flecha provisional del gesto de arrastre.
 - La opción pasa a llamarse **«Separación del borde del papel (negativo = se mete dentro)»** y su rango se amplía de −20…60 a **−60…120 px**.

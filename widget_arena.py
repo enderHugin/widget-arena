@@ -14179,7 +14179,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 204                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 205                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22248,6 +22248,8 @@ ARROW_DEFAULTS = {
     'hover_op': 35, 'hover_delay': 80,      # [PACK196] como los cables: opacidad (%) cuando el cursor reposa sobre uno de sus widgets y espera (ms)
     'move_op': 100, 'move_hold': 600,       # opacidad (%) mientras se arrastra uno de sus widgets y cuanto siguen asi al soltarlo (ms)
     'fade_in': 150, 'fade_out': 220,        # fundidos de entrada y de salida (ms)
+    'chain': 'both', 'chain_depth': 0,      # [PACK205] flechas encadenadas: both | fwd | back | none; cuantos pasos (0 = toda la cadena)
+    'chain_fade': 80, 'chain_move': True,   # cada paso mas lejos, este % del anterior (como poco 1/4); tambien al arrastrar
     'color': '#ff9f43', 'grad': False, 'color2': '#ffd166',
     'color_from': 'fixed', 'color2_from': 'fixed',          # [PACK192] fixed | src | dst: el color elegido o el del widget de origen / destino
     'w_start': 100, 'w_end': 100,                           # [PACK192] grosor al salir y al llegar (% del grosor segun la longitud)
@@ -22257,6 +22259,7 @@ ARROW_DEFAULTS = {
     'dash': 'solid', 'cap': 'round',
     'head': 'triangle', 'head_size': 12, 'tail': 'none',
     'glow': 0, 'glow_size': 6,
+    'shadow': 0, 'shadow_color': '#000000', 'shadow_dx': 3, 'shadow_dy': 4, 'shadow_soft': 4,          # [PACK205] sombra (0 = sin sombra)
     'label_size': 11, 'label_color': '#ffffff', 'label_bg': '#1f2737', 'label_bg_op': 75,
 }
 
@@ -22271,7 +22274,9 @@ ARROW_TYPES_DEFAULT = [          # [PACK195] tipos de ejemplo: solo guardan lo q
     {'id': 'recta', 'name': "Recta y fina", 'style': {'curve': 0, 'curve_far': 0, 'w_near': 1.5, 'w_far': 1.0, 'head': 'open'}, 'wheel': False},
 ]
 ARROW_GENERAL_NAME = "Apariencia general"
-ARROW_GENERAL_ONLY = ('mode', 'hover_op', 'hover_delay', 'move_op', 'move_hold', 'fade_in', 'fade_out')          # [PACK196] solo del ajuste general
+ARROW_GENERAL_ONLY = ('mode', 'hover_op', 'hover_delay', 'move_op', 'move_hold', 'fade_in', 'fade_out',
+                      'chain', 'chain_depth', 'chain_fade', 'chain_move')          # [PACK196] [PACK205] solo del ajuste general
+ARROW_CHAIN_FLOOR = 0.25          # [PACK205] un paso lejano nunca se ve a menos de 1/4 del nivel de las flechas propias del widget
 
 
 def arrow_style_clean(d):
@@ -22295,6 +22300,8 @@ def arrow_type_pixmap(st, w=150, h=36, label=''):
     return pm
 
 
+ARROW_CHAIN_CHOICES = (('both', "Hacia delante y hacia atr\u00e1s (como los cables)"), ('fwd', "Solo hacia delante: las que siguen"),
+                       ('back', "Solo hacia atr\u00e1s: las que llevan hasta \u00e9l"), ('none', "No: solo las del propio widget"))          # [PACK205]
 ARROW_COLOR_FROM = (('fixed', "El color elegido"), ('src', "El del widget de origen"), ('dst', "El del widget de destino"))
 
 
@@ -22492,6 +22499,16 @@ def arrow_endpoints_shapes(ra, rb, pa, pb, gap=0.0):
     return p0, p1
 
 
+def _arrow_stale_match(to, keys):
+    """[PACK205] Antes de este pack, abrir un set desde su archivo renombraba sus widgets ('id' -> 'id_<sello>', a veces '_<n>' mas, y asi
+    cada vez) sin reapuntar las flechas, que se quedaban apuntando al id viejo. Devuelve el UNICO id de 'keys' que es 'to' renombrado asi,
+    o None."""
+    import re
+    rx = re.compile(re.escape(to) + r'(_\d{9,11}(_\d+)?)+$')
+    c = [k for k in keys if k.startswith(to + '_') and rx.match(k)]
+    return c[0] if len(c) == 1 else None
+
+
 def _arrow_t(L, near, far):
     t = max(0.0, min(1.0, (L - near) / max(1.0, far - near)))
     return t * t * (3.0 - 2.0 * t)
@@ -22538,8 +22555,12 @@ def _arrow_bounds(p0, p1, st, label, reverse_lane):
     xs, ys = [q[0] for q in pts], [q[1] for q in pts]
     wmax = w * max(int(st.get('w_start', 100)), int(st.get('w_end', 100)), 100) / 100.0
     m = max(float(st['head_size']), wmax * 2.6) * 1.15 + wmax / 2.0 + 6          # [PACK201] lo justo: punta, trazo
+    _ex = 0.0
     if int(st['glow']) > 0:
-        m += float(st['glow_size']) * 1.1 + 2                                     # y el borde del resplandor (sobresale 'alcance' px)
+        _ex = float(st['glow_size']) * 1.1 + 2                                    # y el borde del resplandor (sobresale 'alcance' px)
+    if int(st.get('shadow', 0)) > 0:                                              # [PACK205] y la sombra (desplazada, con su borde suave)
+        _ex = max(_ex, max(abs(float(st.get('shadow_dx', 0))), abs(float(st.get('shadow_dy', 0)))) + float(st.get('shadow_soft', 0)) * 1.2 + 4)
+    m += _ex
     r = QRectF(min(xs) - m, min(ys) - m, max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m)
     if label:
         f = QFont()
@@ -22563,13 +22584,13 @@ def paint_arrow(p, p0, p1, st, label='', reverse_lane=False, fast=False):
     op = max(0.0, min(1.0, (st['op_near'] + (st['op_far'] - st['op_near']) * t) / 100.0))
     if op <= 0.0:
         return
-    if fast or (op >= 0.995 and int(st['glow']) <= 0):
+    if fast or (op >= 0.995 and int(st['glow']) <= 0 and int(st.get('shadow', 0)) <= 0):          # [PACK205] con sombra: imagen aparte (fondo opaco)
         return _paint_arrow_raw(p, p0, p1, st, label, reverse_lane)          # [PACK199] la ventana de flechas: directo (fondo transparente)
     try:
         dpr = float(p.device().devicePixelRatioF()) if p.device() is not None else 1.0
     except Exception:
         dpr = 1.0
-    r = _arrow_bounds(p0, p1, st, label, reverse_lane)
+    r = QRectF(_arrow_bounds(p0, p1, st, label, reverse_lane).toAlignedRect())          # [PACK205] en pixeles enteros: la imagen no se re-muestrea
     if r.width() * r.height() * dpr * dpr > 8e6:
         dpr = 1.0
     if r.width() * r.height() > 8e6:
@@ -22745,6 +22766,85 @@ def _arrow_glow_paint(p, path, body_poly, heads, st, col, col2, p0, p1, w, body_
     p.restore()
 
 
+_ARROW_SHADOW_CACHE = {}          # [PACK205] clave (forma + sombra + escala) -> (rect, imagen de la sombra a media resolucion)
+_ARROW_SHADOW_ORDER = []
+
+
+def _arrow_shadow_paint(p, path, heads, st, w, body_cap, pat, targs, op, dpr=1.0):
+    """[PACK205] Sombra de la flecha: la misma forma (trazo, punta y cola) de un color oscuro, desplazada, con el borde suavizado en franjas
+    (sin difuminar) y a media resolucion (al ampliarla se suaviza sola). Se pinta en una imagen pequena (guardada en cache) en modo
+    "reemplazar" -las piezas no se acumulan- y se pone DETRAS de lo ya pintado: se ve a traves del resplandor y nunca encima de la flecha."""
+    import math
+    sa = max(0, min(100, int(st.get('shadow', 0)))) / 100.0
+    if sa <= 0.0 or op <= 0.0:
+        return
+    sdx, sdy = float(st.get('shadow_dx', 0)), float(st.get('shadow_dy', 0))
+    soft = max(0.0, float(st.get('shadow_soft', 0)))
+    try:
+        ddpr = float(p.device().devicePixelRatioF()) if p.device() is not None else 1.0
+    except Exception:
+        ddpr = 1.0
+    scale = max(1.0, float(dpr), ddpr)
+    sc = scale * (0.5 if soft >= 1.5 else 1.0)
+    br = path.boundingRect()
+    hk = []
+    for poly, _m, _w in heads:
+        if _m == 'circle':
+            r_ = poly[1].x()
+            br = br.united(QRectF(poly[0].x() - r_, poly[0].y() - r_, 2 * r_, 2 * r_))
+            hk.append((round(poly[0].x(), 1), round(poly[0].y(), 1), round(r_, 1)))
+        else:
+            br = br.united(poly.boundingRect())
+            hk.append(tuple((round(poly[i].x(), 1), round(poly[i].y(), 1)) for i in range(poly.size())))
+    wmax = max(w, targs[0], targs[1]) if targs is not None else w
+    m_ = wmax + soft * 1.2 + 4
+    br = br.adjusted(-m_, -m_, m_, m_)
+    if br.width() * br.height() * sc * sc > 4e6:
+        sc = max(0.1, math.sqrt(4e6 / max(1.0, br.width() * br.height())))
+    key = (tuple((round(path.elementAt(i).x, 1), round(path.elementAt(i).y, 1)) for i in range(path.elementCount())), tuple(hk),
+           round(w, 2), tuple(round(x, 2) if isinstance(x, float) else (tuple(x) if isinstance(x, list) else x) for x in (targs or ())),
+           tuple(pat or ()), str(body_cap), round(sa, 3), round(soft, 1), str(st.get('shadow_color', '#000000')), round(sc, 3))
+    hit = _ARROW_SHADOW_CACHE.get(key)
+    if hit is None:
+        img = QImage(max(1, int(math.ceil(br.width() * sc))), max(1, int(math.ceil(br.height() * sc))), QImage.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        ip = QPainter(img)
+        ip.setRenderHint(QPainter.Antialiasing, True)
+        ip.scale(sc, sc)
+        ip.translate(-br.x(), -br.y())
+        ip.setCompositionMode(QPainter.CompositionMode_Source)
+        col = QColor(st.get('shadow_color', '#000000'))
+        bands = ((soft * 1.2, 0.28), (soft * 0.6, 0.6), (0.0, 1.0)) if soft >= 0.5 else ((0.0, 1.0),)
+        for ext, k in bands:                       # de fuera a dentro: cada franja sustituye a la anterior (no se suman)
+            c = QColor(col)
+            c.setAlphaF(max(0.0, min(1.0, sa * k)))
+            b = QBrush(c)
+            if targs is not None:
+                _arrow_taper_draw(ip, path, targs[0], targs[1], targs[2], targs[3], b, extra=ext, coarse=ext > 0)
+            else:
+                pen = QPen(b, w + ext)
+                pen.setCapStyle(body_cap if ext <= 0 else Qt.RoundCap)
+                pen.setJoinStyle(Qt.RoundJoin)
+                if pat:
+                    pen.setDashPattern([x * w / (w + ext) for x in pat])
+                ip.setPen(pen)
+                ip.setBrush(Qt.NoBrush)
+                ip.drawPath(path)
+            _arrow_heads_paint(ip, heads, b, ext)
+        ip.end()
+        hit = (QRectF(br), img)
+        _ARROW_SHADOW_CACHE[key] = hit
+        _ARROW_SHADOW_ORDER.append(key)
+        while len(_ARROW_SHADOW_ORDER) > 60:
+            _ARROW_SHADOW_CACHE.pop(_ARROW_SHADOW_ORDER.pop(0), None)
+    p.save()
+    p.setCompositionMode(QPainter.CompositionMode_DestinationOver)
+    p.setOpacity(max(0.0, min(1.0, op)))
+    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    p.drawImage(hit[0].translated(sdx, sdy), hit[1])
+    p.restore()
+
+
 def _paint_arrow_raw(p, p0, p1, st, label='', reverse_lane=False, _op=None, _dpr=1.0):
     """Pinta una flecha de p0 a p1 con el estilo 'st' (dict de ARROW_DEFAULTS). La opacidad, el grosor y la curvatura dependen de lo larga que sea."""
     import math
@@ -22868,6 +22968,11 @@ def _paint_arrow_raw(p, p0, p1, st, label='', reverse_lane=False, _op=None, _dpr
         p.setBrush(Qt.NoBrush)
         p.drawPath(path)
     _arrow_heads_paint(p, heads, brush, 0.0)
+    if int(st.get('shadow', 0)) > 0:                 # [PACK205] la sombra, DETRAS de lo ya pintado (trazo, punta, cola y resplandor)
+        try:
+            _arrow_shadow_paint(p, path, heads, st, w, body_cap, pat, targs, op, _dpr)
+        except Exception as e:
+            log_warn("Flechas", "sombra: %s" % e)
     p.setCompositionMode(QPainter.CompositionMode_SourceOver)
     p.setOpacity(op)
     if label:
@@ -23524,6 +23629,10 @@ class ArrowStyleDialog(QDialog):
             ('dash', "Trazo", 'choice', (('solid', "Continuo"), ('dash', "Rayas"), ('dot', "Puntos"), ('dashdot', "Raya y punto"))),
             ('cap', "Extremos", 'choice', (('round', "Redondeados"), ('flat', "Planos"))))),
         ("Resplandor", (('glow', "Intensidad (0 = sin resplandor)", 'int', (0, 100, " %")), ('glow_size', "Alcance", 'int', (1, 30, " px")))),
+        ("Sombra", (('shadow', "Intensidad (0 = sin sombra)", 'int', (0, 100, " %")), ('shadow_color', "Color", 'color', None),          # [PACK205]
+                    ('shadow_dx', "Desplazamiento a la derecha (negativo = a la izquierda)", 'int', (-40, 40, " px")),
+                    ('shadow_dy', "Desplazamiento hacia abajo (negativo = hacia arriba)", 'int', (-40, 40, " px")),
+                    ('shadow_soft', "Borde difuso (0 = n\u00edtido)", 'int', (0, 20, " px")))),
         ("Etiqueta", (('label_size', "Tama\u00f1o del texto", 'float', (6.0, 40.0, " pt")), ('label_color', "Color del texto", 'color', None),
                       ('label_bg', "Color del fondo", 'color', None), ('label_bg_op', "Opacidad del fondo", 'int', (0, 100, " %")))),
     )
@@ -23534,7 +23643,11 @@ class ArrowStyleDialog(QDialog):
         ('move_op', "Opacidad mientras se arrastra uno de sus widgets", 'int', (0, 100, " %")),
         ('move_hold', "Siguen as\u00ed despu\u00e9s de soltarlo", 'int', (0, 5000, " ms")),
         ('fade_in', "Fundido de entrada (0 = aparecen de golpe)", 'int', (0, 3000, " ms")),
-        ('fade_out', "Fundido de salida (0 = desaparecen de golpe)", 'int', (0, 3000, " ms"))))
+        ('fade_out', "Fundido de salida (0 = desaparecen de golpe)", 'int', (0, 3000, " ms")),
+        ('chain', "Mostrar tambi\u00e9n las flechas encadenadas", 'choice', ARROW_CHAIN_CHOICES),          # [PACK205]
+        ('chain_depth', "Cu\u00e1ntos pasos de la cadena (0 = toda)", 'int', (0, 50, "")),
+        ('chain_fade', "Cada paso m\u00e1s lejos se ve a este % del anterior (como poco, 1/4)", 'int', (10, 100, " %")),
+        ('chain_move', "Encadenar tambi\u00e9n al arrastrar", 'check', None)))
 
     def __init__(self, style, parent=None, title="Apariencia de las flechas", general=False, on_reset=None, reset_label=None, on_change=None):
         super().__init__(parent)
@@ -24051,6 +24164,10 @@ class WidgetManager(QObject):
             self._arrow_mode_migrate()
         except Exception as e_am:
             log_warn("Flechas", "migracion del modo de visibilidad: %s" % e_am)
+        try:
+            self._arrows_repair()          # [PACK205]
+        except Exception as e_ar:
+            log_warn("Flechas", "recuperar flechas: %s" % e_ar)
         self.app.aboutToQuit.connect(self.force_save_all_states)
         self.app.aboutToQuit.connect(self._autosave_current_profile)
         self.app.aboutToQuit.connect(self._persist_history)
@@ -24193,6 +24310,8 @@ class WidgetManager(QObject):
                     out[k] = v
         if out['mode'] not in ('always', 'hover', 'never'):
             out['mode'] = 'hover'
+        if out['chain'] not in ('both', 'fwd', 'back', 'none'):          # [PACK205]
+            out['chain'] = 'both'
         for k in ('color_from', 'color2_from'):          # [PACK192]
             if out[k] not in ('fixed', 'src', 'dst'):
                 out[k] = 'fixed'
@@ -24416,13 +24535,40 @@ class WidgetManager(QObject):
     ARROW_SHOW_FADE = 0.45         # s que tardan en desvanecerse
     ARROW_BOOT_QUIET = 3.0         # al arrancar se colocan todos los widgets: eso no cuenta como moverlos
 
-    def _arrow_levels(self, g, now):
-        """[PACK196] Nivel (0-1) de las flechas de cada widget, como los cables: el cursor REPOSA sobre el widget (sondeo de su posicion real,
-        con la espera 'hover_delay') -> 'hover_op'; mientras se arrastra el widget (o su padre) -> 'move_op', que dura 'move_hold' tras soltar.
-        Los cambios de nivel van con fundido de entrada / salida."""
-        lv = getattr(self, '_arrow_lv', None)
+    def _arrow_chain_spread(self, starts, base, outs, ins, chain, depth, fade):
+        """[PACK205] {(origen, id): nivel} de las flechas que tocan 'starts' (paso 1, en los dos sentidos) y, si 'chain' lo pide, de las que
+        siguen la cadena: hacia delante (en el sentido de las flechas) y/o hacia atras (en contra), cada recorrido en UN solo sentido (como los
+        cables: descendientes y la linea de antepasados; no los hermanos). Cada paso, 'fade' del anterior (como poco ARROW_CHAIN_FLOOR).
+        Sin bucles: cada widget se visita una vez por sentido."""
+        res = {}
+        if base <= 0.0 or not starts:
+            return res
+        for adj, dirn in ((outs, 'fwd'), (ins, 'back')):
+            maxd = depth if chain in (dirn, 'both') else 1
+            seen = set(starts)
+            frontier = list(starts)
+            d = 1
+            while frontier and (maxd <= 0 or d <= maxd):
+                lvl = base * max(ARROW_CHAIN_FLOOR, fade ** (d - 1))
+                nxt = []
+                for n in frontier:
+                    for k, other in adj.get(n, ()):
+                        if lvl > res.get(k, 0.0):
+                            res[k] = lvl
+                        if other not in seen:
+                            seen.add(other)
+                            nxt.append(other)
+                frontier = nxt
+                d += 1
+        return res
+
+    def _arrow_levels(self, g, now, allp=None):
+        """[PACK196] [PACK205] Nivel (0-1) de CADA FLECHA (clave (origen, id)), como los cables: el cursor REPOSA sobre un widget (sondeo de su
+        posicion real, con la espera 'hover_delay') -> 'hover_op'; mientras se arrastra un widget (o su padre) -> 'move_op', que dura 'move_hold'
+        tras soltar. Ademas, las flechas encadenadas ('chain', 'chain_depth', 'chain_fade', 'chain_move'). Fundidos de entrada / salida."""
+        lv = getattr(self, '_arrow_lv2', None)
         if lv is None:
-            lv = self._arrow_lv = {}
+            lv = self._arrow_lv2 = {}
         mv_at = getattr(self, '_arrow_move_at', None)
         if mv_at is None:
             mv_at = self._arrow_move_at = {}
@@ -24447,19 +24593,36 @@ class WidgetManager(QObject):
             if getattr(w, '_is_window_dragging', False):
                 for d in [wid] + list(self.get_descendants(wid)):
                     mv_at[d] = now
-        targets = {}
         hold = max(0, int(g['move_hold'])) / 1000.0
+        moving = []
         for d, t in list(mv_at.items()):
             if now - t <= hold:
-                targets[d] = max(0, min(100, int(g['move_op']))) / 100.0
+                moving.append(d)
             else:
                 del mv_at[d]
-        if hov is not None:
-            targets[hov] = max(targets.get(hov, 0.0), max(0, min(100, int(g['hover_op']))) / 100.0)
+        targets = {}
+        if hov is not None or moving:                      # [PACK205] la red de flechas (solo entre widgets visibles)
+            vis = {k for k, w in self.widgets.items() if w.isVisible()}
+            outs, ins = {}, {}
+            for src, a in (allp if allp is not None else self.arrows_all()):
+                if src in vis and a['to'] in vis:
+                    k = (src, a['id'])
+                    outs.setdefault(src, []).append((k, a['to']))
+                    ins.setdefault(a['to'], []).append((k, src))
+            chain = g.get('chain', 'both')
+            depth = max(0, int(g.get('chain_depth', 0)))
+            fade = max(0.0, min(1.0, int(g.get('chain_fade', 80)) / 100.0))
+            if moving:
+                targets = self._arrow_chain_spread(moving, max(0, min(100, int(g['move_op']))) / 100.0, outs, ins,
+                                                   chain if g.get('chain_move', True) else 'none', depth, fade)
+            if hov is not None:
+                for k, v in self._arrow_chain_spread([hov], max(0, min(100, int(g['hover_op']))) / 100.0, outs, ins, chain, depth, fade).items():
+                    if v > targets.get(k, 0.0):
+                        targets[k] = v
         fi, fo = max(0, int(g['fade_in'])) / 1000.0, max(0, int(g['fade_out'])) / 1000.0
-        pk = getattr(self, '_arrow_lv_peak', None)
+        pk = getattr(self, '_arrow_lv2_peak', None)
         if pk is None:
-            pk = self._arrow_lv_peak = {}
+            pk = self._arrow_lv2_peak = {}
         for wid in set(lv) | set(targets):
             cur, tgt = lv.get(wid, 0.0), targets.get(wid, 0.0)
             if tgt > cur:                                  # como los cables: llega a su nivel en 'fade_in' ms, sea cual sea ese nivel
@@ -24473,6 +24636,27 @@ class WidgetManager(QObject):
                 lv[wid] = cur
                 pk[wid] = max(cur, tgt) if tgt >= cur else pk.get(wid, cur)
         return lv
+
+    def _arrows_repair(self):
+        """[PACK205] Recupera las flechas que se quedaron apuntando al id viejo de un widget renombrado al abrir el set desde su archivo
+        (pasaba antes de este pack): si hay un unico widget que es ese id renombrado, la flecha vuelve a apuntarle."""
+        keys = [k for k, v in self.global_state.items() if isinstance(v, dict) and 'template_data' in v]
+        fixed = 0
+        for src in keys:
+            arr = self.global_state[src].get('arrows')
+            if not isinstance(arr, list):
+                continue
+            for a in arr:
+                if isinstance(a, dict) and a.get('to') and a['to'] not in self.global_state:
+                    m_ = _arrow_stale_match(a['to'], keys)
+                    if m_ and m_ != src and not any(isinstance(x, dict) and x.get('to') == m_ for x in arr if x is not a):
+                        a['to'] = m_
+                        fixed += 1
+        if fixed:
+            log_info("Flechas", "%d flecha(s) recuperada(s): apuntaban al id antiguo de un widget" % fixed)
+            self._arrow_rev += 1
+            self.save_global_state(record_history=False)
+        return fixed
 
     def _arrow_mode_migrate(self):
         """[PACK194] Una sola vez: quien tenia guardado 'Siempre visibles' (era lo predeterminado) pasa a 'al pasar el raton o al mover'."""
@@ -24498,7 +24682,7 @@ class WidgetManager(QObject):
         pairs = {(s, a['to']) for s, a in allp}
         rects = {}
         _now = time.monotonic()
-        _lv = self._arrow_levels(g, _now) if (g['mode'] == 'hover' and allp) else {}          # [PACK196]
+        _lv = self._arrow_levels(g, _now, allp) if (g['mode'] == 'hover' and allp) else {}          # [PACK196] [PACK205] por flecha
 
         def rect_of(wid):
             if wid not in rects:
@@ -24532,7 +24716,7 @@ class WidgetManager(QObject):
             fade = 1.0
             _pvs = (getattr(self, '_arrow_pv', None) or {}).get('show')          # [PACK203] lo que se esta editando se ve entero
             if g['mode'] == 'hover' and not (_pvs == 'all' or (isinstance(_pvs, (set, frozenset)) and a['id'] in _pvs)):          # [PACK196] como los cables
-                fade = max(_lv.get(src, 0.0), _lv.get(a['to'], 0.0))
+                fade = _lv.get((src, a['id']), 0.0)
                 if fade <= 0.0:
                     continue
             stl = self.arrow_effective_style(a, g)
@@ -29847,7 +30031,39 @@ class WidgetManager(QObject):
                 ov.repaint()
                 ov.hide()
 
-    def clone_widget(self, source_widget_id, independent=False, parent_override=None):
+    def clone_widget(self, source_widget_id, independent=False, parent_override=None, arrows=True):
+        self._hist_begin()          # [PACK205] el clon y sus flechas: un solo paso de deshacer
+        try:
+            return self._clone_widget_impl(source_widget_id, independent, parent_override, arrows)
+        finally:
+            self._hist_end()
+
+    def _arrows_clone_into(self, id_map):
+        """[PACK205] Tras clonar (id_map: original -> clon): cada flecha que tocaba un original se repite en su clon, con id nuevo. Entre dos
+        originales clonados, va entre sus clones; con un widget de fuera (no clonado), entre el clon y ese mismo widget (igual que el clon
+        conserva el padre del original). Nunca repetida (de A a B solo hay una)."""
+        import uuid
+        added = 0
+        for src, a in list(self.arrows_all()):
+            if src not in id_map and a['to'] not in id_map:
+                continue
+            ns, nd = id_map.get(src, src), id_map.get(a['to'], a['to'])
+            st = self.global_state.get(ns)
+            if ns == nd or not isinstance(st, dict) or not isinstance(self.global_state.get(nd), dict):
+                continue
+            lst = st.setdefault('arrows', [])
+            if any(isinstance(x, dict) and x.get('to') == nd for x in lst):
+                continue
+            na = copy.deepcopy(a)
+            na['id'] = 'arw_' + uuid.uuid4().hex[:8]
+            na['to'] = nd
+            lst.append(na)
+            added += 1
+        if added:
+            self._arrow_changed()
+        return added
+
+    def _clone_widget_impl(self, source_widget_id, independent=False, parent_override=None, arrows=True):
         log_info("Manager", f"Clonando widget: {source_widget_id}")
         source_state = self.global_state.get(source_widget_id)
         if not source_state:
@@ -29856,6 +30072,7 @@ class WidgetManager(QObject):
 
         new_state = copy.deepcopy(source_state)
         new_state.pop('timer_target', None)  # un clon no hereda el temporizador
+        new_state.pop('arrows', None)        # [PACK205] las flechas se repiten aparte, con ids nuevos (_arrows_clone_into)
         if parent_override:
             new_state['parent_id'] = parent_override   # clonado de arbol: el clon cuelga del clon de su padre
         if independent and new_state.get('parent_id'):
@@ -29878,8 +30095,12 @@ class WidgetManager(QObject):
             base_name = base_name[:-len('_clon')]
         new_state['custom_name'] = f"{base_name}_clon"
         
+        self._last_added_id = None
         self.add_new_widget(state=new_state)
-
+        nid = getattr(self, '_last_added_id', None)
+        if arrows and nid and nid != source_widget_id:
+            self._arrows_clone_into({source_widget_id: nid})
+        return nid
 
     def clone_tree(self, source_widget_id):
         self._hist_begin()
@@ -29906,9 +30127,10 @@ class WidgetManager(QObject):
                 if not override:
                     continue          # su padre no se pudo clonar
             self._last_added_id = None
-            self.clone_widget(old_id, parent_override=override)
+            self.clone_widget(old_id, parent_override=override, arrows=False)
             if self._last_added_id:
                 id_map[old_id] = self._last_added_id
+        self._arrows_clone_into(id_map)          # [PACK205] las flechas, entre los clones (y con los de fuera)
         self._apply_collapse_visibility()
         self._refresh_connector_overlay()
         self._focus_pending = id_map.get(source_widget_id) or getattr(self, '_focus_pending', None)
@@ -32603,6 +32825,36 @@ class WidgetManager(QObject):
             if st.get('parent_id'):
                 st['parent_id'] = id_map.get(st['parent_id'])
             out[nid] = st
+        # [PACK205] flechas: las que unen widgets del conjunto se reapuntan a sus ids nuevos (antes se perdian, p. ej. al abrir un set desde su
+        # archivo); las que van a un widget que ya esta aqui (pegar en el mismo perfil) se conservan; las demas no. Sin ids repetidos.
+        import uuid
+        taken_a = {a.get('id') for _s, a in self.arrows_all()}
+        for nid, st in out.items():
+            arr = st.get('arrows')
+            if 'arrows' not in st:
+                continue
+            keep = []
+            for a in (arr if isinstance(arr, list) else []):
+                if not isinstance(a, dict) or not a.get('to'):
+                    continue
+                to = id_map.get(a['to'])
+                if to is None and a['to'] in self.widgets and isinstance(self.global_state.get(a['to']), dict):
+                    to = a['to']
+                if to is None:                             # perdida antes de este pack: apunta al id que tenia el widget antes de renombrarse
+                    _old = _arrow_stale_match(a['to'], id_map.keys())
+                    to = id_map.get(_old) if _old else None
+                if not to or to == nid or any(x['to'] == to for x in keep):
+                    continue
+                b = dict(a)
+                b['to'] = to
+                if not b.get('id') or b['id'] in taken_a:
+                    b['id'] = 'arw_' + uuid.uuid4().hex[:8]
+                taken_a.add(b['id'])
+                keep.append(b)
+            if keep:
+                st['arrows'] = keep
+            else:
+                st.pop('arrows', None)
         used = {st.get('parent_id') for st in out.values()}
         for nid, st in out.items():
             if st.get('collapsed') and nid not in used:
