@@ -1,3 +1,18 @@
+## Pack 206 · 2026-11-12
+- **Rendimiento del difuminado** (lo que se ve a través de un widget transparente):
+  - **El refresco periódico ya no captura cada medio segundo.** Por si lo de debajo cambia solo (un reloj, una web), cada widget difuminado se volvía a capturar y a difuminar por turnos, aunque nada hubiera cambiado, y cada vez se repasaban todos los widgets. Ahora:
+    - si la captura sale igual que la anterior, no se difumina de nuevo y la siguiente se deja para cada vez más tarde (0,5 s, 1, 2… hasta 1 minuto); si cambia, vuelve a mirarse a menudo;
+    - nunca con el ratón en uso ni justo después de mover algo;
+    - según lo que tarde en tu equipo (como mucho ~2 % del tiempo);
+    - y solo se repasa ese widget, no todos.
+    - Con 33 widgets transparentes y nada que hacer, el sondeo pasa de ~9 ms a ~0,2 ms.
+  - **Al mover un widget por encima de otros, cada uno de los de debajo repinta solo la franja que cambia**, no la ventana entera: en la prueba, como mucho el 3 % de su superficie. En Windows, cada repintado de una ventana transparente obliga a recomponerla entera, así que esto es lo que más se notaba al arrastrar.
+  - **Cables y flechas vistos a través de widgets transparentes:** se dibujan y se difuminan una sola vez para todos los widgets por los que pasan (antes, una vez por cada uno), y el difuminado se hace a la cuarta parte de resolución, que se ve igual. Un cable que pasa bajo 6 widgets transparentes, arrastrando: de ~16 a ~9 ms por fotograma, y el difuminado en sí cuesta menos de la mitad que antes.
+  - **El orden de las ventanas** (en Windows hay que recorrer todas las ventanas del sistema para saberlo) se lee una vez por repaso, no dos, y se recuerda hasta que algún widget sube, aparece o desaparece.
+  - **Mover un widget ya no obliga a capturar y difuminar otra vez lo que tiene debajo:** solo cuando cambia su contenido.
+  - Para capturar ya no se oculta y se vuelve a mostrar el velo, que repintaba la ventana entera.
+- **`rendimiento.log` más detallado:** separa «difuminado: captura», «difuminado: orden Z» y «difuminado: cables y flechas vistos a través».
+
 ## Pack 205 · 2026-11-12
 - **Sombra para las flechas** (nueva pestaña **«Sombra»** en la apariencia general, en la de cada tipo y en «Retocar solo esta flecha…»): intensidad (0 = sin sombra, lo predeterminado), color, desplazamiento a la derecha y hacia abajo (también negativos) y borde difuso. Se ve en vivo mientras la ajustas.
   - Es barata, como el resplandor: la misma forma de la flecha (trazo, punta y cola), oscura y desplazada, con el borde suavizado en franjas y dibujada a media resolución. No hay difuminados. Una flecha que no cambia reutiliza su sombra.

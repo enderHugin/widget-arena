@@ -6221,7 +6221,13 @@ class StickerWindow(QMainWindow):
         self.update_window_mask()
 
     def _save_changes_to_manager(self):
-        self._veil_rev = getattr(self, '_veil_rev', 0) + 1          # [PACK200]
+        try:                                                        # [PACK206] solo si cambia lo que muestra (moverlo no lo cambia)
+            _ck = hash(json.dumps({k: v for k, v in self.current_template_data.items() if k != 'geometry'}, sort_keys=True, default=str))
+        except Exception:
+            _ck = None
+        if _ck is None or _ck != getattr(self, '_veil_ck', None):
+            self._veil_ck = _ck
+            self._veil_rev = getattr(self, '_veil_rev', 0) + 1          # [PACK200]
         
         if self.manager.app_is_quitting:
             return
@@ -6859,30 +6865,63 @@ class StickerWindow(QMainWindow):
         # [PACK200] se difumina el contenido ENTERO del widget una sola vez (y de nuevo solo si cambia su contenido, su tamano o el radio):
         # al mover otro widget por encima solo cambia la zona que se muestra difuminada, no hay que capturar ni difuminar nada
         bkey = (int(blur_px), self.central_widget.size().toTuple(), getattr(self, '_veil_rev', 0))
+        img_new = False
         if not breg.isEmpty() and (refresh or v.blur_img is None or bkey != getattr(v, '_bkey_done', None)):
-            v.skip = True
-            try:
-                v.hide()
+            _g0 = time.perf_counter()
+            v.skip = True                               # [PACK206] el velo no se pinta en la captura: no hace falta ocultarlo (ocultarlo y volver
+            try:                                        # a mostrarlo repintaba la ventana entera)
                 pm = self.central_widget.grab()
             finally:
                 v.skip = False
             if pm.isNull():
                 breg = QRegion()
             else:
-                v.blur_img = _blur_image(pm.toImage(), int(blur_px))
-                v.blur_at = QPoint(0, 0)
+                gi = pm.toImage()
+                try:
+                    import zlib
+                    crc = zlib.crc32(gi.constBits())
+                except Exception:
+                    crc = None
+                same = (crc is not None and crc == getattr(v, '_grab_crc', None) and v.blur_img is not None
+                        and bkey[:2] == tuple(getattr(v, '_bkey_done', None) or (None, None, None))[:2])          # mismo radio y tamano
+                if not same:                            # [PACK206] la captura sale igual: no se difumina otra vez ni se repinta
+                    v.blur_img = _blur_image(gi, int(blur_px))
+                    v.blur_at = QPoint(0, 0)
+                    img_new = True
+                v._grab_crc = crc
                 v._bkey_done = bkey
+                # [PACK206] el refresco por turnos de ESTE widget: si no cambia, cada vez menos (0,5 s, 1, 2... hasta 1 min); si cambia, a
+                # menudo otra vez; y nunca mas del ~2 % del tiempo segun lo que tarda en este equipo
+                cost = time.perf_counter() - _g0
+                iv = min(60.0, max(0.5, getattr(self, '_veil_rf_iv', 0.25)) * 2.0) if same else 0.5
+                self._veil_rf_iv = iv
+                self._veil_rf_next = time.monotonic() + max(iv, cost * 50.0)
+            try:
+                self.manager._perf_add('difuminado: captura', (time.perf_counter() - _g0) * 1000)
+            except Exception:
+                pass
         if breg.isEmpty():
             v.blur_img = None
             v._bkey_done = None
-        if reg == v.region and breg == v.blur_region and alpha == v.alpha and v.isVisible() and (breg.isEmpty() or not refresh):
+        if reg == v.region and breg == v.blur_region and alpha == v.alpha and v.isVisible() and (breg.isEmpty() or not img_new):
             v.raise_()                                  # [PACK200] nada nuevo que pintar
             return
+        # [PACK206] solo se repinta lo que cambia (la franja que barre un widget que se mueve por encima), no la ventana entera
+        dirty = None
+        if v.isVisible() and v.geometry() == self.central_widget.rect():
+            dirty = reg.xored(v.region) if alpha == v.alpha else reg.united(v.region)
+            if img_new:
+                dirty = dirty.united(breg).united(v.blur_region)
+            else:
+                dirty = dirty.united(breg.xored(v.blur_region))
         v.setGeometry(self.central_widget.rect())
         v.region, v.alpha, v.blur_region = reg, alpha, breg
         v.show()
         v.raise_()
-        v.update()
+        if dirty is None:
+            v.update()
+        elif not dirty.isEmpty():
+            v.update(dirty)
 
     def _get_shortest_angle_path(self, start_angle, target_angle):
         diff = target_angle - start_angle
@@ -9274,43 +9313,18 @@ class ConnectorOverlay(QWidget):
                 painter.restore()
                 return
 
-            main_p = painter                                    # dentro y difuminado: se pinta aparte (una vez por widget, en su recuadro) y se desenfoca
+            main_p = painter                                    # dentro y difuminado: se pinta aparte y se desenfoca
+            # [PACK206] una sola imagen para los dos widgets, a media resolucion
 
-            for reg in (_inside_region(pw), _inside_region(cw)):
-                bb = reg.boundingRect().intersected(_ov_rect)
-                if bb.isEmpty():
-                    continue
-
-                img = QImage(bb.size(), QImage.Format_ARGB32_Premultiplied)
-                img.fill(Qt.transparent)
-
-                p2 = QPainter(img)
-                p2.setRenderHints(main_p.renderHints())
-                p2.translate(-bb.topLeft())
-                p2.setClipRegion(reg)
-                p2.setOpacity(main_p.opacity() * _in_op / 100.0)
-
+            def _pf(p2):
+                nonlocal painter
                 painter = p2
                 try:
                     draw_edge(p_id, c_id, is_dimmed)
                 finally:
-                    p2.end()
                     painter = main_p
-
-                al = np.frombuffer(img.constBits(), dtype=np.uint8).reshape((img.height(), img.width(), 4))[:, :, 3]
-                rows, cols = np.flatnonzero(al.any(axis=1)), np.flatnonzero(al.any(axis=0))
-                if not len(rows):                                                  # el cable no pasa por este widget: nada que desenfocar
-                    continue
-
-                pad = 3 * _in_bl + 2                                               # solo se desenfoca el trozo donde esta el cable
-                crop = QRect(int(cols[0]), int(rows[0]), int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1)).adjusted(-pad, -pad, pad, pad).intersected(img.rect())
-                img = _blur_image(img.copy(crop), _in_bl, 0.55)
-
-                painter.save()
-                painter.setClipRegion(reg, Qt.IntersectClip)
-                painter.setOpacity(1.0)
-                painter.drawImage(bb.topLeft() + crop.topLeft(), img)
-                painter.restore()
+            _paint_blurred_through(main_p, inside, _ov_rect, _in_bl, _pf, main_p.opacity() * _in_op / 100.0, main_p.renderHints(), Qt.IntersectClip,
+                                   perf=self.manager._perf_add)
 
         # [PACK187] un cable que pasa por debajo de un widget transparente que NO es uno de sus dos extremos se ve difuminado a traves de el
         _ub = int(self.manager.get_cable_param('_under_blur'))
@@ -9343,34 +9357,16 @@ class ConnectorOverlay(QWidget):
             draw_edge_fx(p_id, c_id, is_dimmed)
             painter.restore()
             main_p = painter
-            for _k, reg in regs:                                # a traves de cada uno: el cable, difuminado
-                bb = reg.boundingRect().intersected(_ov_rect)
-                if bb.isEmpty():
-                    continue
-                img = QImage(bb.size(), QImage.Format_ARGB32_Premultiplied)
-                img.fill(Qt.transparent)
-                p2 = QPainter(img)
-                p2.setRenderHints(main_p.renderHints())
-                p2.translate(-bb.topLeft())
-                p2.setOpacity(main_p.opacity())
+            # [PACK206] a traves de todos ellos a la vez: el cable se dibuja y se difumina UNA vez (antes, una por widget), a media resolucion
+
+            def _pf(p2):
+                nonlocal painter
                 painter = p2
                 try:
                     draw_edge_fx(p_id, c_id, is_dimmed)
                 finally:
-                    p2.end()
                     painter = main_p
-                al = np.frombuffer(img.constBits(), dtype=np.uint8).reshape((img.height(), img.width(), 4))[:, :, 3]
-                rows, cols = np.flatnonzero(al.any(axis=1)), np.flatnonzero(al.any(axis=0))
-                if not len(rows):
-                    continue
-                pad = 3 * _ub + 2
-                crop = QRect(int(cols[0]), int(rows[0]), int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1)).adjusted(-pad, -pad, pad, pad).intersected(img.rect())
-                img = _blur_image(img.copy(crop), _ub, 0.55)
-                painter.save()
-                painter.setClipRegion(reg)
-                painter.setOpacity(1.0)
-                painter.drawImage(bb.topLeft() + crop.topLeft(), img)
-                painter.restore()
+            _paint_blurred_through(main_p, union, _ov_rect, _ub, _pf, main_p.opacity(), main_p.renderHints(), perf=self.manager._perf_add)
 
         for p, c in edges_to_draw_normal:
             draw_edge_blur(p, c, True)
@@ -14179,7 +14175,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 205                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 206                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -19020,7 +19016,60 @@ def _apply_clip_mask(pm, mask_img):
     return out
 
 
-def _blur_image(img, r, keep_peak=0.0):
+def _paint_blurred_through(painter, region, clip_rect, r, paint_fn, opacity=1.0, hints=None, clip_op=None, perf=None):
+    _t0 = time.perf_counter()
+    try:
+        return _paint_blurred_through_body(painter, region, clip_rect, r, paint_fn, opacity, hints, clip_op)
+    finally:
+        if perf is not None:
+            try:
+                perf('difuminado: cables y flechas vistos a trav\u00e9s', (time.perf_counter() - _t0) * 1000)
+            except Exception:
+                pass
+
+
+def _paint_blurred_through_body(painter, region, clip_rect, r, paint_fn, opacity=1.0, hints=None, clip_op=None):
+    """[PACK206] Pinta difuminado (r px) lo que 'paint_fn(p)' dibuja, solo dentro de 'region': UNA imagen para toda la region (antes una por
+    cada widget transparente, y la flecha o el cable se dibujaba y se difuminaba una vez por cada uno), difuminada en pequeno (a la cuarta parte: el
+    difuminado no necesita mas) y solo del trozo donde hay algo. Devuelve True si pinto algo."""
+    import math
+    ubox = region.boundingRect().intersected(clip_rect)
+    if ubox.isEmpty() or r <= 0:
+        return False
+    hs = 1.0                                         # se dibuja a resolucion normal (una linea fina no se pierde); se difumina en pequeno
+    iw, ih = max(1, int(math.ceil(ubox.width() * hs))), max(1, int(math.ceil(ubox.height() * hs)))
+    img = QImage(iw, ih, QImage.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    p2 = QPainter(img)
+    if hints is not None:
+        p2.setRenderHints(hints)
+    p2.scale(hs, hs)
+    p2.translate(-ubox.x(), -ubox.y())
+    p2.setOpacity(opacity)
+    try:
+        paint_fn(p2)
+    finally:
+        p2.end()
+    al = np.frombuffer(img.constBits(), dtype=np.uint8).reshape((ih, iw, 4))[:, :, 3]
+    rows, cols = np.flatnonzero(al.any(axis=1)), np.flatnonzero(al.any(axis=0))
+    if not len(rows):
+        return False
+    pad = 3 * int(r) + 2
+    crop = QRect(int(cols[0]), int(rows[0]), int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1)).adjusted(-pad, -pad, pad, pad).intersected(img.rect())
+    bl = _blur_image(img.copy(crop), int(r), 0.55, fast=True, small=True)
+    painter.save()
+    if clip_op is None:
+        painter.setClipRegion(region)
+    else:
+        painter.setClipRegion(region, clip_op)
+    painter.setOpacity(1.0)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    painter.drawImage(QRectF(ubox.x() + crop.x() / hs, ubox.y() + crop.y() / hs, crop.width() / hs, crop.height() / hs), bl)
+    painter.restore()
+    return True
+
+
+def _blur_image(img, r, keep_peak=0.0, fast=False, small=False):
     """Desenfoque (3 pasadas de caja, ~gaussiano) de una QImage ARGB premultiplicada. Con radios grandes se hace a media o
     cuarta parte de resolucion (cuesta mucho menos). Con keep_peak > 0 se compensa lo que el desenfoque diluye (una linea fina se volveria
     invisible): se multiplica para que el pico quede en esa fraccion del original (hasta 40 veces)."""
@@ -19034,10 +19083,18 @@ def _blur_image(img, r, keep_peak=0.0):
     if half:
         im = im.scaled(max(1, W // sc), max(1, H // sc), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         r = max(1, r // sc)
+    pre_ref = None
+    if fast and sc == 2 and r >= 2 and im.width() >= 32 and im.height() >= 32:
+        # [PACK206] cables y flechas vistos a traves: la mitad otra vez (radio 2 a la mitad = radio 1 a la cuarta parte: el mismo difuminado,
+        # con 4 veces menos pixeles); la intensidad se compensa como antes, medida a la mitad
+        if keep_peak > 0:
+            pre_ref = float(np.frombuffer(im.constBits(), dtype=np.uint8).reshape((im.height(), im.width(), 4))[:, :, 3].max())
+        im = im.scaled(max(1, im.width() // 2), max(1, im.height() // 2), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        r = max(1, r // 2)
     w, h = im.width(), im.height()
     arr = np.frombuffer(im.bits(), dtype=np.uint8).reshape((h, w, 4)).astype(np.float32)
     k = max(1, r)
-    pre_max = float(arr[:, :, 3].max()) if keep_peak > 0 else 0.0
+    pre_max = (pre_ref if pre_ref is not None else float(arr[:, :, 3].max())) if keep_peak > 0 else 0.0
 
     for _p in range(3):
         for ax in (0, 1):
@@ -19052,7 +19109,7 @@ def _blur_image(img, r, keep_peak=0.0):
         if post_max > 0:
             arr = arr * min(40.0, max(1.0, keep_peak * pre_max / post_max))
     out = QImage(np.clip(arr, 0, 255).astype(np.uint8).tobytes(), w, h, w * 4, QImage.Format_ARGB32_Premultiplied).copy()
-    if half:
+    if half and not small:          # [PACK206] small: sin ampliar (quien la pinta la amplia al ponerla, y solo donde se ve)
         out = out.scaled(W, H, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
     return out
 
@@ -23054,27 +23111,10 @@ class _ArrowOverlay(QWidget):
             p.restore()
             if b_ is not None:
                 drawn.append(b_[0])
-            for _k, reg in regs:
-                bb = reg.boundingRect().intersected(QRect(o, self.size()))
-                if bb.isEmpty():
-                    continue
-                img = QImage(bb.size(), QImage.Format_ARGB32_Premultiplied)
-                img.fill(Qt.transparent)
-                p2 = QPainter(img)
-                p2.translate(-bb.topLeft())
-                paint_arrow(p2, it['p0'], it['p1'], it['style'], it['label'], it['lane'], fast=True)
-                p2.end()
-                al = np.frombuffer(img.constBits(), dtype=np.uint8).reshape((img.height(), img.width(), 4))[:, :, 3]
-                rows, cols = np.flatnonzero(al.any(axis=1)), np.flatnonzero(al.any(axis=0))
-                if not len(rows):
-                    continue
-                pad = 3 * px + 2
-                crop = QRect(int(cols[0]), int(rows[0]), int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1)).adjusted(-pad, -pad, pad, pad).intersected(img.rect())
-                blurred = _blur_image(img.copy(crop), px, 0.55)
-                p.save()
-                p.setClipRegion(reg)
-                p.drawImage(bb.topLeft() + crop.topLeft(), blurred)
-                p.restore()
+            # [PACK206] a traves de todos a la vez: la flecha se dibuja y se difumina UNA vez (antes, una por widget), a media resolucion
+            _paint_blurred_through(p, union, QRect(o, self.size()), px,
+                                   lambda q, it=it: paint_arrow(q, it['p0'], it['p1'], it['style'], it['label'], it['lane'], fast=True),
+                                   perf=self.layer.m._perf_add)
         p.end()
 
 
@@ -31353,6 +31393,7 @@ class WidgetManager(QObject):
 
     def veil_raised(self, win, activated=False):
         """Un widget paso al frente (se activo o se subio): se anota su orden, porque Qt no dice cual esta encima de cual."""
+        self._zord_cache = None                             # [PACK206] el orden de las ventanas ha cambiado
         self._zseq = getattr(self, '_zseq', 0) + 1
         win._zstamp = self._zseq
         if activated and not getattr(self, '_tree_raising', False) and int(self.get_cable_param('_tree_z')) == 0:
@@ -31411,9 +31452,25 @@ class WidgetManager(QObject):
         if not t.isActive():
             t.start()
 
+    def _veil_win_order_cached(self):
+        """[PACK206] En Windows, leer el orden real recorre TODAS las ventanas del sistema (cientos): se recuerda hasta que uno de nuestros widgets
+        sube, aparece o desaparece (o, como mucho, 1 s). Fuera de Windows no hay nada que leer."""
+        if sys.platform != 'win32':
+            return None
+        now = time.monotonic()
+        vis = frozenset(id(w) for w in self.widgets.values() if w.isVisible() and not getattr(w, '_is_closing', False))
+        c = getattr(self, '_zord_cache', None)
+        if c is not None and now - c[0] < 1.0 and c[1] == vis:
+            return list(c[2])
+        _t0 = time.perf_counter()
+        r = self._veil_win_order()
+        self._perf_add('difuminado: orden Z', (time.perf_counter() - _t0) * 1000)
+        self._zord_cache = (now, vis, list(r)) if r is not None else None
+        return r
+
     def _veil_order(self):
         """Widgets visibles de abajo arriba: los 'siempre encima' van sobre los demas; despues, el orden en que pasaron al frente."""
-        real = self._veil_win_order()                       # [PACK138] en Windows se lee el orden real de las ventanas
+        real = self._veil_win_order_cached()                # [PACK138] en Windows se lee el orden real de las ventanas
         if real is not None:
             return real
         ws = [(i, w) for i, w in enumerate(self.widgets.values()) if w.isVisible() and not getattr(w, '_is_closing', False)]
@@ -31444,11 +31501,11 @@ class WidgetManager(QObject):
                 pass
         return out
 
-    def _veil_sig(self):
+    def _veil_sig(self, order=None):
         op = (int(self.get_cable_param('_under_op')), int(self.get_cable_param('_under_blur')))
         return (op, tuple((w.widget_id, tuple(w.geometry().getRect()), getattr(w, '_zstamp', 0), bool(w.always_on_top),
                            w.layer2_label.pixmap().cacheKey() if w.layer2_label.pixmap() is not None else 0)
-                          for w in self._veil_order()))
+                          for w in (order if order is not None else self._veil_order())))
 
     def _perf_add(self, kind, ms):
         d = getattr(self, '_perf_acc', None)
@@ -31465,7 +31522,7 @@ class WidgetManager(QObject):
         now = time.monotonic()
         win = max(0.05, now - getattr(self, '_perf_t0', now - 0.5))
         self._perf_t0 = now
-        busy = sum(a[0] for a in d.values()) / (win * 1000.0)          # [PACK202] fraccion del tiempo ocupada (carga sostenida)
+        busy = sum(a[0] for k_, a in d.items() if ':' not in k_) / (win * 1000.0)          # [PACK202] fraccion del tiempo ocupada (carga sostenida); [PACK206] sin contar dos veces los desgloses ('difuminado: captura' va dentro de 'difuminado')
         if not d or (max(a[2] for a in d.values()) < 25.0 and busy < 0.35) or now - getattr(self, '_perf_last', 0.0) < 5.0:
             return
         self._perf_last = now
@@ -31481,15 +31538,20 @@ class WidgetManager(QObject):
     def _veil_poll_tick(self):
         self._perf_flush()
         try:
-            s = self._veil_sig()
+            order = self._veil_order()
+            s = self._veil_sig(order)
             if s != getattr(self, '_veil_last', None):
                 self._veil_apply()
-            elif getattr(self, '_veil_blur_live', False) and not (QApplication.mouseButtons() & Qt.LeftButton):
-                # [PACK187] [PACK200] con difuminado, lo de debajo puede cambiar solo (reloj, web): se refresca POR TURNOS, un widget cada vez
-                live = [w for w in self._veil_order() if getattr(getattr(w, '_under_veil', None), 'blur_img', None) is not None]
-                if live:
-                    self._veil_rr = (getattr(self, '_veil_rr', -1) + 1) % len(live)
-                    self._veil_apply(refresh=live[self._veil_rr])
+            elif (getattr(self, '_veil_blur_live', False) and QApplication.mouseButtons() == Qt.NoButton
+                  and time.monotonic() - getattr(self, '_last_move_t', 0.0) > 1.5):
+                # [PACK187] [PACK200] con difuminado, lo de debajo puede cambiar solo (reloj, web): se vuelve a capturar de uno en uno.
+                # [PACK206] Solo el que le toca (cada uno a su ritmo: si no cambia, cada vez menos), nunca con el raton en uso ni justo
+                # despues de mover algo
+                now = time.monotonic()
+                due = [w for w in order if getattr(getattr(w, '_under_veil', None), 'blur_img', None) is not None
+                       and getattr(w, '_veil_rf_next', 0.0) <= now]
+                if due:
+                    self._veil_apply(refresh=min(due, key=lambda w: getattr(w, '_veil_rf_next', 0.0)))
         except Exception:
             pass
 
@@ -31505,16 +31567,20 @@ class WidgetManager(QObject):
             op = int(self.get_cable_param('_under_op'))
             blur = int(self.get_cable_param('_under_blur'))
             order = self._veil_order()
-            self._veil_last = self._veil_sig()
+            self._veil_last = self._veil_sig(order)          # [PACK206] el mismo orden (no se lee dos veces)
             ids = [w.widget_id for w in order]
             geo = {w.widget_id: w.geometry() for w in order}
             prev = getattr(self, '_veil_prev', None)
             affected = None
-            if prev is not None and refresh is None and prev[0] == ids and prev[2] == (op, blur):
+            if prev is not None and prev[0] == ids and prev[2] == (op, blur):
                 moved = [k for k in ids if geo[k] != prev[1].get(k)]
                 if moved:                                 # solo se han movido algunos: cambia lo que tienen debajo y lo que tapan, nada mas
                     zones = [prev[1][k].united(geo[k]) for k in moved]
                     affected = {k for k in ids if k in moved or any(geo[k].intersects(z) for z in zones)}
+                elif refresh is not None:
+                    affected = set()                      # [PACK206] refrescar uno: solo ese, no un repaso de todos
+                if refresh is not None and affected is not None:
+                    affected.add(refresh.widget_id)
             self._veil_prev = (ids, geo, (op, blur))
             info = {}                                     # [PACK200] lo caro de cada widget, una sola vez por repaso
 
@@ -31559,8 +31625,9 @@ class WidgetManager(QObject):
                             rects.append(r)
                 w.set_under_veil(rects, op, brects, blur, refresh=(refresh is w))
             self._veil_blur_live = any(getattr(getattr(w, '_under_veil', None), 'blur_img', None) is not None for w in order)
+            _in = {id(w) for w in order}
             for w in self.widgets.values():                  # los que ya no se ven: sin velo
-                if w not in order:
+                if id(w) not in _in:
                     w.set_under_veil([], 100)
         except Exception as e_vl:
             log_warn("Manager", "Velo bajo widgets transparentes: %s" % e_vl)
