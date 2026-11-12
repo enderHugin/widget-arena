@@ -14179,7 +14179,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 203                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 204                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -22435,6 +22435,63 @@ def arrow_endpoints(ra, rb, gap=0.0):
     return p0, p1
 
 
+def _poly_exit_t(pts, ax, ay, dx, dy):
+    """[PACK204] Mayor t de (0, 1] en que el segmento (ax, ay) + t * (dx, dy) cruza el contorno del poligono 'pts' (por donde sale de el)."""
+    best = None
+    n = len(pts)
+    for i in range(n):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % n]
+        ex, ey = x2 - x1, y2 - y1
+        den = dx * ey - dy * ex
+        if abs(den) < 1e-12:
+            continue
+        t = ((x1 - ax) * ey - (y1 - ay) * ex) / den
+        s = ((x1 - ax) * dy - (y1 - ay) * dx) / den
+        if -1e-9 <= s <= 1.0 + 1e-9 and 1e-9 < t <= 1.0 and (best is None or t > best):
+            best = t
+    return best
+
+
+def arrow_endpoints_shapes(ra, rb, pa, pb, gap=0.0):
+    """[PACK204] Como arrow_endpoints, pero la flecha sale y llega al BORDE REAL de cada widget (su silueta de papel 'pa' / 'pb': listas de
+    puntos (x, y); None = su rectangulo). Asi la separacion se mide desde lo que se ve, tambien girado o con las esquinas redondeadas."""
+    import math
+    if not pa and not pb:
+        return arrow_endpoints(ra, rb, gap)
+
+    def centre(r, p):
+        if p:
+            xs, ys = [q[0] for q in p], [q[1] for q in p]
+            return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+        return r.left() + r.width() / 2.0, r.top() + r.height() / 2.0
+    ax, ay = centre(ra, pa)
+    bx, by = centre(rb, pb)
+    dx, dy = bx - ax, by - ay
+    L = math.hypot(dx, dy)
+    if L < 1e-3:
+        return None
+
+    def rect_t(r, cx, cy, ddx, ddy):
+        tx = (r.width() / 2.0) / abs(ddx) if abs(ddx) > 1e-6 else 1e18
+        ty = (r.height() / 2.0) / abs(ddy) if abs(ddy) > 1e-6 else 1e18
+        return min(tx, ty)
+    ta = _poly_exit_t(pa, ax, ay, dx, dy) if pa else None
+    tb = _poly_exit_t(pb, bx, by, -dx, -dy) if pb else None
+    if ta is None:
+        ta = rect_t(ra, ax, ay, dx, dy)
+    if tb is None:
+        tb = rect_t(rb, bx, by, dx, dy)
+    if ta + tb >= 1.0:
+        return None
+    ux, uy = dx / L, dy / L
+    p0 = QPointF(ax + dx * ta + ux * gap, ay + dy * ta + uy * gap)
+    p1 = QPointF(bx - dx * tb - ux * gap, by - dy * tb - uy * gap)
+    if (p1.x() - p0.x()) * dx + (p1.y() - p0.y()) * dy <= 0:
+        return None
+    return p0, p1
+
+
 def _arrow_t(L, near, far):
     t = max(0.0, min(1.0, (L - near) / max(1.0, far - near)))
     return t * t * (3.0 - 2.0 * t)
@@ -23459,7 +23516,7 @@ class ArrowStyleDialog(QDialog):
         ("Forma", (
             ('curve', "Curvatura (0 = recta; negativo = hacia el otro lado)", 'int', (-300, 300, " %")),
             ('curve_far', "Curvatura que conserva una flecha larga", 'int', (0, 400, " %")),
-            ('gap', "Separaci\u00f3n del borde del widget", 'int', (-20, 60, " px")))),
+            ('gap', "Separaci\u00f3n del borde del papel (negativo = se mete dentro)", 'int', (-60, 120, " px")))),
         ("Punta y trazo", (
             ('head', "Punta (en el destino)", 'choice', (('triangle', "Tri\u00e1ngulo"), ('open', "Abierta (V)"), ('diamond', "Rombo"), ('circle', "C\u00edrculo"), ('none', "Ninguna"))),
             ('tail', "Cola (en el origen)", 'choice', (('none', "Ninguna"), ('triangle', "Tri\u00e1ngulo"), ('open', "Abierta (V)"), ('diamond', "Rombo"), ('circle', "C\u00edrculo"))),
@@ -24452,6 +24509,21 @@ class WidgetManager(QObject):
                     o = w._visible_rect_off()
                     rects[wid] = QRect(w.pos() + o.topLeft(), o.size())
             return rects[wid]
+        shapes = {}
+
+        def shape_of(wid):                                 # [PACK204] silueta real del papel (puntos globales), o None
+            if wid not in shapes:
+                pts = None
+                w = self.widgets.get(wid)
+                if w is not None:
+                    try:
+                        pg = w.paper_shape_global()
+                        if pg is not None and pg.count() >= 3:
+                            pts = [(pg[i].x(), pg[i].y()) for i in range(pg.count())]
+                    except Exception:
+                        pts = None
+                shapes[wid] = pts
+            return shapes[wid]
         out = []
         for src, a in allp:
             ra, rb = rect_of(src), rect_of(a['to'])
@@ -24470,7 +24542,7 @@ class WidgetManager(QObject):
                 stl['op_far'] = float(stl['op_far']) * fade
             if stl.get('color_from', 'fixed') != 'fixed' or stl.get('color2_from', 'fixed') != 'fixed':          # [PACK192]
                 stl = arrow_resolve_colors(stl, self._arrow_widget_color(src), self._arrow_widget_color(a['to']))
-            ep = arrow_endpoints(ra, rb, float(stl['gap']))
+            ep = arrow_endpoints_shapes(ra, rb, shape_of(src), shape_of(a['to']), float(stl['gap']))          # [PACK204] desde el borde del papel
             if ep is None:
                 continue
             out.append({'src': src, 'dst': a['to'], 'id': a['id'], 'p0': ep[0], 'p1': ep[1], 'style': stl,
@@ -24488,10 +24560,10 @@ class WidgetManager(QObject):
                                 'glow': 0, 'w_start': 100, 'w_end': 100})          # [PACK195] soltar aqui BORRA la flecha que va al reves
                     glabel = "\u2715 borrar"
                 if rb is not None:
-                    ep = arrow_endpoints(ra, rb, float(stl['gap']))                 # sobre un widget: asi quedara
+                    ep = arrow_endpoints_shapes(ra, rb, shape_of(gh['src']), shape_of(gdst), float(stl['gap']))          # sobre un widget: asi quedara
                 else:
                     stl['dash'] = 'dash'
-                    ep = arrow_endpoints(ra, QRect(pt.x() - 1, pt.y() - 1, 2, 2), float(stl['gap']))
+                    ep = arrow_endpoints_shapes(ra, QRect(pt.x() - 1, pt.y() - 1, 2, 2), shape_of(gh['src']), None, float(stl['gap']))
                 if ep is not None:
                     out.append({'src': gh['src'], 'dst': gdst if rb is not None else '', 'id': '_ghost', 'p0': ep[0], 'p1': ep[1], 'style': stl, 'label': glabel,
                                 'lane': False, 'type': gh.get('type') or ''})
