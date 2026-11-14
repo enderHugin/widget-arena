@@ -1,3 +1,18 @@
+## Pack 207 · 2026-11-14
+- **Arrastrar grupos de widgets va mucho más fluido, en todos los sistemas.** En el vídeo, al mover un árbol entero con sus cables, la imagen se actualizaba unas 6-7 veces por segundo. Cambios:
+  - **Si se mueve el grupo entero, los cables se desplazan con él sin repintarse.** Pasa cuando todos los cables que se ven van entre widgets que se mueven juntos, como al arrastrar la raíz con sus descendientes. Entonces el dibujo no cambia, solo se desplaza: la ventana de los cables (y la corona) se mueve con el grupo, van pegados y no cuesta nada.
+    - Solo se repinta para que las cuerdas con física se balanceen, a su ritmo y sin pasar de un cuarto del tiempo.
+    - Si hace falta cubrir otra zona o pantalla, o si los cables pasan bajo un widget transparente que no se mueve con ellos, se repintan como siempre.
+  - **El arrastre se aplica a un ritmo que el equipo aguanta.** Los movimientos del ratón que llegan más deprisa de lo que da tiempo a mover el grupo se juntan en uno: se aplica el último, con un hueco según lo que cuesta (entre 7 y 33 ms). El programa ya no se satura con ratones muy rápidos. Al soltar siempre se aplica la última posición.
+  - **La silueta del papel y su región se calculan una vez.** Antes se calculaban por cada cable y en cada fotograma, con un json de por medio. Al mover un widget no se recalculan.
+  - **Un cable solo se difumina a través de un widget transparente si de verdad pasa por debajo.** Antes bastaba con que el widget estuviera a menos de 300 px.
+  - **Sin widgets transparentes a la vista no se calcula ningún velo.**
+  - Medido aquí, arrastrando un grupo de 22 widgets con sus cables (CPU por fotograma):
+    - sin transparentes: de 13,5 a 8 ms;
+    - con uno transparente en el grupo: de 27,6 a 12,4 ms;
+    - con flechas: de 22,1 a 11,7 ms.
+- `rendimiento.log` anota también «arrastre (mover el grupo y sus cables)».
+
 ## Pack 206 · 2026-11-12
 - **Rendimiento del difuminado** (lo que se ve a través de un widget transparente):
   - **El refresco periódico ya no captura cada medio segundo.** Por si lo de debajo cambia solo (un reloj, una web), cada widget difuminado se volvía a capturar y a difuminar por turnos, aunque nada hubiera cambiado, y cada vez se repasaban todos los widgets. Ahora:

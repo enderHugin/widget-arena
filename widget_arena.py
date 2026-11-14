@@ -4414,37 +4414,21 @@ class StickerWindow(QMainWindow):
             self._dragging_children_start = None
 
         if self._is_window_dragging:
-            new_pos = event.globalPosition().toPoint() - self.offset
-            try:
-                new_pos = self._snap_pos(new_pos, event.modifiers())          # [PACK185]
-            except Exception as e_snap:
-                log_warn(self.widget_id, "Iman al arrastrar: %s" % e_snap)
-            if getattr(self, '_dragging_children_windows', None) is None:
-                self._dragging_children_windows = [
-                    self.manager.widgets[cid] for cid in (
-                        self.manager.get_descendants(self.widget_id) if getattr(self, '_drag_all_desc', False)
-                        else self.manager.get_position_followers(self.widget_id))
-                    if cid in self.manager.widgets   # tambien las ocultas: conservan su distancia al padre
-                ]
-                self._dragging_children_start = [w.pos() for w in self._dragging_children_windows]
-                self._dragging_self_start = self.pos()
-            delta = new_pos - self._dragging_self_start
-            for child_window, start_pos in zip(self._dragging_children_windows, self._dragging_children_start):
-                new_child_pos = start_pos + delta
-                child_window.move(new_child_pos)
-                child_geom = child_window.current_template_data.setdefault('geometry', {})
-                child_geom['x'] = new_child_pos.x()
-                child_geom['y'] = new_child_pos.y()
-            self._req_pos = QPoint(new_pos)                      # [PACK170]
-            self.move(new_pos)
-            _t0 = time.perf_counter()
-            self.manager.show_cables_for(self.widget_id, is_drag=True)
-            _ms = (time.perf_counter() - _t0) * 1000
-            if _ms > 25:
-                log_info(self.widget_id, f"[rendimiento] show_cables_for (arrastre) tardo {_ms:.0f} ms")
+            # [PACK207] los movimientos del raton que llegan mas deprisa de lo que el equipo puede mover el grupo (y sus cables) se juntan:
+            # se aplica el ultimo, con un hueco segun lo que cuesta (como mucho ~45 % del tiempo; entre 7 y 33 ms)
+            self._drag_pending = (event.globalPosition().toPoint(), event.modifiers())
+            _now = time.perf_counter()
+            _gap = getattr(self, '_drag_gap', 0.0)
+            _el = _now - getattr(self, '_drag_apply_t', 0.0)
+            if _el < _gap:
+                if not getattr(self, '_drag_armed', False):
+                    self._drag_armed = True
+                    QTimer.singleShot(max(1, int((_gap - _el) * 1000) + 1), self._drag_apply_pending)
+                event.accept()
+                return
+            self._drag_apply_pending()
             event.accept()
             return
-            
         elif self._is_link_dragging:
             new_pos = event.globalPosition().toPoint() - self.offset
             self.move(new_pos)
@@ -4547,6 +4531,53 @@ class StickerWindow(QMainWindow):
 
         super().mouseMoveEvent(event)
 
+    def _drag_apply_pending(self):
+        """[PACK207] Aplica la ultima posicion pedida del arrastre: el widget, los que le siguen y sus cables."""
+        self._drag_armed = False
+        pend = getattr(self, '_drag_pending', None)
+        self._drag_pending = None
+        if pend is None or not self._is_window_dragging:
+            return
+        gpos, mods = pend
+        _t0 = time.perf_counter()
+        new_pos = gpos - self.offset
+        try:
+            new_pos = self._snap_pos(new_pos, mods)          # [PACK185]
+        except Exception as e_snap:
+            log_warn(self.widget_id, "Iman al arrastrar: %s" % e_snap)
+        if getattr(self, '_dragging_children_windows', None) is None:
+            self._dragging_children_windows = [
+                self.manager.widgets[cid] for cid in (
+                    self.manager.get_descendants(self.widget_id) if getattr(self, '_drag_all_desc', False)
+                    else self.manager.get_position_followers(self.widget_id))
+                if cid in self.manager.widgets   # tambien las ocultas: conservan su distancia al padre
+            ]
+            self._dragging_children_start = [w.pos() for w in self._dragging_children_windows]
+            self._dragging_self_start = self.pos()
+        delta = new_pos - self._dragging_self_start
+        for child_window, start_pos in zip(self._dragging_children_windows, self._dragging_children_start):
+            new_child_pos = start_pos + delta
+            child_window.move(new_child_pos)
+            child_geom = child_window.current_template_data.setdefault('geometry', {})
+            child_geom['x'] = new_child_pos.x()
+            child_geom['y'] = new_child_pos.y()
+        self._req_pos = QPoint(new_pos)                      # [PACK170]
+        self.move(new_pos)
+        _t1 = time.perf_counter()
+        self.manager.show_cables_for(self.widget_id, is_drag=True)
+        _now = time.perf_counter()
+        _ms = (_now - _t1) * 1000
+        if _ms > 25:
+            log_info(self.widget_id, f"[rendimiento] show_cables_for (arrastre) tardo {_ms:.0f} ms")
+        cost = _now - _t0
+        self._drag_cost = 0.7 * getattr(self, '_drag_cost', cost) + 0.3 * cost
+        self._drag_apply_t = _now
+        self._drag_gap = min(0.033, max(0.007, 1.2 * self._drag_cost))
+        try:
+            self.manager._perf_add('arrastre (mover el grupo y sus cables)', cost * 1000)
+        except Exception:
+            pass
+
     def _drag_save_deferred(self, kids):
         self._save_changes_to_manager()
         for child_window in kids:
@@ -4559,7 +4590,8 @@ class StickerWindow(QMainWindow):
             event.accept()
             return
         if event.button() == Qt.LeftButton:
-            
+            if self._is_window_dragging and getattr(self, '_drag_pending', None) is not None:
+                self._drag_apply_pending()               # [PACK207] la ultima posicion pedida se aplica antes de soltar
             if self._is_window_dragging:
                 self._is_window_dragging = False
                 self.manager.snap_guides_hide()          # [PACK185]
@@ -6644,7 +6676,18 @@ class StickerWindow(QMainWindow):
         sombra) o el recuadro de la web. Se usa para que los cables no se vean dentro de los widgets que unen."""
         try:
             if _widget_kind({'template_data': self.current_template_data}) == 'nota':       # [PACK136] el papel, sin el halo de la sombra
-                return QRegion(self.paper_shape_global().translated(-self.geometry().topLeft()))
+                _sh = self.paper_shape_global()
+                _pc = getattr(self, '_pshape_cache', None)
+                _tl = self.geometry().topLeft()
+                if _pc is not None and getattr(self, '_pshape_last', None) is _pc:        # [PACK207] la misma silueta en el mismo sitio
+                    _ok_ = (_pc[1], self._pshape_org[0] - _tl.x(), self._pshape_org[1] - _tl.y())
+                    _c = getattr(self, '_body_note_cache', None)
+                    if _c is not None and _c[0][0] is _ok_[0] and _c[0][1:] == _ok_[1:]:
+                        return _c[1]
+                    _r = QRegion(_sh.translated(-_tl))
+                    self._body_note_cache = (_ok_, _r)
+                    return _r
+                return QRegion(_sh.translated(-_tl))
             parts = []
             if self.layer2_label.isVisible() and not self.layer2_label.pixmap().isNull():
                 parts.append(('l2', self.layer2_label.pixmap(), self.layer2_label.geometry().topLeft()))
@@ -6811,10 +6854,20 @@ class StickerWindow(QMainWindow):
             if not isinstance(bp, dict) or not c2.startswith('nota_base_') or fb.count() != 4:
                 return fb
             pts = [(fb[i].x(), fb[i].y()) for i in range(4)]
-            key = (tuple(pts), json.dumps(bp, sort_keys=True, default=str))
+            # [PACK207] el json de la forma solo se rehace si cambia el papel (antes: en cada llamada, varias por cable y fotograma); y la
+            # silueta se guarda RELATIVA a su esquina: moverlo no obliga a recalcularla
+            _pm2 = getattr(self, 'layer2_base_pixmap', None)
+            _jk = (id(bp), getattr(self, '_veil_rev', 0), _pm2.cacheKey() if _pm2 is not None else 0, len(bp))
+            _jm = getattr(self, '_bp_json_memo', None)
+            if _jm is None or _jm[0] != _jk:
+                _jm = self._bp_json_memo = (_jk, json.dumps(bp, sort_keys=True, default=str))
+            _ox, _oy = pts[0]
+            key = (tuple((x_ - _ox, y_ - _oy) for x_, y_ in pts), _jm[1])
             c = getattr(self, '_pshape_cache', None)
             if c is not None and c[0] == key:
-                return c[1]
+                self._pshape_last, self._pshape_org = c, (_ox, _oy)
+                return c[1].translated(_ox, _oy)
+            self._pshape_last = None
             (x0, y0), (x1, y1), _p2, (x3, y3) = pts
             wl, hl = math.hypot(x1 - x0, y1 - y0), math.hypot(x3 - x0, y3 - y0)
             if wl <= 4 or hl <= 4:
@@ -6829,7 +6882,8 @@ class StickerWindow(QMainWindow):
                 u, v = 1.5 + s * Wf, 1.5 + t * Hf
                 out.append(QPoint(int(round(x0 + ex[0] * u + ey[0] * v)), int(round(y0 + ex[1] * u + ey[1] * v))))
             res = QPolygon(out) if len(out) >= 3 else fb
-            self._pshape_cache = (key, res)
+            self._pshape_cache = (key, res.translated(-_ox, -_oy))
+            self._pshape_last, self._pshape_org = self._pshape_cache, (_ox, _oy)
             return res
         except Exception:
             return fb
@@ -8920,6 +8974,8 @@ class ConnectorOverlay(QWidget):
         self._grad_cache = {}                      # [PACK109] paradas de color del degradado por (colores, ajustes): no se recalculan cada fotograma
         self._rope_fast = True                     # [PACK109] hay una cuerda moviendose deprisa (si no, el balanceo suave va a menos fotogramas)
         self._flush_log_t = 0.0
+        self._edge_bb = {}                         # [PACK207] (padre, hijo) -> (recuadro global del cable, posicion de cada extremo)
+        self._paint_anchor = None                  # [PACK207] (widget arrastrado, su posicion, la de esta ventana, la de la corona) al pintar
 
     def _pending_fire(self):
         self._last_req = time.monotonic()
@@ -9008,10 +9064,13 @@ class ConnectorOverlay(QWidget):
         else:
             self.update()
 
-    def request_update(self):
-        """update() limitado a ~30 Hz (con repintado final garantizado)."""
+    def request_update(self, slow=False):
+        """update() limitado a ~30 Hz (con repintado final garantizado). [PACK207] slow: solo para el balanceo de las cuerdas mientras la
+        ventana se desplaza con el grupo (~15 Hz y como mucho ~25 % del tiempo)."""
         now = time.monotonic()
         gap = max(0.033, min(0.25, 2.2 * max(self._paint_ms, self._sync_ms) / 1000.0))      # [PACK111] pintar ocupa como mucho ~45 % del tiempo
+        if slow:
+            gap = max(0.066, min(0.3, 4.0 * self._paint_ms / 1000.0))
         if now - self._last_req >= gap:
             self._last_req = now
             self.update()
@@ -9059,6 +9118,8 @@ class ConnectorOverlay(QWidget):
 
         preview_all = bool(getattr(self.manager, '_cable_preview_all', False)) and not self.blank
         target_id = None if self.blank else (self.drag_id or self.source_id)
+        self._paint_anchor = None                        # [PACK207] (se rellena al acabar de pintar)
+        _drawn_box = [None]                              # [PACK207] recuadro de lo pintado (coordenadas de esta ventana)
         if not target_id:
             painter.end()
             return
@@ -9178,6 +9239,12 @@ class ConnectorOverlay(QWidget):
                     _rope_fast[0] = True
             else:
                 path = _cable_path(start_pt, end_pt, self.manager.cable_curve(_clen), self.manager.cable_fx(_clen))      # [PACK90] la curvatura mengua con la longitud; [PACK99] efectos peso / resorte
+                _bb = path.boundingRect()          # [PACK207]
+            try:                                        # [PACK207] recuadro del cable (global) y donde estaban sus extremos
+                self._edge_bb[(p_id, c_id)] = (_bb.toAlignedRect().translated(offset), p_win.geometry().topLeft(), c_win.geometry().topLeft())
+                _drawn_box[0] = _bb.toAlignedRect() if _drawn_box[0] is None else _drawn_box[0].united(_bb.toAlignedRect())
+            except Exception:
+                pass
             op_mul, w_main = self.manager.cable_length_style(_clen)
             w_end, w_ctr = self.manager.cable_width_profile(_clen)
             alpha = (st['alpha'] if (self.faint or not is_dimmed) else st['dim_alpha']) * op_mul   # cables largos: mas tenues
@@ -9275,11 +9342,18 @@ class ConnectorOverlay(QWidget):
         _in_bl = int(self.manager.get_cable_param('_cable_inside_blur'))
         _ov_rect = self.rect()
 
+        _ir_memo = {}
+
         def _inside_region(win):
+            r_ = _ir_memo.get(id(win))                   # [PACK207] una vez por widget y repintado (no una por cada cable suyo)
+            if r_ is not None:
+                return r_
             try:
-                return win.body_region().translated(win.geometry().topLeft() - offset)
+                r_ = win.body_region().translated(win.geometry().topLeft() - offset)
             except Exception:
-                return QRegion(win.geometry().translated(-offset))
+                r_ = QRegion(win.geometry().translated(-offset))
+            _ir_memo[id(win)] = r_
+            return r_
 
         def draw_edge_fx(p_id, c_id, is_dimmed):
             nonlocal painter
@@ -9345,6 +9419,12 @@ class ConnectorOverlay(QWidget):
             pw_, cw_ = self.manager.widgets.get(p_id), self.manager.widgets.get(c_id)
             if regs and pw_ is not None and cw_ is not None:
                 box = pw_.geometry().united(cw_.geometry()).adjusted(-300, -300, 300, 300).translated(-offset.x(), -offset.y())
+                _eb = self._edge_bb.get((p_id, c_id))
+                if _eb is not None:                     # [PACK207] donde estaba el cable de verdad (+ lo que se han movido sus extremos)
+                    _sp = pw_.geometry().topLeft() - _eb[1]
+                    _sc = cw_.geometry().topLeft() - _eb[2]
+                    _b = _eb[0].translated(_sp).united(_eb[0].translated(_sc)).adjusted(-40 - 3 * _ub, -40 - 3 * _ub, 40 + 3 * _ub, 40 + 3 * _ub)
+                    box = _b.translated(-offset.x(), -offset.y())
                 regs = [(k, r) for k, r in regs if r.boundingRect().intersects(box)]
             if not regs:
                 draw_edge_fx(p_id, c_id, is_dimmed)
@@ -9376,11 +9456,21 @@ class ConnectorOverlay(QWidget):
         self._rope_fast = _rope_fast[0]
         if _rope_live[0]:
             self._rope_keepalive()
+        _cw = None
         if self.manager.get_show_crown():
             self.manager.crown_sync(target_id, note_color, self._fade, painter.opacity())
+            _cw = getattr(self.manager, '_crown_win', None)
         else:
             self.manager.crown_hide()
         painter.end()
+        try:                                             # [PACK207] donde estaban el widget arrastrado, esta ventana y la corona al pintar
+            _tw = self.manager.widgets.get(target_id)
+            _cb = (_drawn_box[0].adjusted(-34, -34, 34, 34).translated(self.pos()) if _drawn_box[0] is not None else QRect())
+            self._paint_anchor = ((target_id, QPoint(_tw.pos()), QPoint(self.pos()),
+                                   QPoint(_cw.pos()) if (_cw is not None and _cw.isVisible()) else None,
+                                   _cb, QRect(self.geometry())) if _tw is not None else None)
+        except Exception:
+            self._paint_anchor = None
 
 
 from PySide6.QtGui import QKeySequence
@@ -14175,7 +14265,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 206                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 207                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -28808,6 +28898,8 @@ class WidgetManager(QObject):
             grp.source_id = widget_id
             grp.drag_id = None
 
+        if is_drag and prev_target == widget_id and self._cable_drag_rigid(widget_id, source_win):
+            return                                       # [PACK207] grupo entero: los cables se han desplazado con el, sin repintar
         wanted = self._fit_connector_overlay(widget_id, prev_target == widget_id)
         for ov in grp.overlays.values():
             if ov not in wanted:
@@ -28839,6 +28931,69 @@ class WidgetManager(QObject):
                     ov.drag_refresh()
                 else:
                     ov.update()
+
+    def _cable_drag_rigid(self, widget_id, src):
+        """[PACK207] Se arrastra un grupo y TODOS los cables que se ven van entre widgets que se mueven juntos: el dibujo no cambia, solo se
+        desplaza. La ventana de los cables (y la corona) se mueve con el grupo, sin repintarla: van pegados y no cuesta nada. Solo se
+        repinta, a un ritmo que el equipo aguanta, si las cuerdas tienen fisica (para que se balanceen). No vale si hay que cubrir otra zona
+        o pantalla, o si los cables quedan bajo un widget transparente que no se mueve con ellos (lo que se ve a traves cambiaria)."""
+        try:
+            if src is None or not getattr(src, '_is_window_dragging', False) or getattr(self, '_cable_preview_all', False):
+                return False
+            mv = getattr(src, '_dragging_children_windows', None)
+            if mv is None:
+                return False
+            moving = {src.widget_id}
+            moving.update(w.widget_id for w in mv)
+            rel = self._cable_related_ids(widget_id)
+            if not rel or not set(rel) <= moving:
+                return False
+            grp = self.connector_overlay
+            d_ = None
+            plan = []
+            for screen, ov in grp.overlays.items():
+                sg = screen.geometry()
+                anc = getattr(ov, '_paint_anchor', None) if ov.isVisible() else None
+                if ov.isVisible() and (anc is None or anc[0] != widget_id or ov.blank):
+                    return False
+                if anc is not None:
+                    d_ = src.pos() - anc[1]
+                    # lo pintado, desplazado, tiene que caber en la ventana desplazada (en lo que se ve de esta pantalla)
+                    miss = QRegion(anc[4]).subtracted(QRegion(anc[5])).translated(d_).intersected(QRegion(sg))
+                    if not miss.isEmpty():
+                        return False
+                    plan.append((ov, anc[2] + d_, anc[5].translated(d_), anc))
+            if d_ is None:
+                return False
+            for screen, ov in grp.overlays.items():          # y no puede llegar a una pantalla cuya ventana no esta
+                if not ov.isVisible():
+                    for _o, _p, _nr, anc in plan:
+                        if anc[4].translated(src.pos() - anc[1]).intersects(screen.geometry()):
+                            return False
+            if not plan:
+                return False
+            if int(self.get_cable_param('_under_blur')) > 0:
+                for k, w in self.widgets.items():
+                    if k in moving or not w.isVisible():
+                        continue
+                    if any(w.geometry().intersects(nr) for _o, _p, nr, _a in plan) and w.paper_translucent():
+                        return False
+            rope = self.get_cable_param('_rope_amount') > 0
+            for ov, npos, nr, anc in plan:
+                if ov.pos() != npos:
+                    ov.move(npos)
+                if anc[3] is not None:
+                    cw = getattr(self, '_crown_win', None)
+                    if cw is not None and cw.isVisible():
+                        cp = anc[3] + (src.pos() - anc[1])
+                        if cw.pos() != cp:
+                            cw.move(cp)
+                if rope:
+                    ov.request_update(slow=True)     # las cuerdas se balancean a su ritmo (~15 Hz, sin pasar de ~25 % del tiempo)
+            return True
+        except Exception as e:
+            log_warn("Cables", "arrastre sin repintar: %s" % e)
+            return False
 
     def _cable_z_arm(self):
         t = getattr(self, '_cable_z_timer', None)
@@ -31602,6 +31757,13 @@ class WidgetManager(QObject):
                 if d[3] is None:
                     d[3] = QRegion(u.paper_shape_global())
                 return d[3]
+            if not any(transl(u) for u in order):           # [PACK207] ningun widget transparente a la vista: no hay velo que calcular
+                for w in self.widgets.values():
+                    v_ = getattr(w, '_under_veil', None)
+                    if v_ is not None and v_.isVisible():
+                        w.set_under_veil([], 100)
+                self._veil_blur_live = False
+                return
             for i, w in enumerate(order):
                 if affected is not None and w.widget_id not in affected and (refresh is None or refresh is not w):
                     continue
