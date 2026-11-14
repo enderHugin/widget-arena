@@ -4406,6 +4406,11 @@ class StickerWindow(QMainWindow):
             self._sync_drag_mode(event.modifiers())
         
         if not (event.buttons() & Qt.LeftButton):
+            if self._is_window_dragging:                 # [PACK208] el arrastre acabo sin que llegara el soltar: los ocultos, a su sitio
+                try:
+                    self._drag_finish_hidden()
+                except Exception:
+                    pass
             self._is_window_dragging = False
             self._is_layer_dragging = False
             self._is_link_dragging = False
@@ -4531,7 +4536,107 @@ class StickerWindow(QMainWindow):
 
         super().mouseMoveEvent(event)
 
-    def _drag_apply_pending(self):
+    def _drag_move_windows(self, moves, final=False):
+        """[PACK208] Mueve las ventanas visibles del arrastre. En Windows, todas a la vez (una sola operacion del sistema: ninguna va por
+        detras de las demas y cuesta menos); si la correspondencia entre las coordenadas de Qt y los pixeles del sistema no se puede
+        comprobar, o algo no cuadra, se usa lo de siempre (y, si falla de verdad, se apaga para toda la sesion)."""
+        mgr = self.manager
+        if (sys.platform == 'win32' and not final and len(moves) >= 3 and not getattr(mgr, '_batch_moves_off', False)
+                and mgr.global_state.get('_win_batch_moves', True) is not False):
+            try:
+                if self._drag_move_batch(moves):
+                    return
+            except Exception as e:
+                mgr._batch_moves_off = True
+                log_warn("Arrastre", "mover todas las ventanas a la vez (Windows) queda desactivado: %s" % e)
+        for w, p in moves:
+            w.move(p)
+
+    def _drag_move_batch(self, moves):
+        import ctypes
+        from ctypes import wintypes
+        user32 = _user32_cached()
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        user32.BeginDeferWindowPos.argtypes = [ctypes.c_int]
+        user32.BeginDeferWindowPos.restype = wintypes.HANDLE
+        user32.DeferWindowPos.argtypes = [wintypes.HANDLE, wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        user32.DeferWindowPos.restype = wintypes.HANDLE
+        user32.EndDeferWindowPos.argtypes = [wintypes.HANDLE]
+        user32.EndDeferWindowPos.restype = wintypes.BOOL
+        scr = self.screen()
+        if scr is None:
+            return False
+        sg = scr.geometry()
+        dpr = float(scr.devicePixelRatio())
+        org = sg.topLeft()
+
+        def native(p):                                   # como lo calcula Qt: el origen de la pantalla es el mismo en los dos sistemas
+            return (org.x() + int(round((p.x() - org.x()) * dpr)), org.y() + int(round((p.y() - org.y()) * dpr)))
+        for w, p in moves:                               # todas en esta pantalla, antes y despues
+            if w.screen() is not scr or not sg.contains(QRect(p, w.size()).center()):
+                return False
+        bm = getattr(self, '_batch_map', None)
+        if bm is None:                                   # primera vez en este arrastre: se comprueba que la cuenta sale igual que la real
+            r = wintypes.RECT()
+            for w, _p in moves:
+                if not user32.GetWindowRect(int(w.winId()), ctypes.byref(r)):
+                    self._batch_map = False
+                    return False
+                nx, ny = native(w.pos())
+                if abs(r.left - nx) > 1 or abs(r.top - ny) > 1:
+                    self._batch_map = False
+                    log_info("Arrastre", "mover a la vez: las coordenadas no cuadran en esta pantalla (%d,%d / %d,%d); se mueven de una en una"
+                             % (r.left, r.top, nx, ny))
+                    return False
+            bm = self._batch_map = True
+        if bm is not True:
+            return False
+        SWP = 0x0001 | 0x0004 | 0x0010 | 0x0200          # sin cambiar tamano, orden ni foco
+        h = user32.BeginDeferWindowPos(len(moves))
+        if not h:
+            raise OSError("BeginDeferWindowPos")
+        for w, p in moves:
+            nx, ny = native(p)
+            h = user32.DeferWindowPos(h, int(w.winId()), None, nx, ny, 0, 0, SWP)
+            if not h:
+                raise OSError("DeferWindowPos")
+        if not user32.EndDeferWindowPos(h):
+            raise OSError("EndDeferWindowPos")
+        for w, p in moves:                               # Qt se entera ya (la ventana ya esta ahi: el sistema no la vuelve a mover)
+            w.move(p)
+        return True
+
+    def _drag_finish_hidden(self):
+        """[PACK208] Al soltar: los ocultos que siguen al grupo van a su sitio."""
+        if not getattr(self, '_drag_hidden_due', False):
+            return
+        self._drag_hidden_due = False
+        d = getattr(self, '_drag_last_delta', None)
+        if d is None:
+            return
+        for w, s in zip(self._dragging_children_windows or [], self._dragging_children_start or []):
+            if not w.isVisible():
+                w.move(s + d)
+
+    def _drag_log_stats(self):
+        """[PACK208] Si el arrastre ha ido lento, una linea en rendimiento.log con donde se va el tiempo."""
+        st = getattr(self, '_drag_stats', None)
+        self._drag_stats = None
+        if not st or st[0] < 8:
+            return
+        dur = time.perf_counter() - st[5]
+        rate = st[0] / max(0.001, dur)
+        if dur < 0.6 or rate >= 45:
+            return
+        n = st[0]
+        nv = 1 + sum(1 for w in (self._dragging_children_windows or []) if w.isVisible())
+        _perf_log("arrastre de %d widgets (%d visibles): %.0f pasos/s durante %.1f s | cada paso %.1f ms (max %.0f): mover las ventanas %.1f ms, "
+                  "cables %.1f ms | entre pasos %.1f ms (max %.0f): pintar, enviar a la pantalla y lo demas | Windows a la vez: %s"
+                  % (1 + len(self._dragging_children_windows or []), nv, rate, dur, st[1] / n, st[4], st[2] / n, st[3] / n,
+                     st[6] / max(1, n - 1), st[7], {True: 'si', False: 'no'}.get(getattr(self, '_batch_map', None), 'no aplica')))
+
+    def _drag_apply_pending(self, final=False):
         """[PACK207] Aplica la ultima posicion pedida del arrastre: el widget, los que le siguen y sus cables."""
         self._drag_armed = False
         pend = getattr(self, '_drag_pending', None)
@@ -4554,15 +4659,30 @@ class StickerWindow(QMainWindow):
             ]
             self._dragging_children_start = [w.pos() for w in self._dragging_children_windows]
             self._dragging_self_start = self.pos()
+            self._drag_hidden_due = False
+            self._batch_map = None                           # [PACK208] (Windows) correspondencia con los pixeles del sistema, por comprobar
+            self._drag_stats = [0, 0.0, 0.0, 0.0, 0.0, time.perf_counter(), 0.0, 0.0]   # pasos, aplicar, ventanas, cables, max, inicio, entre pasos, max entre pasos
         delta = new_pos - self._dragging_self_start
+        self._drag_last_delta = QPoint(delta)
+        _st = getattr(self, '_drag_stats', None)
+        if _st is not None and _st[0] > 0:
+            _gap_ms = (_t0 - getattr(self, '_drag_apply_t', _t0)) * 1000.0
+            _st[6] += _gap_ms
+            _st[7] = max(_st[7], _gap_ms)
+        moves = []
         for child_window, start_pos in zip(self._dragging_children_windows, self._dragging_children_start):
             new_child_pos = start_pos + delta
-            child_window.move(new_child_pos)
             child_geom = child_window.current_template_data.setdefault('geometry', {})
             child_geom['x'] = new_child_pos.x()
             child_geom['y'] = new_child_pos.y()
+            if not child_window.isVisible():                 # [PACK208] oculto (rama plegada): se coloca al soltar, no en cada paso
+                self._drag_hidden_due = True
+                continue
+            moves.append((child_window, new_child_pos))
         self._req_pos = QPoint(new_pos)                      # [PACK170]
-        self.move(new_pos)
+        moves.append((self, new_pos))
+        _tm0 = time.perf_counter()
+        self._drag_move_windows(moves, final)
         _t1 = time.perf_counter()
         self.manager.show_cables_for(self.widget_id, is_drag=True)
         _now = time.perf_counter()
@@ -4573,6 +4693,12 @@ class StickerWindow(QMainWindow):
         self._drag_cost = 0.7 * getattr(self, '_drag_cost', cost) + 0.3 * cost
         self._drag_apply_t = _now
         self._drag_gap = min(0.033, max(0.007, 1.2 * self._drag_cost))
+        if _st is not None:
+            _st[0] += 1
+            _st[1] += cost * 1000.0
+            _st[2] += (_t1 - _tm0) * 1000.0
+            _st[3] += _ms
+            _st[4] = max(_st[4], cost * 1000.0)
         try:
             self.manager._perf_add('arrastre (mover el grupo y sus cables)', cost * 1000)
         except Exception:
@@ -4591,8 +4717,13 @@ class StickerWindow(QMainWindow):
             return
         if event.button() == Qt.LeftButton:
             if self._is_window_dragging and getattr(self, '_drag_pending', None) is not None:
-                self._drag_apply_pending()               # [PACK207] la ultima posicion pedida se aplica antes de soltar
+                self._drag_apply_pending(final=True)     # [PACK207] la ultima posicion pedida se aplica antes de soltar
             if self._is_window_dragging:
+                try:
+                    self._drag_finish_hidden()           # [PACK208]
+                    self._drag_log_stats()
+                except Exception as e_df:
+                    log_warn(self.widget_id, "fin del arrastre: %s" % e_df)
                 self._is_window_dragging = False
                 self.manager.snap_guides_hide()          # [PACK185]
                 current_main_geom = self.current_template_data.setdefault('geometry', {})
@@ -6834,7 +6965,9 @@ class StickerWindow(QMainWindow):
             cx, cy = lcx + dx * ca - dy * sa, lcy + dx * sa + dy * ca
 
             hw, hh = w / 2.0 + 1.5, h / 2.0 + 1.5
-            poly = QPolygon([QPoint(int(round(geo.x() + cx + ux * ca - uy * sa)), int(round(geo.y() + cy + ux * sa + uy * ca)))
+            # [PACK208] redondeo 'medio hacia arriba' (round() de Python redondea los ,5 al par: la silueta cambiaba 1-2 px de alto o de ancho
+            # segun la posicion, y las flechas y los cables temblaban al arrastrar)
+            poly = QPolygon([QPoint(int(math.floor(geo.x() + cx + ux * ca - uy * sa + 0.5)), int(math.floor(geo.y() + cy + ux * sa + uy * ca + 0.5)))
                              for ux, uy in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))])
 
             self._ppoly_cache = (key, poly)
@@ -6880,7 +7013,7 @@ class StickerWindow(QMainWindow):
             for pt in body.toFillPolygon():
                 s, t = (pt.x() - mg) / float(pw), (pt.y() - mg) / float(ph)
                 u, v = 1.5 + s * Wf, 1.5 + t * Hf
-                out.append(QPoint(int(round(x0 + ex[0] * u + ey[0] * v)), int(round(y0 + ex[1] * u + ey[1] * v))))
+                out.append(QPoint(int(math.floor(x0 + ex[0] * u + ey[0] * v + 0.5)), int(math.floor(y0 + ex[1] * u + ey[1] * v + 0.5))))          # [PACK208]
             res = QPolygon(out) if len(out) >= 3 else fb
             self._pshape_cache = (key, res.translated(-_ox, -_oy))
             self._pshape_last, self._pshape_org = self._pshape_cache, (_ox, _oy)
@@ -14265,7 +14398,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 207                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 208                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -23253,6 +23386,7 @@ class ArrowLayer(QObject):
             return
         _tr = ()
         tr_dirty = QRegion()
+        _trprev, _trcur = {}, {}                           # [PACK208]
         if int(m.get_cable_param('_under_blur')) > 0 and items:          # [PACK187] si se mueve un widget transparente, lo que se ve a traves de el cambia
             near = QRect()                                  # [PACK202] solo importan los transparentes cerca de alguna flecha
             for it_ in items:
@@ -23278,6 +23412,7 @@ class ArrowLayer(QObject):
                     else:
                         tc.pop(k, None)
             self._tr_geo = cur
+            _trprev, _trcur = prev, cur
         sig = (m._arrow_rev, _tr, int(m.get_cable_param('_under_blur')),
                tuple((it['src'], it['id'], it['p0'].toTuple(), it['p1'].toTuple(), it['label'], it['lane'], it.get('fade', 1.0), it.get('type', '')) for it in items))
         if sig == self._sig and not force:
@@ -23323,6 +23458,15 @@ class ArrowLayer(QObject):
             ov.bounds = newb
             aot = any(getattr(m.widgets.get(it['src']), 'always_on_top', False) or getattr(m.widgets.get(it['dst']), 'always_on_top', False) for it in mine)
             flags = Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput | (Qt.WindowStaysOnTopHint if aot else Qt.Widget)
+            if not full and not dirty.isEmpty() and ov.isVisible() and ov.windowFlags() == flags:
+                sh = self._rigid_shift(oldb, newb, ov, sg, _trprev, _trcur)
+                if sh is not None:                         # [PACK208] todo se ha desplazado igual: la ventana se desplaza, sin repintar
+                    ov.move(ov.pos() + sh)
+                    if QApplication.applicationState() == Qt.ApplicationActive and not aot:
+                        if getattr(m, '_arrow_raise_due', False) or now - getattr(ov, '_raised_at', 0.0) > 2.0:
+                            ov.raise_()
+                            ov._raised_at = now
+                    continue
             whole = False
             if ov.windowFlags() != flags:
                 was = ov.isVisible()
@@ -23368,6 +23512,44 @@ class ArrowLayer(QObject):
                     ov.raise_()
                     ov._raised_at = now
         m._arrow_raise_due = False
+
+    def _rigid_shift(self, oldb, newb, ov, sg, trprev, trcur):
+        """[PACK208] Si TODAS las flechas de esta ventana se han desplazado exactamente lo mismo (un numero entero de pixeles) y nada mas ha
+        cambiado (estilo, texto, opacidad...), devuelve ese desplazamiento; si no, None. Tambien None si al desplazar la ventana quedaria a
+        la vista algo que no se pinto (estaba fuera de ella) o si un widget transparente que no se mueve igual queda encima."""
+        if not oldb or set(oldb) != set(newb):
+            return None
+        d = None
+        content = QRect()
+        for k, (nb, nk) in newb.items():
+            ob, okk = oldb[k]
+            if nk[2:] != okk[2:]:
+                return None
+            dx, dy = nk[0][0] - okk[0][0], nk[0][1] - okk[0][1]
+            if abs(nk[1][0] - okk[1][0] - dx) > 0.01 or abs(nk[1][1] - okk[1][1] - dy) > 0.01:
+                return None
+            if abs(dx - round(dx)) > 0.01 or abs(dy - round(dy)) > 0.01:
+                return None
+            dd = (int(round(dx)), int(round(dy)))
+            if d is None:
+                d = dd
+            elif d != dd:
+                return None
+            if nb != ob.translated(dd[0], dd[1]):
+                return None
+            content = content.united(ob)
+        if d is None or d == (0, 0):
+            return None
+        sh = QPoint(d[0], d[1])
+        if not QRegion(content).subtracted(QRegion(ov.geometry())).translated(sh).intersected(QRegion(sg)).isEmpty():
+            return None
+        both = content.united(content.translated(sh))
+        for k in set(trprev) | set(trcur):
+            a_, b_ = trprev.get(k), trcur.get(k)
+            if (a_ is not None and a_.intersects(both)) or (b_ is not None and b_.intersects(both)):
+                if a_ is None or b_ is None or b_ != a_.translated(sh):
+                    return None
+        return sh
 
     def _timer_tick(self):
         """[PACK202] El temporizador (fundidos, cursor encima): no repite lo que acaba de hacer un movimiento."""

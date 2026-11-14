@@ -1,3 +1,14 @@
+## Pack 208 · 2026-11-14
+- **Más fluidez al arrastrar grupos, sin tocar la calidad de imagen:**
+  - **Las flechas del grupo se desplazan con él sin repintarse.** Si todas las flechas que se ven se han movido lo mismo (van entre widgets del grupo que arrastras), su ventana se desplaza con el grupo. Si alguna va a un widget que se queda quieto, se repintan como siempre. Arrastrando un grupo de 22 widgets con 6 flechas, la ventana de las flechas pasa de repintarse en cada paso (62 veces) a 4 (solo mientras aparecen).
+  - **Windows: todas las ventanas del grupo se mueven en una sola operación del sistema.** Ya no van unas por detrás de otras, como se veía en el vídeo. Al empezar el arrastre se comprueba que las coordenadas de Qt y las del sistema cuadran en esa pantalla. Si no cuadran, o si el grupo pasa a otra pantalla, se mueven de una en una como antes. Si algo falla, se apaga solo para el resto de la sesión.
+  - **Los widgets ocultos que siguen al grupo (ramas plegadas) no se mueven en cada paso:** van a su sitio al soltar.
+  - Medido aquí, arrastrando 22 widgets (CPU por fotograma):
+    - con 6 flechas: de 14,1 a 9,6 ms;
+    - con 6 flechas y un widget transparente: de 42,2 a 13,9 ms.
+- **Arreglo: la silueta del papel cambiaba 1-2 px de alto o de ancho según la posición del widget.** Python redondea los ,5 al número par. Al arrastrar, las flechas y el borde de los cables temblaban un píxel. Ahora la silueta es siempre la misma, solo desplazada.
+- **`rendimiento.log`: resumen de cada arrastre lento.** Anota cuántos pasos por segundo se consiguen, cuánto cuesta mover las ventanas, cuánto los cables, cuánto tarda lo demás entre paso y paso (pintar, enviar a la pantalla) y si se usó el movimiento conjunto de Windows.
+
 ## Pack 207 · 2026-11-14
 - **Arrastrar grupos de widgets va mucho más fluido, en todos los sistemas.** En el vídeo, al mover un árbol entero con sus cables, la imagen se actualizaba unas 6-7 veces por segundo. Cambios:
   - **Si se mueve el grupo entero, los cables se desplazan con él sin repintarse.** Pasa cuando todos los cables que se ven van entre widgets que se mueven juntos, como al arrastrar la raíz con sus descendientes. Entonces el dibujo no cambia, solo se desplaza: la ventana de los cables (y la corona) se mueve con el grupo, van pegados y no cuesta nada.
