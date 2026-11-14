@@ -9187,6 +9187,9 @@ class ConnectorOverlay(QWidget):
         if QApplication.activePopupWidget() is not None:       # menu desplegado: no se compite con el
             self._rope_last = now
             return
+        if getattr(self, '_rope_hold', 0.0) > now:              # [PACK209] arrastrando un grupo entero con las cuerdas quietas
+            self._rope_last = now
+            return
         iv = self._rope_interval()
         if iv != self._rope_timer.interval():
             self._rope_timer.setInterval(iv)
@@ -14398,7 +14401,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 208                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 209                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -17949,7 +17952,9 @@ CABLE_DIALOG_SPEC = [
             ('_rope_elastic', "Elasticidad (0 % = cuerda, 100 % = goma que rebota)", 'i', " %", 'rope'),
             ('_rope_damp', "Amortiguaci\u00f3n (m\u00e1s = se queda quieta antes)", 'i', " %", 'rope'),
             ('_rope_life', "Vida: balanceo suave permanente (0 % = solo se mueve si mueves los widgets)", 'i', " %", 'rope'),
-            ('_rope_inertia', "Reacci\u00f3n al mover un widget (0 % = no se columpia)", 'i', " %", 'rope')],
+            ('_rope_inertia', "Reacci\u00f3n al mover un widget (0 % = no se columpia)", 'i', " %", 'rope'),
+            ('_rope_group_drag', "Al arrastrar un grupo entero (todos sus cables van dentro de \u00e9l)", 'c',
+             ("Quietas: se mueven con el grupo, sin repintarse (m\u00e1s fluido)", "Se balancean (m\u00e1s trabajo para el equipo)"), None)],
          "Con la cuerda activa, la forma del cable la decide la f\u00edsica: cuelga entre los bordes de los dos widgets (m\u00e1s cuanto m\u00e1s cerca est\u00e1n) y se balancea sola. "
          "Mientras haya cables a la vista se repintan continuamente (en un PC lento los fotogramas bajan solos; con vida 0 % y los widgets quietos no se repinta nada). Con 0 % vuelven la curvatura en S y los efectos de abajo."),
         ("Cuerda: proximidad (cu\u00e1ndo un cable cuenta como cercano o lejano)", [
@@ -17991,7 +17996,8 @@ CABLE_DIALOG_SPEC = [
          "Con 0 % el cable se ve solo desde el borde del widget hacia fuera, aunque el papel sea transl\u00facido. Con un valor intermedio se ve a trav\u00e9s del papel como a trav\u00e9s de un cristal, y el difuminado lo desenfoca. Con 100 % y 0 px se ve entero, nazca donde nazca."),
         ("Un widget bajo otro transparente", [
             ('_under_op', "Opacidad de un widget transparente que queda bajo otro widget transparente (100 % = sin cambio)", 'i', " %", None),
-            ('_under_blur', "Difuminado de lo que se ve a trav\u00e9s de un widget transparente: widgets, cables y flechas que no son suyos (0 = n\u00edtido)", 'i', " px", None)],
+            ('_under_blur', "Difuminado de lo que se ve a trav\u00e9s de un widget transparente: widgets, cables y flechas que no son suyos (0 = n\u00edtido)", 'i', " px", None),
+            ('_under_blur_family', "Su padre y sus hijos directos, si quedan debajo", 'c', ("Difuminados, como los dem\u00e1s widgets", "N\u00edtidos (se ve clara la relaci\u00f3n)"), None)],
          "El difuminado se aplica a lo que queda DEBAJO de un widget transparente: otros widgets, los cables que no lo unen a \u00e9l y las flechas que no salen ni llegan a \u00e9l (lo que s\u00ed es suyo se ve n\u00edtido). Ayuda a distinguir cu\u00e1l est\u00e1 encima cuando se superponen widgets transparentes: el de abajo se ve m\u00e1s tenue donde queda bajo el de arriba. Los widgets que no son transparentes no cambian: siguen opacos y tapan lo que tienen detr\u00e1s (el escritorio, otros widgets) tambi\u00e9n bajo un widget transparente. En Windows se lee el orden real de las ventanas; en otros sistemas se aprende de los clics y puede equivocarse si una ventana se sube por otra v\u00eda, hasta que haces clic en ella."),
         ("Apilamiento de los widgets", [
             ('_tree_z', "Un widget y sus descendientes en la pila", 'c', ("Se apilan como un bloque", "Cada widget por su cuenta"), None),
@@ -25021,6 +25027,10 @@ class WidgetManager(QObject):
                 shapes[wid] = pts
             return shapes[wid]
         out = []
+        _epc = getattr(self, '_arrow_ep_cache', None)          # [PACK209] extremos ya calculados
+        if _epc is None:
+            _epc = self._arrow_ep_cache = {}
+        _used = set()
         for src, a in allp:
             ra, rb = rect_of(src), rect_of(a['to'])
             if ra is None or rb is None:
@@ -25038,11 +25048,32 @@ class WidgetManager(QObject):
                 stl['op_far'] = float(stl['op_far']) * fade
             if stl.get('color_from', 'fixed') != 'fixed' or stl.get('color2_from', 'fixed') != 'fixed':          # [PACK192]
                 stl = arrow_resolve_colors(stl, self._arrow_widget_color(src), self._arrow_widget_color(a['to']))
-            ep = arrow_endpoints_shapes(ra, rb, shape_of(src), shape_of(a['to']), float(stl['gap']))          # [PACK204] desde el borde del papel
+            # [PACK209] si sus dos widgets se han desplazado lo mismo desde la ultima vez (y no han cambiado), sus extremos tambien: no hace
+            # falta recalcular las siluetas
+            _ck = (src, a['id'])
+            _ka, _kb = self._arrow_wkey(src, ra), self._arrow_wkey(a['to'], rb)
+            _c = _epc.get(_ck)
+            ep = None
+            if _c is not None and _c[0] == _ka and _c[1] == _kb and _c[2] == float(stl['gap']):
+                _da, _db = ra.topLeft() - _c[3], rb.topLeft() - _c[4]
+                if _da == _db:
+                    ep = None if _c[5] is None else (_c[5][0] + QPointF(_da), _c[5][1] + QPointF(_da))
+                    _hit = True
+                else:
+                    _hit = False
+            else:
+                _hit = False
+            if not _hit:
+                ep = arrow_endpoints_shapes(ra, rb, shape_of(src), shape_of(a['to']), float(stl['gap']))          # [PACK204] desde el borde del papel
+            _epc[_ck] = (_ka, _kb, float(stl['gap']), ra.topLeft(), rb.topLeft(), ep)
+            _used.add(_ck)
             if ep is None:
                 continue
             out.append({'src': src, 'dst': a['to'], 'id': a['id'], 'p0': ep[0], 'p1': ep[1], 'style': stl,
                         'label': str(a.get('label') or ''), 'lane': (a['to'], src) in pairs, 'fade': round(fade, 3), 'type': a.get('type') or ''})
+        if len(_epc) > len(_used) + 64:
+            for _k in [k for k in _epc if k not in _used]:
+                del _epc[_k]
         if gh and gh['src'] in self.widgets:                    # [PACK189] flecha provisional mientras se arrastra
             ra, pt = rect_of(gh['src']), gh['pt']
             if ra is not None:
@@ -25064,6 +25095,20 @@ class WidgetManager(QObject):
                     out.append({'src': gh['src'], 'dst': gdst if rb is not None else '', 'id': '_ghost', 'p0': ep[0], 'p1': ep[1], 'style': stl, 'label': glabel,
                                 'lane': False, 'type': gh.get('type') or ''})
         return out
+
+    def _arrow_wkey(self, wid, r):
+        """[PACK209] Lo que decide la silueta de un widget, salvo su posicion: si no cambia, la silueta es la misma, desplazada."""
+        w = self.widgets.get(wid)
+        if w is None:
+            return None
+        try:
+            pm = w.layer2_label.pixmap()
+            pk = pm.cacheKey() if pm is not None else 0
+        except Exception:
+            pk = 0
+        p = w.pos()
+        return (w.width(), w.height(), r.x() - p.x(), r.y() - p.y(), r.width(), r.height(), pk, getattr(w, '_veil_rev', 0),
+                id(w.current_template_data.get('base_note')), w.layer2_label.geometry().getRect(), w.property('rotation'))
 
     def widget_id_at(self, gp):
         """Widget que hay en un punto de la pantalla (la capa de flechas, transparente a los clics, no cuenta)."""
@@ -29160,8 +29205,15 @@ class WidgetManager(QObject):
                         continue
                     if any(w.geometry().intersects(nr) for _o, _p, nr, _a in plan) and w.paper_translucent():
                         return False
-            rope = self.get_cable_param('_rope_amount') > 0
+            rope = self.get_cable_param('_rope_amount') > 0 and int(self.get_cable_param('_rope_group_drag')) == 1
+            if not rope:                                 # [PACK209] cuerdas quietas: van con el grupo; al soltar, en reposo (sin columpiarse de golpe)
+                for k_, r_ in list((getattr(self, '_ropes', None) or {}).items()):
+                    if isinstance(k_, tuple) and (k_[0] in moving or k_[-1] in moving):
+                        r_.t = None
+            _hold = time.monotonic() + 0.25
             for ov, npos, nr, anc in plan:
+                if not rope:
+                    ov._rope_hold = _hold
                 if ov.pos() != npos:
                     ov.move(npos)
                 if anc[3] is not None:
@@ -30216,6 +30268,8 @@ class WidgetManager(QObject):
         '_cable_ograd_start': (10, 0, 50),      # % del cable con opacidad plena en CADA extremo (padre e hijo)
         '_tree_z': (0, 0, 1),                   # [PACK138] 0 = un arbol se apila como un bloque; 1 = cada widget por su cuenta
         '_child_z': (0, 0, 1),                  # [PACK147] 0 = un hijo queda siempre por debajo de su padre; 1 = sin esa regla (el que se toca queda encima)
+        '_under_blur_family': (0, 0, 1),        # [PACK209] 0 = el padre y los hijos directos tambien se ven difuminados; 1 = nitidos
+        '_rope_group_drag': (0, 0, 1),          # [PACK209] arrastrando un grupo entero: 0 = cuerdas quietas, se mueven con el; 1 = se balancean
         '_under_blur': (5, 0, 30),              # [PACK187] px de difuminado de lo que se ve A TRAVES de un widget transparente (widgets, cables y flechas que no son suyos; 0 = nitido)
         '_under_op': (40, 5, 100),              # [PACK136] % de opacidad de lo que queda bajo el papel translucido de otro widget (100 = sin cambio)
         '_cable_inside_op': (0, 0, 100),        # [PACK134] % de opacidad del cable DENTRO de los widgets que une (0 = no se ve: nace del borde)
@@ -31839,7 +31893,7 @@ class WidgetManager(QObject):
         return out
 
     def _veil_sig(self, order=None):
-        op = (int(self.get_cable_param('_under_op')), int(self.get_cable_param('_under_blur')))
+        op = (int(self.get_cable_param('_under_op')), int(self.get_cable_param('_under_blur')), int(self.get_cable_param('_under_blur_family')))
         return (op, tuple((w.widget_id, tuple(w.geometry().getRect()), getattr(w, '_zstamp', 0), bool(w.always_on_top),
                            w.layer2_label.pixmap().cacheKey() if w.layer2_label.pixmap() is not None else 0)
                           for w in (order if order is not None else self._veil_order())))
@@ -31909,16 +31963,21 @@ class WidgetManager(QObject):
             geo = {w.widget_id: w.geometry() for w in order}
             prev = getattr(self, '_veil_prev', None)
             affected = None
-            if prev is not None and prev[0] == ids and prev[2] == (op, blur):
+            fam_sharp = int(self.get_cable_param('_under_blur_family')) == 1          # [PACK209]
+            rig = None                                    # [PACK209] todos los que se han movido, lo mismo (un grupo entero)
+            if prev is not None and prev[0] == ids and prev[2] == (op, blur, fam_sharp):
                 moved = [k for k in ids if geo[k] != prev[1].get(k)]
                 if moved:                                 # solo se han movido algunos: cambia lo que tienen debajo y lo que tapan, nada mas
                     zones = [prev[1][k].united(geo[k]) for k in moved]
                     affected = {k for k in ids if k in moved or any(geo[k].intersects(z) for z in zones)}
+                    _d0 = geo[moved[0]].topLeft() - prev[1][moved[0]].topLeft()
+                    if all(geo[k].size() == prev[1][k].size() and geo[k].topLeft() - prev[1][k].topLeft() == _d0 for k in moved):
+                        rig = (set(moved), prev[1])
                 elif refresh is not None:
                     affected = set()                      # [PACK206] refrescar uno: solo ese, no un repaso de todos
                 if refresh is not None and affected is not None:
                     affected.add(refresh.widget_id)
-            self._veil_prev = (ids, geo, (op, blur))
+            self._veil_prev = (ids, geo, (op, blur, fam_sharp))
             info = {}                                     # [PACK200] lo caro de cada widget, una sola vez por repaso
 
             def inf(u):
@@ -31949,11 +32008,20 @@ class WidgetManager(QObject):
             for i, w in enumerate(order):
                 if affected is not None and w.widget_id not in affected and (refresh is None or refresh is not w):
                     continue
+                wg0 = inf(w)[0]
+                if rig is not None and w.widget_id in rig[0] and (refresh is None or refresh is not w):
+                    # [PACK209] se ha movido con su grupo: si todo lo transparente que tiene (o tenia) encima se ha movido igual, su velo
+                    # (en sus coordenadas) no cambia; no hace falta calcularlo
+                    _pg = rig[1].get(w.widget_id)
+                    if not any(u.widget_id not in rig[0] and transl(u) and (inf(u)[0].intersects(wg0) or (_pg is not None and inf(u)[0].intersects(_pg)))
+                               for u in order[i + 1:]):
+                        continue
                 rects = []
                 brects = []
-                wg0 = inf(w)[0]
-                if blur > 0:                              # [PACK187] lo que queda bajo un widget transparente (que no es su padre ni su hijo) se ve difuminado
-                    rel = {self.global_state.get(w.widget_id, {}).get('parent_id')} | set(self.get_children(w.widget_id))
+                if blur > 0:                              # [PACK187] lo que queda bajo un widget transparente se ve difuminado
+                    # [PACK209] tambien su padre y sus hijos directos, salvo que se elija verlos nitidos
+                    rel = (({self.global_state.get(w.widget_id, {}).get('parent_id')} | set(self.get_children(w.widget_id)))
+                           if fam_sharp else set())
                     for u in order[i + 1:]:
                         if u.widget_id in rel or not inf(u)[0].intersects(wg0) or not transl(u):
                             continue

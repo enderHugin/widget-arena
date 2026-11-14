@@ -1,3 +1,18 @@
+## Pack 209 · 2026-11-14
+- **Difuminado: el padre y los hijos directos de un widget transparente también se ven difuminados a través de él**, como cualquier otro widget que quede debajo.
+  - Desde el Pack 187 se veían nítidos a propósito, para que se distinguiera la relación inmediata.
+  - Se puede volver a eso en *Cables ▸ Transparencias ▸ «Su padre y sus hijos directos, si quedan debajo»*: **difuminados** (por defecto) o **nítidos**. El cambio se ve al momento.
+- **Arrastrar un grupo entero: las cuerdas se quedan quietas y se mueven con él, sin repintarse.** Con la física de cuerdas activa, se repintaban continuamente mientras el grupo se movía. A pocos fotogramas por segundo, eso producía los latigazos que se veían en el vídeo, con cables sueltos lejos de los widgets.
+  - Al soltar quedan en reposo, sin columpiarse de golpe.
+  - Opción en *Cables ▸ Cuerda (física) ▸ «Al arrastrar un grupo entero»*: **quietas** (por defecto, más fluido) o **se balancean**, como antes.
+  - Al arrastrar un widget suelto o una rama cuyo padre se queda quieto, las cuerdas se balancean como siempre.
+- **Difuminado al arrastrar un grupo entero:** lo que cada widget del grupo tiene encima, si es del mismo grupo, no se recalcula, porque se ha movido con él. Solo se recalcula si queda bajo un widget transparente que no se mueve con el grupo.
+- **Flechas:** si los dos widgets de una flecha se han desplazado lo mismo y no han cambiado, sus extremos se desplazan sin recalcular las siluetas del papel. El resultado es exactamente el mismo.
+- Medido aquí, arrastrando un grupo de 22 widgets (CPU por fotograma):
+  - sin flechas: de 6,7 a 2,1 ms;
+  - con 12 flechas: de 9,8 a 3,8 ms;
+  - con 12 flechas y un widget transparente: de 14,1 a 5,8 ms.
+
 ## Pack 208 · 2026-11-14
 - **Más fluidez al arrastrar grupos, sin tocar la calidad de imagen:**
   - **Las flechas del grupo se desplazan con él sin repintarse.** Si todas las flechas que se ven se han movido lo mismo (van entre widgets del grupo que arrastras), su ventana se desplaza con el grupo. Si alguna va a un widget que se queda quieto, se repintan como siempre. Arrastrando un grupo de 22 widgets con 6 flechas, la ventana de las flechas pasa de repintarse en cada paso (62 veces) a 4 (solo mientras aparecen).
