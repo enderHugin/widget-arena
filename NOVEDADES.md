@@ -1,3 +1,21 @@
+## Pack 211 · 2026-11-15
+- **Arreglo: el Pack 210 hacía más lentos algunos arrastres.** Cuando un cable del grupo pasaba bajo un widget transparente que no se movía, las dos ventanas de cables se separaban y se volvían a juntar en cada paso. Así se repintaba todo varias veces, y además una ventana aparecía y desaparecía. Es lo que mostraba tu registro: los cables pasaron de 50 a 78-87 ms por paso.
+  - Ahora se decide cable a cable. Si un cable pasa bajo un transparente quieto, va hacia otra pantalla o se sale de lo pintado, pasa a la ventana quieta y se repinta allí. Los demás siguen desplazándose con el grupo, y nada se deshace a cada paso.
+  - Si casi ningún cable puede ir con el grupo, no se parte: se repinta como antes del Pack 210.
+- **Cuando no hay capa partida, cada ventana de cables repinta solo la franja de los cables que cambian**, al mismo ritmo que antes. Sobre todo las ventanas de las otras pantallas, que antes se repintaban enteras en cada paso.
+- **Difuminado a través de un transparente: la imagen intermedia de cada cable o flecha tiene ahora el tamaño del cable**, no el de todo el widget transparente. El desenfoque hace la misma cuenta con menos coste fijo. El resultado es idéntico.
+- Medido aquí, arrastrando 22 widgets con su padre fuera del grupo (CPU por fotograma, Pack 209 → Pack 211):
+  - sin transparentes: de unos 13 a unos 6 ms;
+  - con los widgets del grupo transparentes: de unos 20 a unos 10 ms;
+  - con el padre en otra pantalla: de 25 a 7 ms; si además hay transparentes quietos encima de los cables, de 32 a 23 ms;
+  - con tres transparentes quietos encima de casi todos los cables del grupo, en una sola pantalla: igual que antes, unos 20 ms. Esos cables se ven difuminados a través del transparente y hay que volver a pintarlos en cada paso.
+- **El difuminado sigue mientras editas el texto de un widget transparente.** Antes se quitaba al hacer clic para escribir. Lo que queda debajo sigue sin atenuarse mientras editas, como desde el Pack 147, para que no salga una mancha oscura bajo el recuadro de edición.
+- **Vista previa del mapa:** las notas que solo se han movido ya no se vuelven a dibujar. La primera vista previa de cada sesión cuesta lo mismo que antes (en tu registro, una pausa de 0,66 s con el programa parado); queda apuntada en la lista de pendientes.
+- **`rendimiento.log`: la línea de cada arrastre lento dice ahora:**
+  - si los cables del grupo se desplazaron sin repintar y en cuántos pasos;
+  - cuántos cables iban con el grupo y por qué se repintaron aparte los demás;
+  - cuántas ventanas de cables había a la vista.
+
 ## Pack 210 · 2026-11-15
 - **Arreglo: un widget transparente que entraba bajo otro transparente se volvía entero más tenue.** Lo correcto (desde el Pack 136) es que solo se atenúe la parte que queda debajo, al 40 % por defecto, para que se distinga cuál está encima. Cuando además había difuminado (Pack 187), un fallo al pintar el velo quitaba el recorte y atenuaba el widget entero. Desde el Pack 209, con el padre y los hijos también difuminados, pasaba además entre un widget y su padre o sus hijos.
   - Ahora solo se atenúa y se difumina la franja cubierta; el resto del widget conserva su opacidad.

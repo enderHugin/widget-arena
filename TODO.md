@@ -49,5 +49,10 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
 - [ ] En GoatCounter (Settings → Site): activar «Allow adding visitor counts on your website» (si no, la página no enseña cifras) y «Allow public view» (para el enlace a las estadísticas).
 - [ ] Comentarios con Telegram: crear un canal público con grupo de debate enlazado, publicar un mensaje y poner `canal/número` en `SITE.telegram` de `site/index.html`.
 
+## Rendimiento (pendiente)
+- [ ] Primera vista previa del mapa de cada sesión: dibuja todas las notas de una vez (en el registro, 0,66 s con el programa parado). Repartirla en trozos para que no se note.
+- [ ] Cables vistos difuminados a través de widgets transparentes: es lo que más cuesta pintar cuando hay muchos encima de los cables (≈1,5 ms por cable y repintado). Buscar una forma más barata sin cambiar el aspecto.
+- [ ] Al arrastrar, «entre pasos» (pintar los widgets y enviarlos a la pantalla) se lleva ~30 ms en el PC del usuario: medir qué parte es de Windows.
+
 ## Otros temas del usuario
 - «Necesito varias cosas»: el usuario las dirá al terminar esta lista.
