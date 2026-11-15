@@ -7070,7 +7070,8 @@ class StickerWindow(QMainWindow):
             return
         # [PACK200] se difumina el contenido ENTERO del widget una sola vez (y de nuevo solo si cambia su contenido, su tamano o el radio):
         # al mover otro widget por encima solo cambia la zona que se muestra difuminada, no hay que capturar ni difuminar nada
-        bkey = (int(blur_px), self.central_widget.size().toTuple(), getattr(self, '_veil_rev', 0))
+        bkey = (int(blur_px), self.central_widget.size().toTuple(), getattr(self, '_veil_rev', 0),
+                round(float(self.central_widget.devicePixelRatioF()), 3))          # [PACK212] al pasar a un monitor con otra escala, se captura otra vez
         img_new = False
         if not breg.isEmpty() and (refresh or v.blur_img is None or bkey != getattr(v, '_bkey_done', None)):
             _g0 = time.perf_counter()
@@ -7088,10 +7089,12 @@ class StickerWindow(QMainWindow):
                     crc = zlib.crc32(gi.constBits())
                 except Exception:
                     crc = None
+                _bd = tuple(getattr(v, '_bkey_done', None) or (None, None, None, None))
                 same = (crc is not None and crc == getattr(v, '_grab_crc', None) and v.blur_img is not None
-                        and bkey[:2] == tuple(getattr(v, '_bkey_done', None) or (None, None, None))[:2])          # mismo radio y tamano
+                        and bkey[:2] == _bd[:2] and bkey[3:] == _bd[3:])          # mismo radio, tamano y escala
                 if not same:                            # [PACK206] la captura sale igual: no se difumina otra vez ni se repinta
-                    v.blur_img = _blur_image(gi, int(blur_px))
+                    # [PACK212] la captura esta en pixeles de la pantalla: el radio tambien (el mismo difuminado al 100 % que al 150 %)
+                    v.blur_img = _blur_image(gi, max(1, int(round(blur_px * (gi.devicePixelRatio() or 1.0)))))
                     v.blur_at = QPoint(0, 0)
                     img_new = True
                 v._grab_crc = crc
@@ -14511,7 +14514,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 211                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 212                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -19461,7 +19464,9 @@ def _blur_image(img, r, keep_peak=0.0, fast=False, small=False):
     out = QImage(np.clip(arr, 0, 255).astype(np.uint8).tobytes(), w, h, w * 4, QImage.Format_ARGB32_Premultiplied).copy()
     if half and not small:          # [PACK206] small: sin ampliar (quien la pinta la amplia al ponerla, y solo donde se ve)
         out = out.scaled(W, H, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-    return out
+    if out.width() == W and out.height() == H:
+        out.setDevicePixelRatio(img.devicePixelRatio())          # [PACK212] la misma escala de pantalla que la original (si no, en una
+    return out                                                    # pantalla al 125 % se pintaba 1,25 veces mas grande y desplazada)
 
 
 # ---------------------------------------------------------------- [PACK131] marcos editables
@@ -32408,6 +32413,7 @@ class WidgetManager(QObject):
     def _veil_sig(self, order=None):
         op = (int(self.get_cable_param('_under_op')), int(self.get_cable_param('_under_blur')), int(self.get_cable_param('_under_blur_family')))
         return (op, tuple((w.widget_id, tuple(w.geometry().getRect()), getattr(w, '_zstamp', 0), bool(w.always_on_top), w.layer1_editor.isVisible(),
+                           round(float(w.devicePixelRatioF()), 3),          # [PACK212] al pasar a un monitor con otra escala, se rehace
                            w.layer2_label.pixmap().cacheKey() if w.layer2_label.pixmap() is not None else 0)
                           for w in (order if order is not None else self._veil_order())))
 

@@ -1,3 +1,10 @@
+## Pack 212 · 2026-11-15
+- **Arreglo: en un monitor con otra escala (125 %, 150 %…), lo que se ve difuminado bajo un widget transparente salía más grande y desplazado.** El programa captura el widget de debajo en los píxeles reales de ese monitor y lo difumina. La imagen difuminada perdía la escala del monitor, así que se pintaba 1,25 o 1,5 veces más grande, desplazándose más cuanto más lejos de la esquina del widget. Por eso el texto difuminado no coincidía con el nítido.
+  - Ahora la imagen difuminada conserva la escala del monitor y queda en su sitio. Comprobado al 100 %, 125 % y 150 %: el centro del texto difuminado y el del nítido coinciden con menos de medio píxel de diferencia.
+  - El radio del difuminado se mide igual en todos los monitores: 5 px se ven como 5 px tanto al 100 % como al 150 %.
+  - Al pasar un widget a un monitor con otra escala, lo difuminado se vuelve a capturar con la escala nueva.
+  - Los cables y flechas vistos a través de un transparente ya se pintaban bien con escala; no cambian.
+
 ## Pack 211 · 2026-11-15
 - **Arreglo: el Pack 210 hacía más lentos algunos arrastres.** Cuando un cable del grupo pasaba bajo un widget transparente que no se movía, las dos ventanas de cables se separaban y se volvían a juntar en cada paso. Así se repintaba todo varias veces, y además una ventana aparecía y desaparecía. Es lo que mostraba tu registro: los cables pasaron de 50 a 78-87 ms por paso.
   - Ahora se decide cable a cable. Si un cable pasa bajo un transparente quieto, va hacia otra pantalla o se sale de lo pintado, pasa a la ventana quieta y se repinta allí. Los demás siguen desplazándose con el grupo, y nada se deshace a cada paso.
