@@ -1,3 +1,14 @@
+## Pack 210 · 2026-11-15
+- **Arreglo: un widget transparente que entraba bajo otro transparente se volvía entero más tenue.** Lo correcto (desde el Pack 136) es que solo se atenúe la parte que queda debajo, al 40 % por defecto, para que se distinga cuál está encima. Cuando además había difuminado (Pack 187), un fallo al pintar el velo quitaba el recorte y atenuaba el widget entero. Desde el Pack 209, con el padre y los hijos también difuminados, pasaba también entre widgets emparentados, como en el vídeo.
+  - Ahora solo se atenúa y se difumina la franja cubierta; el resto del widget conserva su opacidad.
+  - Si no quieres ninguna atenuación, pon al 100 % *Cables ▸ «Un widget bajo otro transparente» ▸ «Opacidad de un widget transparente que queda bajo otro widget transparente»*.
+- **Arrastrar una rama cuyo padre se queda quieto va mucho más fluido.** El registro mostraba que, en esos arrastres, los cables se llevaban 50,3 ms de los 54,7 ms de cada paso. Mover las ventanas costaba 4,3 ms y ya se hacía en una sola operación de Windows. El desplazamiento sin repintar del Pack 207 solo funcionaba si todos los cables iban dentro del grupo. Basta un cable hacia un padre de fuera (el caso del vídeo) para que se repintaran todos en cada paso.
+  - Ahora, al empezar el arrastre, los cables se reparten en dos ventanas. La de los cables de dentro del grupo se desplaza con él, sin repintarse. La otra se queda quieta y en cada paso repinta solo la franja de los cables que van hacia fuera.
+  - Lo que se ve es lo mismo que antes (comprobado píxel a píxel), también con varios monitores. Al soltar vuelve a haber una sola ventana.
+  - Si un widget transparente quieto queda encima de un cable del grupo, si las cuerdas se balancean o si el grupo cambia de pantalla, se repinta todo como siempre.
+  - Medido aquí, arrastrando 22 widgets con su padre fuera (CPU por fotograma): de 13,9 a 4,8 ms; con widgets transparentes, de 18,7 a 8,9 ms.
+- **Varios monitores:** una ventana de cables desplazada con su grupo ya no pinta en el monitor de al lado, donde ya hay otra ventana con su parte. Ahí el mismo cable podía verse dos veces, más opaco.
+
 ## Pack 209 · 2026-11-14
 - **Difuminado: el padre y los hijos directos de un widget transparente también se ven difuminados a través de él**, como cualquier otro widget que quede debajo.
   - Desde el Pack 187 se veían nítidos a propósito, para que se distinguiera la relación inmediata.

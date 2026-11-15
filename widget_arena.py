@@ -9107,8 +9107,24 @@ class ConnectorOverlay(QWidget):
         self._grad_cache = {}                      # [PACK109] paradas de color del degradado por (colores, ajustes): no se recalculan cada fotograma
         self._rope_fast = True                     # [PACK109] hay una cuerda moviendose deprisa (si no, el balanceo suave va a menos fotogramas)
         self._flush_log_t = 0.0
-        self._edge_bb = {}                         # [PACK207] (padre, hijo) -> (recuadro global del cable, posicion de cada extremo)
-        self._paint_anchor = None                  # [PACK207] (widget arrastrado, su posicion, la de esta ventana, la de la corona) al pintar
+        _ebb = getattr(manager, '_cable_edge_bb', None)
+        if _ebb is None:
+            _ebb = manager._cable_edge_bb = {}
+        self._edge_bb = _ebb                       # [PACK207] [PACK210] (padre, hijo) -> (recuadro global del cable, posicion de cada extremo); comun
+        self.edge_filter = None                    # [PACK210] None (todos) | ('in', M) (solo los de dentro del grupo M) | ('out', M) (los demas)
+        self._home_scr = None                      # [PACK210] su pantalla: nunca pinta fuera de ella
+        self._disp = {}                            # [PACK210] (padre, hijo) -> recuadro (global) de lo que se ve de ese cable en esta ventana
+        self._disp_org = QPoint(0, 0)              # posicion de la ventana cuando se anoto _disp
+        self._disp_key = None                      # (widget, filtro) del ultimo repintado
+        self._grp_pos = None                       # posicion del widget arrastrado en el ultimo repintado completo
+        self._rope_hold = 0.0
+
+    def _disp_sync(self):
+        """[PACK210] Si la ventana se ha desplazado, lo que se ve en ella tambien."""
+        d = self.pos() - self._disp_org
+        if d.x() or d.y():
+            self._disp = {k: r.translated(d) for k, r in self._disp.items()}
+        self._disp_org = QPoint(self.pos())
 
     def _pending_fire(self):
         self._last_req = time.monotonic()
@@ -9187,7 +9203,7 @@ class ConnectorOverlay(QWidget):
         if QApplication.activePopupWidget() is not None:       # menu desplegado: no se compite con el
             self._rope_last = now
             return
-        if getattr(self, '_rope_hold', 0.0) > now:              # [PACK209] arrastrando un grupo entero con las cuerdas quietas
+        if getattr(self, '_rope_hold', 0.0) > now or (getattr(self, 'edge_filter', None) or ('', None))[0] == 'in':     # [PACK209] [PACK210] cuerdas del grupo, quietas
             self._rope_last = now
             return
         iv = self._rope_interval()
@@ -9195,8 +9211,8 @@ class ConnectorOverlay(QWidget):
             self._rope_timer.setInterval(iv)
         if (now - self._paint_t0) * 1000.0 < 0.8 * iv:     # el arrastre u otro repintado acaba de pintar: no se duplica
             return
-        if self._rope_box is not None and not self.drag_id:
-            self.update(self._rope_box)                      # solo la zona de los cables
+        if self._rope_box is not None and (not self.drag_id or getattr(self, 'edge_filter', None) is not None):
+            self.update(self._rope_box)                      # solo la zona de los cables [PACK210] (tambien la capa quieta de un arrastre)
         else:
             self.update()
 
@@ -9254,8 +9270,12 @@ class ConnectorOverlay(QWidget):
 
         preview_all = bool(getattr(self.manager, '_cable_preview_all', False)) and not self.blank
         target_id = None if self.blank else (self.drag_id or self.source_id)
-        self._paint_anchor = None                        # [PACK207] (se rellena al acabar de pintar)
-        _drawn_box = [None]                              # [PACK207] recuadro de lo pintado (coordenadas de esta ventana)
+        _full = event.rect().contains(self.rect())       # [PACK210] repintado completo o solo una zona
+        self._disp_sync()
+        if _full:
+            self._disp = {}
+        self._disp_key = None
+        _drawn_edges = []
         if not target_id:
             painter.end()
             return
@@ -9295,12 +9315,33 @@ class ConnectorOverlay(QWidget):
             edges_to_draw_dimmed[:] = [] if _pd else pv_edges     # continuo y grueso (estilo 'hacia el padre')
             edges_to_draw_normal[:] = pv_edges if _pd else []     # discontinuo y fino (estilo 'hacia los hijos')
 
+        _n_all = len(edges_to_draw_normal) + len(edges_to_draw_dimmed)
+        # [PACK210] capa partida al arrastrar un grupo: esta ventana pinta solo los cables de dentro del grupo ('in') o los demas ('out')
+        _ef = getattr(self, 'edge_filter', None)
+        if _ef is not None and not preview_all:
+            _M, _kin = _ef[1], (_ef[0] == 'in')
+            edges_to_draw_normal = [e for e in edges_to_draw_normal if (e[0] in _M and e[1] in _M) == _kin]
+            edges_to_draw_dimmed = [e for e in edges_to_draw_dimmed if (e[0] in _M and e[1] in _M) == _kin]
+        _dg = None
+        if not _full:                                    # [PACK210] solo una zona: solo los cables que pasan por ella
+            _dg = event.region().translated(self.pos())
+            edges_to_draw_normal = [e for e in edges_to_draw_normal if _dg.intersects(self.manager._cable_edge_est(e, 60))]
+            edges_to_draw_dimmed = [e for e in edges_to_draw_dimmed if _dg.intersects(self.manager._cable_edge_est(e, 60))]
+        self._disp_key = (target_id, _ef, bool(self.faint), round(float(self._fade), 2), bool(self.drag_id))
         if not edges_to_draw_normal and not edges_to_draw_dimmed:
             painter.end()
             return
 
         painter.setRenderHint(QPainter.Antialiasing)
         offset = self.geometry().topLeft()
+        _hclip = None                                    # [PACK210] nunca se pinta fuera de su pantalla: una ventana desplazada con su grupo
+        try:                                             # puede asomar a la de al lado, que ya pinta su parte
+            _hs = getattr(self, '_home_scr', None)
+            if _hs is not None and not _hs.geometry().contains(self.geometry()):
+                _hclip = _hs.geometry().translated(-offset.x(), -offset.y()).intersected(self.rect())
+                painter.setClipRect(_hclip)
+        except RuntimeError:
+            _hclip = None
         painter.setOpacity(self._fade)
         if self.faint:
                 painter.setOpacity(self.manager.get_cable_hover_opacity() * self._fade)
@@ -9308,8 +9349,11 @@ class ConnectorOverlay(QWidget):
         # si el overlay quedara por encima de una nota de otra banda, esa zona se recorta.
         # Los cables van por debajo de las notas de su banda Z (siempre encima / normal): ver _place_overlay_under.
         st = CABLE_STYLE
-        self._n_edges = len(edges_to_draw_normal) + len(edges_to_draw_dimmed)
-        _lod = self._lod_for(self._n_edges)      # [PACK103]
+        self._n_edges = _n_all
+        if _ef is not None or not _full:                 # [PACK210] capa partida o solo una franja: el mismo nivel de detalle que lo que ya se ve
+            _lod = self._lod
+        else:
+            _lod = self._lod_for(self._n_edges)      # [PACK103]
         if _lod >= 3:
             painter.setRenderHint(QPainter.Antialiasing, False)      # [PACK109] nivel 'Minima': bordes sin suavizar (pintar es mucho mas barato)
         _nc = {}
@@ -9377,8 +9421,10 @@ class ConnectorOverlay(QWidget):
                 path = _cable_path(start_pt, end_pt, self.manager.cable_curve(_clen), self.manager.cable_fx(_clen))      # [PACK90] la curvatura mengua con la longitud; [PACK99] efectos peso / resorte
                 _bb = path.boundingRect()          # [PACK207]
             try:                                        # [PACK207] recuadro del cable (global) y donde estaban sus extremos
-                self._edge_bb[(p_id, c_id)] = (_bb.toAlignedRect().translated(offset), p_win.geometry().topLeft(), c_win.geometry().topLeft())
-                _drawn_box[0] = _bb.toAlignedRect() if _drawn_box[0] is None else _drawn_box[0].united(_bb.toAlignedRect())
+                _peb = self._edge_bb.get((p_id, c_id))          # [PACK210] ha cambiado desde la ultima vez (se ha movido un extremo)?
+                _ptl, _ctl = p_win.geometry().topLeft(), c_win.geometry().topLeft()
+                self._edge_bb[(p_id, c_id)] = (_bb.toAlignedRect().translated(offset), _ptl, _ctl)
+                _drawn_edges.append(((p_id, c_id), _peb is None or _peb[1] != _ptl or _peb[2] != _ctl))
             except Exception:
                 pass
             op_mul, w_main = self.manager.cable_length_style(_clen)
@@ -9476,7 +9522,7 @@ class ConnectorOverlay(QWidget):
         # (el parametro is_dimmed de draw_edge significa ahora "estilo punteado")
         _in_op = int(self.manager.get_cable_param('_cable_inside_op'))        # [PACK134] el cable dentro de los widgets que une
         _in_bl = int(self.manager.get_cable_param('_cable_inside_blur'))
-        _ov_rect = self.rect()
+        _ov_rect = self.rect() if _hclip is None else _hclip          # [PACK210]
 
         _ir_memo = {}
 
@@ -9592,21 +9638,32 @@ class ConnectorOverlay(QWidget):
         self._rope_fast = _rope_fast[0]
         if _rope_live[0]:
             self._rope_keepalive()
-        _cw = None
         if self.manager.get_show_crown():
             self.manager.crown_sync(target_id, note_color, self._fade, painter.opacity())
-            _cw = getattr(self.manager, '_crown_win', None)
         else:
             self.manager.crown_hide()
         painter.end()
-        try:                                             # [PACK207] donde estaban el widget arrastrado, esta ventana y la corona al pintar
+        try:                                             # [PACK210] lo que se ve de cada cable en esta ventana y donde estaba el widget arrastrado
+            _mg = 30 + 3 * int(self.manager.get_cable_param('_under_blur'))
+            miss = QRegion()
+            for e, chg in _drawn_edges:
+                g_ = self._edge_bb.get(e)
+                if g_ is None:
+                    continue
+                r_ = g_[0].adjusted(-_mg, -_mg, _mg, _mg)
+                self._disp[e] = r_
+                if _dg is not None and chg:              # lo de un cable que no ha cambiado ya esta bien fuera de la zona
+                    m_ = QRegion(r_).subtracted(_dg)
+                    if not m_.isEmpty():
+                        miss = miss.united(m_)
+            if not miss.isEmpty():                       # un cable se salio de la zona repintada: lo que falta, en el siguiente fotograma
+                _ml = miss.translated(-self.pos().x(), -self.pos().y())
+                QTimer.singleShot(0, lambda m=_ml: self.update(m))
             _tw = self.manager.widgets.get(target_id)
-            _cb = (_drawn_box[0].adjusted(-34, -34, 34, 34).translated(self.pos()) if _drawn_box[0] is not None else QRect())
-            self._paint_anchor = ((target_id, QPoint(_tw.pos()), QPoint(self.pos()),
-                                   QPoint(_cw.pos()) if (_cw is not None and _cw.isVisible()) else None,
-                                   _cb, QRect(self.geometry())) if _tw is not None else None)
+            if _full and _tw is not None:
+                self._grp_pos = QPoint(_tw.pos())
         except Exception:
-            self._paint_anchor = None
+            pass
 
 
 from PySide6.QtGui import QKeySequence
@@ -14401,7 +14458,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 209                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 210                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -19108,12 +19165,13 @@ class _UnderVeil(QWidget):
             return
         p = QPainter(self)
         if not self.blur_region.isEmpty() and self.blur_img is not None:          # [PACK187] se borra lo nitido y se pone lo difuminado
-            p.setCompositionMode(QPainter.CompositionMode_Source)
+            p.save()                                    # [PACK210] save/restore: con setClipping(False) el recorte siguiente (la zona que
+            p.setCompositionMode(QPainter.CompositionMode_Source)          # se atenua) no se aplicaba y se atenuaba el widget entero
             p.setClipRegion(self.blur_region)
             p.fillRect(self.rect(), Qt.transparent)
             p.setCompositionMode(QPainter.CompositionMode_SourceOver)
             p.drawImage(self.blur_at, self.blur_img)
-            p.setClipping(False)
+            p.restore()
         if not self.region.isEmpty() and self.alpha > 0:
             p.setCompositionMode(QPainter.CompositionMode_DestinationOut)
             p.setClipRegion(self.region)
@@ -24246,6 +24304,7 @@ class ConnectorOverlayGroup:
             except TypeError:
                 pass
             ov.source_id, ov.drag_id, ov.faint = self._source_id, self._drag_id, self._faint
+            ov._home_scr = scr                          # [PACK210]
             self.overlays[scr] = ov
             QTimer.singleShot(1500, lambda o=ov: self._prewarm(o))
 
@@ -29101,6 +29160,8 @@ class WidgetManager(QObject):
         if not hasattr(self, 'connector_overlay'): return
         grp = self.connector_overlay
         prev_target = grp.drag_id or grp.source_id
+        if not (is_drag and prev_target == widget_id):
+            self._cable_split_end()                      # [PACK210] fuera del arrastre de grupo: una sola ventana de cables
         source_win = self.widgets.get(widget_id)
         flags = Qt.Tool | Qt.FramelessWindowHint | Qt.WindowTransparentForInput
         if source_win is not None and source_win.always_on_top:
@@ -29159,74 +29220,236 @@ class WidgetManager(QObject):
                 else:
                     ov.update()
 
-    def _cable_drag_rigid(self, widget_id, src):
-        """[PACK207] Se arrastra un grupo y TODOS los cables que se ven van entre widgets que se mueven juntos: el dibujo no cambia, solo se
-        desplaza. La ventana de los cables (y la corona) se mueve con el grupo, sin repintarla: van pegados y no cuesta nada. Solo se
-        repinta, a un ritmo que el equipo aguanta, si las cuerdas tienen fisica (para que se balanceen). No vale si hay que cubrir otra zona
-        o pantalla, o si los cables quedan bajo un widget transparente que no se mueve con ellos (lo que se ve a traves cambiaria)."""
+    def _cable_edge_est(self, e, margin=40):
+        """[PACK210] Recuadro (global) donde debe de estar ahora el cable e = (padre, hijo): el de la ultima vez que se pinto, desplazado lo
+        que se ha movido cada extremo (si no se ha pintado nunca, el de los dos widgets)."""
+        pw, cw = self.widgets.get(e[0]), self.widgets.get(e[1])
+        if pw is None or cw is None:
+            return QRect()
+        eb = (getattr(self, '_cable_edge_bb', None) or {}).get(e)
+        if eb is None:
+            return pw.geometry().united(cw.geometry()).adjusted(-margin, -margin, margin, margin)
+        return eb[0].translated(pw.geometry().topLeft() - eb[1]).united(eb[0].translated(cw.geometry().topLeft() - eb[2])).adjusted(
+            -margin, -margin, margin, margin)
+
+    def _cable_edges_for(self, widget_id):
+        """[PACK210] Los cables que se ven para 'widget_id' (igual que al pintarlos): hacia todos sus descendientes y la linea de antepasados."""
+        out, seen, stack = [], set(), [widget_id]
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            for cid in (self.get_children(cur) or []):
+                out.append((cur, cid))
+                stack.append(cid)
+        cur, seen2 = widget_id, set()
+        while cur and cur not in seen2:
+            seen2.add(cur)
+            pid = (self.global_state.get(cur) or {}).get('parent_id')
+            if not pid or pid not in self.widgets:
+                break
+            out.append((pid, cur))
+            cur = pid
+
+        def vis(k):
+            w = self.widgets.get(k)
+            return w is not None and w.isVisible()
+        return [e for e in out if vis(e[0]) and vis(e[1])]
+
+    def _cable_top_ancestor(self, widget_id):
+        cur, seen = widget_id, set()
+        while cur and cur not in seen:
+            seen.add(cur)
+            pid = (self.global_state.get(cur) or {}).get('parent_id')
+            if not pid or pid not in self.widgets:
+                return cur
+            cur = pid
+        return cur
+
+    def _cable_split_end(self, repaint=True):
+        """[PACK210] Fin de la capa partida: una sola ventana con todos los cables otra vez."""
+        grp = getattr(self, 'connector_overlay', None)
+        if grp is None or getattr(grp, '_split', None) is None:
+            return
+        grp._split = None
+        for ov in grp.overlays.values():
+            if getattr(ov, 'edge_filter', None) is not None:
+                ov.edge_filter = None
+                ov._rope_hold = 0.0
+                if repaint and ov.isVisible():
+                    ov.repaint()                         # primero la ventana completa...
+        fx = getattr(grp, '_fixed_ov', None)
+        if fx is not None:
+            if fx.isVisible():                           # ...y despues se quita la otra (sin un fotograma con cables de menos)
+                fx.blank = True
+                fx.repaint()
+                fx.hide()
+                fx.blank = False
+            fx.edge_filter = None
+
+    def _cable_fx_fit(self, fx, edges, sg):
+        rect = QRect()
+        for e in edges:
+            rect = rect.united(self._cable_edge_est(e, 80))
+        rect = rect.adjusted(-200, -200, 200, 200).intersected(sg)
+        if rect.isEmpty():
+            return False
+        if fx.geometry() != rect:
+            if fx.isVisible():
+                fx.blank = True
+                fx.repaint()
+            fx.setGeometry(rect)
+            fx.blank = False
+        fx.repaint()
+        return True
+
+    def _cable_split_start(self, widget_id, src, ov, M, other):
+        """[PACK210] Empieza la capa partida: 'ov' se queda con los cables de dentro del grupo (y se desplazara con el) y otra ventana, quieta,
+        con los que van a widgets de fuera."""
+        grp = self.connector_overlay
+        fx = getattr(grp, '_fixed_ov', None)
+        if fx is None:
+            fx = grp._fixed_ov = ConnectorOverlay(self)
         try:
-            if src is None or not getattr(src, '_is_window_dragging', False) or getattr(self, '_cable_preview_all', False):
+            fx.setScreen(ov.screen())
+        except TypeError:
+            pass
+        if fx.windowFlags() != ov.windowFlags():
+            fx.setWindowFlags(ov.windowFlags())
+        fx.source_id, fx.drag_id, fx.faint, fx._fade = ov.source_id, ov.drag_id, ov.faint, ov._fade
+        fx._lod, fx._lod_t = ov._lod, ov._lod_t          # el mismo nivel de detalle que la ventana de la que sale
+        fx._home_scr = getattr(ov, '_home_scr', None)
+        sg = ov.screen().geometry()
+        fx.edge_filter = ('out', M)
+        rect = QRect()
+        for e in other:
+            rect = rect.united(self._cable_edge_est(e, 80))
+        rect = rect.adjusted(-200, -200, 200, 200).intersected(sg)
+        if rect.isEmpty():
+            fx.edge_filter = None
+            return False
+        fx.blank = True
+        fx.setGeometry(rect)
+        if not fx.isVisible():
+            fx.show()
+        self._place_overlay_under(src, fx)
+        fx.blank = False
+        fx.repaint()
+        for o2 in grp.overlays.values():                 # las otras pantallas: solo los cables de fuera del grupo (se quedan quietas)
+            if o2 is not ov and o2.isVisible():
+                o2.edge_filter = ('out', M)
+                o2.repaint()
+        ov.edge_filter = ('in', M)
+        ov.repaint()
+        grp._split = {'target': widget_id, 'M': M, 'fx': fx}
+        ov._rope_hold = time.monotonic() + 0.25
+        return True
+
+    def _cable_drag_rigid(self, widget_id, src):
+        """[PACK207] [PACK210] Arrastre de un grupo: los cables de DENTRO del grupo no cambian, solo se desplazan; su ventana se mueve con el,
+        sin repintar (y la corona, si es del grupo). Si ademas hay cables hacia widgets de fuera (el padre, que se queda quieto), van en otra
+        ventana quieta que solo repinta la franja de los que cambian. Se repinta todo, como siempre, si hay que cubrir otra zona o pantalla, si
+        un widget transparente quieto queda encima de un cable del grupo (lo que se ve a traves cambiaria) o si las cuerdas se balancean."""
+        try:
+            grp = self.connector_overlay
+            if (src is None or not getattr(src, '_is_window_dragging', False) or getattr(self, '_cable_preview_all', False)
+                    or (self.get_cable_param('_rope_amount') > 0 and int(self.get_cable_param('_rope_group_drag')) == 1)):
+                self._cable_split_end()
                 return False
             mv = getattr(src, '_dragging_children_windows', None)
-            if mv is None:
+            _c = src.geometry().center()
+            ov = next((o for s_, o in grp.overlays.items() if o.isVisible() and s_.geometry().contains(_c)), None)
+            if mv is None or ov is None or ov.blank:
+                self._cable_split_end()
                 return False
-            moving = {src.widget_id}
-            moving.update(w.widget_id for w in mv)
-            rel = self._cable_related_ids(widget_id)
-            if not rel or not set(rel) <= moving:
+            others = [o for o in grp.overlays.values() if o.isVisible() and o is not ov]       # otras pantallas con cables
+            M = frozenset([src.widget_id] + [w.widget_id for w in mv])
+            edges = self._cable_edges_for(widget_id)
+            if not edges:
+                self._cable_split_end()
                 return False
-            grp = self.connector_overlay
-            d_ = None
-            plan = []
-            for screen, ov in grp.overlays.items():
-                sg = screen.geometry()
-                anc = getattr(ov, '_paint_anchor', None) if ov.isVisible() else None
-                if ov.isVisible() and (anc is None or anc[0] != widget_id or ov.blank):
+            other = [e for e in edges if not (e[0] in M and e[1] in M)]
+            if others and not other:                     # cables del grupo que pasan a otra pantalla: no se pueden desplazar
+                self._cable_split_end()
+                return False
+            sp = getattr(grp, '_split', None)
+            if sp is not None and (sp['target'] != widget_id or sp['M'] != M or not other):
+                self._cable_split_end()
+                sp = None
+            if other and sp is None:
+                return self._cable_split_start(widget_id, src, ov, M, other)
+            want = ('in', M) if other else None
+            if getattr(ov, '_disp_key', None) != (widget_id, want, False, 1.0, True) or getattr(ov, '_grp_pos', None) is None:
+                self._cable_split_end()
+                return False
+            ov._disp_sync()
+            d = src.pos() - ov._grp_pos
+            if not (d.x() or d.y()):
+                return True
+            sg = ov.screen().geometry()
+            content = QRect()
+            for r in ov._disp.values():
+                content = content.united(r)
+            # lo que se ve en la ventana del grupo, desplazado, tiene que caber (lo que no se pinto por quedar fuera no puede aparecer)
+            if not QRegion(content).subtracted(QRegion(ov.geometry())).translated(d).intersected(QRegion(sg)).isEmpty():
+                self._cable_split_end()
+                return False
+            for screen, o2 in grp.overlays.items():          # y no puede llegar a otra pantalla
+                if o2 is not ov and not content.isNull() and content.translated(d).intersects(screen.geometry()):
+                    self._cable_split_end()
                     return False
-                if anc is not None:
-                    d_ = src.pos() - anc[1]
-                    # lo pintado, desplazado, tiene que caber en la ventana desplazada (en lo que se ve de esta pantalla)
-                    miss = QRegion(anc[4]).subtracted(QRegion(anc[5])).translated(d_).intersected(QRegion(sg))
-                    if not miss.isEmpty():
-                        return False
-                    plan.append((ov, anc[2] + d_, anc[5].translated(d_), anc))
-            if d_ is None:
-                return False
-            for screen, ov in grp.overlays.items():          # y no puede llegar a una pantalla cuya ventana no esta
-                if not ov.isVisible():
-                    for _o, _p, _nr, anc in plan:
-                        if anc[4].translated(src.pos() - anc[1]).intersects(screen.geometry()):
-                            return False
-            if not plan:
-                return False
-            if int(self.get_cable_param('_under_blur')) > 0:
-                for k, w in self.widgets.items():
-                    if k in moving or not w.isVisible():
+            if int(self.get_cable_param('_under_blur')) > 0 and ov._disp:
+                rs = list(ov._disp.values())
+                for k, w in self.widgets.items():        # un transparente quieto encima de un cable del grupo (antes o despues)
+                    if k in M or not w.isVisible():
                         continue
-                    if any(w.geometry().intersects(nr) for _o, _p, nr, _a in plan) and w.paper_translucent():
+                    g = w.geometry()
+                    if any(g.intersects(r) or g.intersects(r.translated(d)) for r in rs) and w.paper_translucent():
+                        self._cable_split_end()
                         return False
-            rope = self.get_cable_param('_rope_amount') > 0 and int(self.get_cable_param('_rope_group_drag')) == 1
-            if not rope:                                 # [PACK209] cuerdas quietas: van con el grupo; al soltar, en reposo (sin columpiarse de golpe)
-                for k_, r_ in list((getattr(self, '_ropes', None) or {}).items()):
-                    if isinstance(k_, tuple) and (k_[0] in moving or k_[-1] in moving):
-                        r_.t = None
-            _hold = time.monotonic() + 0.25
-            for ov, npos, nr, anc in plan:
-                if not rope:
-                    ov._rope_hold = _hold
-                if ov.pos() != npos:
-                    ov.move(npos)
-                if anc[3] is not None:
-                    cw = getattr(self, '_crown_win', None)
-                    if cw is not None and cw.isVisible():
-                        cp = anc[3] + (src.pos() - anc[1])
-                        if cw.pos() != cp:
-                            cw.move(cp)
-                if rope:
-                    ov.request_update(slow=True)     # las cuerdas se balancean a su ritmo (~15 Hz, sin pasar de ~25 % del tiempo)
+            for k_, r_ in list((getattr(self, '_ropes', None) or {}).items()):     # [PACK209] cuerdas del grupo: quietas, en reposo al soltar
+                if isinstance(k_, tuple) and k_[0] in M and k_[-1] in M:
+                    r_.t = None
+            ov._rope_hold = time.monotonic() + 0.25
+            ov.move(ov.pos() + d)
+            ov._grp_pos = QPoint(src.pos())
+            cw = getattr(self, '_crown_win', None)
+            if cw is not None and cw.isVisible() and self._cable_top_ancestor(widget_id) in M:
+                cw.move(cw.pos() + d)
+            if other:
+                fx = sp['fx']
+                ch = [e for e in other if (e[0] in M) != (e[1] in M)]
+                ests = [(e, self._cable_edge_est(e, 80)) for e in ch]
+                need = QRect()
+                for _e, est in ests:
+                    need = need.united(est)
+                for L in [fx] + others:                  # las capas quietas: solo la franja de los cables que cambian
+                    L._disp_sync()
+                    lg = L.geometry()
+                    lsg = L.screen().geometry() if L.screen() is not None else lg
+                    if not need.isNull() and not lg.contains(need.intersected(lsg)):
+                        if L is fx:
+                            self._cable_fx_fit(fx, other, sg)
+                            continue
+                        self._cable_split_end()          # otra pantalla que se queda corta: se recoloca todo como siempre
+                        return False
+                    dirty = QRegion()
+                    for e, est in ests:
+                        dirty = dirty.united(QRegion(est))
+                        old = L._disp.get(e)
+                        if old is not None:
+                            dirty = dirty.united(QRegion(old))
+                    dirty = dirty.intersected(QRegion(lg))
+                    if not dirty.isEmpty():
+                        L.repaint(dirty.translated(-lg.x(), -lg.y()))
             return True
         except Exception as e:
             log_warn("Cables", "arrastre sin repintar: %s" % e)
+            try:
+                self._cable_split_end()
+            except Exception:
+                pass
             return False
 
     def _cable_z_arm(self):
@@ -30427,6 +30650,7 @@ class WidgetManager(QObject):
     def _release_cables_now(self):
         """Fin de un arrastre o del hover sobre el control de plegar: si el cursor sigue sobre una nota con
         conexiones, los cables pasan DIRECTAMENTE al modo tenue de hover, sin ocultarse y volver a aparecer."""
+        self._cable_split_end()                          # [PACK210]
         hit = None
         try:
             if getattr(self, 'connector_overlay', None) is not None and not getattr(self, '_cable_preview_active', False):
@@ -30449,6 +30673,7 @@ class WidgetManager(QObject):
         grp.fade_to(0.0, ms)
 
     def hide_cables(self):
+        self._cable_split_end(repaint=False)             # [PACK210]
         self.crown_hide()
         if hasattr(self, 'connector_overlay'):
             ov = self.connector_overlay
