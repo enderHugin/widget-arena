@@ -50,6 +50,8 @@ Orden propuesto. `[ ]` pendiente · `[x]` hecho (con el pack).
 - [ ] Comentarios con Telegram: crear un canal público con grupo de debate enlazado, publicar un mensaje y poner `canal/número` en `SITE.telegram` de `site/index.html`.
 
 ## Rendimiento (pendiente)
+- [ ] Prueba t211 (capa partida con un transparente encima): con mucha carga en paralelo, a veces quedan 36 px distintos de ~2400 entre las dos ventanas y una repintada entera. Pasa también con el Pack 212. Mirar si queda una franja sin repintar cuando se juntan pasos del arrastre.
+- [ ] Monitores con distinta escala (Pack 213): confirmar en Windows real con la línea `[pantallas]` del registro.
 - [ ] Primera vista previa del mapa de cada sesión: dibuja todas las notas de una vez (en el registro, 0,66 s con el programa parado). Repartirla en trozos para que no se note.
 - [ ] Cables vistos difuminados a través de widgets transparentes: es lo que más cuesta pintar cuando hay muchos encima de los cables (≈1,5 ms por cable y repintado). Buscar una forma más barata sin cambiar el aspecto.
 - [ ] Al arrastrar, «entre pasos» (pintar los widgets y enviarlos a la pantalla) se lleva ~30 ms en el PC del usuario: medir qué parte es de Windows.

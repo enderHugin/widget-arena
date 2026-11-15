@@ -1,3 +1,16 @@
+## Pack 213 · 2026-11-15
+- **Monitores con distinta escala: ahora un widget mide lo mismo en todos.** Hasta ahora cada monitor usaba su propia escala de Windows. Un widget conservaba su tamaño «lógico», así que en el monitor al 125 % o al 150 % se dibujaba 1,25 o 1,5 veces más grande. Al cruzar de un monitor a otro saltaba de tamaño, según en qué monitor estuviera la mayor parte (en tu vídeo, de unos 555 a unos 695 píxeles de ancho).
+  - El Pack 212 no tocaba el tamaño de las ventanas: lo he comprobado línea a línea.
+  - Ahora, en Windows, todos los monitores usan la misma escala: la del monitor con menos escala. Un widget ya no cambia de tamaño al cruzar.
+  - Los menús y diálogos del programa también se ven igual en todos los monitores, así que en el de más escala se verán más pequeños que los de otros programas.
+  - Al abrirlo la primera vez con este pack, lo que tengas en un monitor de más escala se verá más pequeño y más cerca de la esquina superior izquierda de ese monitor (el tamaño y las distancias se reducen a la vez). En el monitor de menos escala no cambia nada.
+  - Para volver a lo de antes: *Ajustes ▸ Apariencia ▸ Monitores con distinta escala ▸ Cada monitor con su escala (como Windows)*. Se aplica al reiniciar, y el programa ofrece reiniciar en ese momento. Al volver, todo recupera su tamaño y su sitio de antes.
+  - Al arrancar, el registro de depuración anota una línea `[pantallas]` con el modo y los monitores (tamaño, posición y escala). Si algo se ve raro, mándamela.
+  - Si se ponen a mano variables de escala de Qt (`QT_SCALE_FACTOR`, etc.), el programa no las toca. En macOS y Linux no cambia nada.
+- **Rendimiento, sin ningún cambio en la imagen:** al pedir repintar los cables con un hueco mínimo entre fotogramas, el temporizador que esperaba su turno se disparaba aunque el repintado ya se hubiera hecho, y entonces repintaba la ventana de cables entera. Ahora no.
+  - Arrastrando un grupo bajo widgets transparentes, los repintados enteros de la ventana de cables pasan de 10 a 1.
+  - El tiempo total pintando cables baja entre un 17 y un 21 %.
+
 ## Pack 212 · 2026-11-15
 - **Arreglo: en un monitor con otra escala (125 %, 150 %…), lo que se ve difuminado bajo un widget transparente salía más grande y desplazado.** El programa captura el widget de debajo en los píxeles reales de ese monitor y lo difumina. La imagen difuminada perdía la escala del monitor, así que se pintaba 1,25 o 1,5 veces más grande, desplazándose más cuanto más lejos de la esquina del widget. Por eso el texto difuminado no coincidía con el nítido.
   - Ahora la imagen difuminada conserva la escala del monitor y queda en su sitio. Comprobado al 100 %, 125 % y 150 %: el centro del texto difuminado y el del nítido coinciden con menos de medio píxel de diferencia.

@@ -515,6 +515,127 @@ def _resolve_stored(p):
 
 # --- Definicion de Directorios ---
 DATA_DIR = os.path.join(ROOT_DATA_DIR, "data")
+SCREEN_SCALE_FILE = os.path.join(ROOT_DATA_DIR, "data", "pantallas.json")          # [PACK213]
+_SCREEN_SCALE_INFO = {}
+
+
+def screen_scale_mode():
+    """[PACK213] Monitores con distinta escala (Windows): 'igual' (por defecto) = todos con la misma escala (la del monitor de menos escala),
+    asi un widget mide lo mismo en todos; 'windows' = cada monitor con la suya (en uno al 125-150 % todo se ve 1,25-1,5 veces mas grande)."""
+    try:
+        with open(SCREEN_SCALE_FILE, encoding='utf-8') as f_:
+            m_ = json.load(f_).get('escala')
+        if m_ in ('igual', 'windows'):
+            return m_
+    except Exception:
+        pass
+    return 'igual'
+
+
+def set_screen_scale_mode(mode):
+    try:
+        d_ = {}
+        try:
+            with open(SCREEN_SCALE_FILE, encoding='utf-8') as f_:
+                d_ = json.load(f_) or {}
+        except Exception:
+            d_ = {}
+        d_['escala'] = mode
+        os.makedirs(os.path.dirname(SCREEN_SCALE_FILE), exist_ok=True)
+        with open(SCREEN_SCALE_FILE, 'w', encoding='utf-8') as f_:
+            json.dump(d_, f_)
+        return True
+    except Exception as e_:
+        print("AVISO [pantallas]: no se pudo guardar el modo de escala: %s" % e_)
+        return False
+
+
+def _win_min_scale():
+    """La escala MAS PEQUENA de los monitores conectados (1.0 = 100 %), preguntando a Windows como programa consciente de la escala de
+    cada monitor. Con esa para todos, en los monitores de mas escala todo se ve como en el de menos (y nada puede quedar fuera de su monitor:
+    alli todo se acerca a su esquina, no se aleja)."""
+    import ctypes
+    from ctypes import wintypes
+    user32, shcore = ctypes.windll.user32, ctypes.windll.shcore
+    old = None
+    try:
+        user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+        user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        old = user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))          # por monitor (v2), solo este hilo y solo para preguntar
+    except Exception:
+        old = None
+    try:
+        shcore.GetDpiForMonitor.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint)]
+        shcore.GetDpiForMonitor.restype = ctypes.c_long
+        dpis = []
+        MONENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+
+        def _cb(hmon, _hdc, _rc, _lp):
+            dx, dy = ctypes.c_uint(), ctypes.c_uint()
+            if shcore.GetDpiForMonitor(hmon, 0, ctypes.byref(dx), ctypes.byref(dy)) == 0 and dx.value:
+                dpis.append(dx.value)
+            return True
+        _proc = MONENUMPROC(_cb)
+        user32.EnumDisplayMonitors.argtypes = [ctypes.c_void_p, ctypes.c_void_p, MONENUMPROC, wintypes.LPARAM]
+        user32.EnumDisplayMonitors(None, None, _proc, 0)
+        if not dpis:
+            return None
+        return min(dpis) / 96.0
+    finally:
+        if old:
+            try:
+                user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(old))
+            except Exception:
+                pass
+
+
+def _screen_scale_setup():
+    """[PACK213] En Windows, con el modo 'igual': todos los monitores con la misma escala, la del de menos (Qt no reescala al cruzar a un monitor con
+    otra escala: el widget no cambia de tamano). Los textos se miden igual en todos (96 ppp, por la misma escala). Si alguna de estas
+    variables ya la ha puesto el usuario, no se toca nada."""
+    _SCREEN_SCALE_INFO.clear()
+    _SCREEN_SCALE_INFO['modo'] = screen_scale_mode()
+    if os.environ.get('WA_SCALE_SET') == '1':              # las puso este programa (al reiniciarse se heredan): se rehacen
+        for k_ in ('QT_ENABLE_HIGHDPI_SCALING', 'QT_SCALE_FACTOR', 'QT_FONT_DPI', 'WA_SCALE_SET'):
+            os.environ.pop(k_, None)
+    if sys.platform != 'win32':
+        _SCREEN_SCALE_INFO['nota'] = 'solo Windows'
+        return
+    if any(os.environ.get(k_) for k_ in ('QT_ENABLE_HIGHDPI_SCALING', 'QT_SCALE_FACTOR', 'QT_SCREEN_SCALE_FACTORS', 'QT_FONT_DPI')):
+        _SCREEN_SCALE_INFO['nota'] = 'variables de Qt puestas a mano: no se tocan'
+        return
+    if _SCREEN_SCALE_INFO['modo'] != 'igual':
+        return
+    try:
+        f_ = _win_min_scale()
+    except Exception as e_:
+        _SCREEN_SCALE_INFO['nota'] = 'no se pudo leer la escala de los monitores: %s' % e_
+        return
+    if not f_:
+        _SCREEN_SCALE_INFO['nota'] = 'no se pudo leer la escala de los monitores'
+        return
+    os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '0'          # sin escala por monitor...
+    if abs(f_ - 1.0) > 0.005:
+        os.environ['QT_SCALE_FACTOR'] = '%.4g' % f_         # ...y una para todos
+    os.environ['QT_FONT_DPI'] = '96'
+    os.environ['WA_SCALE_SET'] = '1'
+    try:
+        QApplication.setAttribute(Qt.AA_Use96Dpi, True)
+    except Exception:
+        pass
+    _SCREEN_SCALE_INFO['escala'] = f_
+
+
+def _screen_scale_log():
+    try:
+        scr_ = ", ".join("%s %dx%d en (%d,%d) escala %.2f" % (s_.name(), s_.geometry().width(), s_.geometry().height(), s_.geometry().x(),
+                                                              s_.geometry().y(), s_.devicePixelRatio()) for s_ in QApplication.screens())
+        m_ = _SCREEN_SCALE_INFO.get('modo', '?')
+        txt = ("todos los monitores al %d %%" % round(_SCREEN_SCALE_INFO['escala'] * 100)) if 'escala' in _SCREEN_SCALE_INFO else (
+            "cada monitor con su escala" if m_ == 'windows' else "sin cambios")
+        print("[pantallas] modo '%s': %s%s | %s" % (m_, txt, (" (" + _SCREEN_SCALE_INFO['nota'] + ")") if _SCREEN_SCALE_INFO.get('nota') else "", scr_))
+    except Exception:
+        pass
 _WA_CLOCK_HTML_B64_2 = "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"          # [PACK154] reloj LED, segunda mitad
 BACKUP_DIR = os.path.join(ROOT_DATA_DIR, "backups")
 CACHE_DIR = _loc_dir("WIDGET_ARENA_CACHE_DIR", "cache_dir", os.path.join(ROOT_DATA_DIR, "cache"))
@@ -9151,12 +9272,14 @@ class ConnectorOverlay(QWidget):
     def _pending_fire(self):
         self._last_req = time.monotonic()
         r_ = getattr(self, '_pend_rgn', None)              # [PACK211] solo zonas pendientes: solo esas
+        full = getattr(self, '_pend_full', False)
         self._pend_rgn = None
-        if r_ is not None and not getattr(self, '_pend_full', False):
-            self.update(r_)
-        else:
-            self.update()
         self._pend_full = False
+        if full:
+            self.update()
+        elif r_ is not None:
+            self.update(r_)
+        # [PACK213] nada pendiente (ya se repinto antes de que llegara su hora): nada que hacer
 
     def request_update_region(self, rgn):
         """[PACK211] Como request_update (mismo hueco minimo entre fotogramas), pero solo una zona: las de los pasos que esperan se juntan."""
@@ -9168,6 +9291,7 @@ class ConnectorOverlay(QWidget):
             self._last_req = now
             r_ = self._pend_rgn
             self._pend_rgn = None
+            self._pending_timer.stop()                    # [PACK213] ya se pide ahora: el pendiente no tiene nada mas que pintar
             if getattr(self, '_pend_full', False):
                 self._pend_full = False
                 self.update()
@@ -9183,6 +9307,8 @@ class ConnectorOverlay(QWidget):
         if max(self._paint_ms, self._sync_ms) <= 10.0 and self.isVisible():      # [PACK111] antes 24 ms: con 20 cables el bucle de eventos no descansaba
             _t0 = time.perf_counter()
             self._pending_timer.stop()
+            self._pend_rgn = None                         # [PACK213] repintado entero: no queda nada pendiente
+            self._pend_full = False
             self._last_req = time.monotonic()
             self.repaint()
             self._sync_ms = 0.7 * self._sync_ms + 0.3 * min(250.0, (time.perf_counter() - _t0) * 1000.0)
@@ -9273,6 +9399,7 @@ class ConnectorOverlay(QWidget):
             self._last_req = now
             self._pend_rgn = None                         # [PACK211] (entero: incluye cualquier zona pendiente)
             self._pend_full = False
+            self._pending_timer.stop()                    # [PACK213] (y el pendiente, que lo repetiria entero)
             self.update()
         else:
             self._pend_full = True
@@ -14514,7 +14641,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 212                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 213                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -26157,6 +26284,23 @@ class WidgetManager(QObject):
         hint_action.setChecked(self._gesture_hints_on())
         hint_action.toggled.connect(self.set_gesture_hints)
         look_menu.addAction(hint_action)
+        if sys.platform == 'win32':                     # [PACK213]
+            scl_menu = QMenu("Monitores con distinta escala", look_menu)
+            scl_group = QActionGroup(scl_menu)
+            scl_group.setExclusive(True)
+            _cur = screen_scale_mode()
+            for _k, _t, _tip in (('igual', "Mismo tama\u00f1o en todos (la escala del monitor de menos escala)",
+                                  "Un widget mide lo mismo en todos los monitores; men\u00fas y di\u00e1logos tambi\u00e9n"),
+                                 ('windows', "Cada monitor con su escala (como Windows)",
+                                  "En un monitor al 125-150 % todo se ve 1,25-1,5 veces m\u00e1s grande, como en los dem\u00e1s programas")):
+                _a = QAction(_t, self)
+                _a.setCheckable(True)
+                _a.setChecked(_cur == _k)
+                _a.setToolTip(_tip)
+                _a.triggered.connect(lambda _c=False, _k=_k: self.set_screen_scale(_k))
+                scl_group.addAction(_a)
+                scl_menu.addAction(_a)
+            look_menu.addMenu(scl_menu)
         ms_action = QAction("Men\u00fas con secciones e iconos", self)
         ms_action.setCheckable(True)
         ms_action.setChecked(self._menu_style_on())
@@ -32065,6 +32209,17 @@ class WidgetManager(QObject):
         d.activateWindow()
         return d
 
+    def set_screen_scale(self, mode):
+        """[PACK213] Cambia el modo de escala de los monitores: se aplica al reiniciar."""
+        if mode == screen_scale_mode():
+            return
+        if not set_screen_scale_mode(mode):
+            QMessageBox.warning(None, "Monitores con distinta escala", "No se pudo guardar el cambio.")
+            return
+        if QMessageBox.question(None, "Monitores con distinta escala",
+                                "El cambio se aplica al reiniciar el programa.\n\n\u00bfReiniciar ahora?") == QMessageBox.Yes:
+            self.update_restart_app()
+
     def update_restart_app(self):
         """Arranca otra vez el programa (pasados unos segundos) y cierra este con el guardado de siempre."""
         try:
@@ -34648,7 +34803,9 @@ if __name__ == '__main__':
     if 'Fusion' in QStyleFactory.keys():
         QApplication.setStyle('Fusion')
     
+    _screen_scale_setup()                      # [PACK213] antes de crear la aplicacion (Qt lee la escala al arrancar)
     app = QApplication(sys.argv)
+    _screen_scale_log()
     
     _ensure_app_icon()
     app_icon = QIcon()
