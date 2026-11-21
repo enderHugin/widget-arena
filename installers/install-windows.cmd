@@ -176,7 +176,7 @@ try {
 
     # --- 3) el programa --------------------------------------------------------------------------------------------
     Step 3 'Descargando Widget Arena'
-    foreach ($f in @('widget_arena.py', 'herramientas.py', 'VERSION')) { Get-File ($Base + '/dl/' + $f) (Join-Path $Stage $f) }
+    foreach ($f in @('widget_arena.py', 'herramientas.py', 'pyi_update.py', 'VERSION')) { Get-File ($Base + '/dl/' + $f) (Join-Path $Stage $f) }
     Get-File ($Base + '/dl/icon.ico') (Join-Path $Stage 'icon.ico')
     # notas de bienvenida (opcional: si no se pueden bajar, el programa arranca igual, solo que vacio)
     try {
@@ -210,6 +210,7 @@ try {
     # --- 5) icono, "Aplicaciones instaladas" y desinstalador -------------------------------------------------------
     Step 5 'Terminando: icono y desinstalador'
     Copy-Item (Join-Path $Stage 'icon.ico') (Join-Path $Prog 'widget_arena.ico') -Force
+    Copy-Item (Join-Path $Stage 'pyi_update.py') (Join-Path $Prog 'pyi_update.py') -Force   # actualizador comun (py-installer)
     $manFile = Join-Path $Prog 'install_manifest.json'
     if (-not (Test-Path $manFile)) { throw 'La instalacion no termino (no hay manifiesto).' }
     $man = Get-Content $manFile -Raw | ConvertFrom-Json

@@ -14641,12 +14641,11 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 213                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 214                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
 APP_FILE = os.path.abspath(_a0)
-UPDATE_FILES = ("widget_arena.py", "herramientas.py")
 UPDATE_WATCH_MS = 10 * 60 * 1000          # [PACK182] cada cuanto mira si hay version nueva el vigilante
 WA_DROP_EXTS = ('.wawidget', '.wapaper', '.waframe', '.json')          # [PACK181] lo que un widget acepta que le suelten encima
 _UPDATE_ST = {}
@@ -14683,174 +14682,103 @@ def _sha256_file(p):
     return h.hexdigest()
 
 
-def update_local_info():
-    label = ''
+def _pyi_update_module():
+    """El motor de actualizaciones es el comun de py-installer (pyi_update.py, publicado junto al
+    programa en la web y actualizado con el resto). Una instalacion de antes no lo tiene: la primera
+    vez se baja de la web del proyecto, comprobando su huella en update.json, y se guarda junto al
+    programa."""
     try:
-        with open(os.path.join(APP_DIR, 'VERSION'), 'r', encoding='utf-8') as f:
-            label = f.read().strip()[:40]
-    except OSError:
+        import pyi_update
+        return pyi_update
+    except ImportError:
         pass
+    import importlib.util, urllib.request, ssl
+    dest = os.path.join(os.path.dirname(APP_FILE), 'pyi_update.py')
+    if not os.path.exists(dest):
+        def get(url, limit):
+            if not url.startswith(UPDATE_BASE):
+                raise ValueError("direcci\u00f3n no permitida")
+            try:
+                import certifi
+                ctx = ssl.create_default_context(cafile=certifi.where())
+            except Exception:
+                ctx = ssl.create_default_context()
+            req = urllib.request.Request(url, headers={'User-Agent': 'WidgetArena', 'Cache-Control': 'no-cache'})
+            with urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx)).open(req, timeout=20) as r:
+                if not r.geturl().startswith(UPDATE_BASE):
+                    raise ValueError("redirecci\u00f3n a otro sitio rechazada")
+                data = r.read(limit + 1)
+            if len(data) > limit:
+                raise ValueError("la respuesta es demasiado grande")
+            return data
+        info = json.loads(get(UPDATE_BASE + 'update.json?t=%d' % int(time.time()), 262144).decode('utf-8'))
+        meta = info.get('files', {}).get('pyi_update.py')
+        if not meta:
+            raise ValueError("la web todav\u00eda no publica el actualizador nuevo; int\u00e9ntalo m\u00e1s tarde")
+        data = get(UPDATE_BASE + 'pyi_update.py?v=' + str(meta['sha256'])[:12], int(meta['size']))
+        if hashlib.sha256(data).hexdigest() != str(meta['sha256']).lower():
+            raise ValueError("pyi_update.py: lo descargado no coincide con la huella publicada")
+        compile(data, 'pyi_update.py', 'exec')
+        with open(dest + '.nuevo', 'wb') as f:
+            f.write(data)
+        os.replace(dest + '.nuevo', dest)
+    spec = importlib.util.spec_from_file_location('pyi_update', dest)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sys.modules['pyi_update'] = mod
+    return mod
+
+
+def _upd():
+    """Motor comun (pyi_update.Updater) con los datos de widget-arena. Comparte con update_state() el
+    mismo diccionario de preferencias, asi que la ventana de Actualizaciones y el motor ven lo mismo."""
+    u = _pyi_update_module().Updater(APP_FILE, pack=APP_PACK, base=UPDATE_BASE, state_path=UPDATE_STATE,
+                                     backups_dir=UPDATE_BACKUPS, user_agent='WidgetArena')
+    u._st = update_state()
+    return u
+
+
+def update_local_info():
     try:
-        sha = _sha256_file(APP_FILE)
-    except OSError:
-        sha = ''
-    return {'pack': APP_PACK, 'sha256': sha, 'label': label, 'file': APP_FILE, 'frozen': bool(getattr(sys, 'frozen', False))}
+        return _upd().local_info()
+    except Exception:
+        return {'pack': APP_PACK, 'sha256': '', 'label': '', 'file': APP_FILE, 'frozen': bool(getattr(sys, 'frozen', False))}
 
 
 def _update_get(url, limit, timeout=20):
     """Descarga una direccion de la web del proyecto (y nada mas: ni siquiera si hay una redireccion a otro sitio)."""
-    import urllib.request, ssl
-    if not url.startswith(UPDATE_BASE):
-        raise ValueError("direcci\u00f3n no permitida")
-
-    class _Same(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            if not newurl.startswith(UPDATE_BASE):
-                raise ValueError("redirecci\u00f3n a otro sitio rechazada")
-            return super().redirect_request(req, fp, code, msg, headers, newurl)
-    try:
-        import certifi
-        ctx = ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        ctx = ssl.create_default_context()
-    op = urllib.request.build_opener(_Same(), urllib.request.HTTPSHandler(context=ctx))
-    with op.open(urllib.request.Request(url, headers={'User-Agent': 'WidgetArena', 'Cache-Control': 'no-cache'}), timeout=timeout) as r:
-        data = r.read(limit + 1)
-    if len(data) > limit:
-        raise ValueError("la respuesta es demasiado grande")
-    return data
+    return _upd()._get(url, limit, timeout)
 
 
 def update_check():
     """Mira la version publicada. Devuelve {ok, state: newer|same|older|diverged, info, local} o {ok: False, error}."""
     try:
-        info = json.loads(_update_get(UPDATE_BASE + 'update.json?t=%d' % int(time.time()), 262144).decode('utf-8'))
-        meta = info['files']['widget_arena.py']
-        pack, sha, size = int(info['pack']), str(meta['sha256']).lower(), int(meta['size'])
-        if not re.fullmatch(r'[0-9a-f]{64}', sha) or size <= 0 or size > 12 * 1048576:
-            raise ValueError("update.json no es v\u00e1lido")
+        u = _upd()
     except Exception as e:
         return {'ok': False, 'error': str(e) or e.__class__.__name__}
-    loc = update_local_info()
-    if pack > loc['pack']:
-        st = 'newer'
-    elif pack < loc['pack']:
-        st = 'older'
-    else:
-        st = 'same' if sha == loc['sha256'] else 'diverged'
-    update_state()['last_check'] = time.time()
-
-    update_state_save()
-    return {'ok': True, 'state': st, 'info': info, 'local': loc}
-
-
-def _update_file(info, name):
-    if name not in UPDATE_FILES:
-        raise ValueError("archivo no permitido")
-    meta = info['files'][name]
-    data = _update_get(UPDATE_BASE + name + '?v=' + str(meta['sha256'])[:12], int(meta['size']))      # con la huella en la direccion no se sirve una copia vieja de la cache
-    if len(data) != int(meta['size']) or hashlib.sha256(data).hexdigest() != str(meta['sha256']).lower():
-        raise ValueError("%s: lo descargado no coincide con la huella publicada (se cancela; si acaban de publicar, int\u00e9ntalo de nuevo en unos minutos)" % name)
-    compile(data, name, 'exec')                       # que al menos sea Python valido antes de tocar nada
-    return data
-
-
-def _update_put(path, data):
-    tmp = path + '.nuevo'
-    with open(tmp, 'wb') as f:
-        f.write(data)
-    os.replace(tmp, path)
-
-
-def _update_bkname(prefix):
-    """Nombre libre para una copia (nunca pisa otra, aunque se hagan dos en el mismo segundo)."""
-    base = os.path.join(UPDATE_BACKUPS, '%s.pack%d.%s' % (prefix, APP_PACK, time.strftime('%Y%m%d-%H%M%S')))
-    p, i = base + '.py', 2
-    while os.path.exists(p):
-        p = '%s-%d.py' % (base, i)
-        i += 1
-    return p
+    return u.check()
 
 
 def update_apply(info):
-    """Descarga y comprueba la version publicada, guarda una copia de la actual y la sustituye. Devuelve {backup, tools}."""
-    if getattr(sys, 'frozen', False):
-        raise ValueError("Esta instalaci\u00f3n es un ejecutable: descarga el instalador nuevo desde la p\u00e1gina del programa.")
-    d = os.path.dirname(APP_FILE)
-    if not os.access(d, os.W_OK) or not os.access(APP_FILE, os.W_OK):
-        raise ValueError("No hay permiso para escribir en la carpeta del programa (%s)." % d)
-    data = _update_file(info, 'widget_arena.py')
-    m = re.search(rb'^APP_PACK\s*=\s*(\d+)', data, re.M)
-    if not m or int(m.group(1)) != int(info['pack']):
-        raise ValueError("El archivo publicado no es el de la versi\u00f3n anunciada (se cancela).")
-    tools, tools_path = None, os.path.join(APP_DIR, 'herramientas.py')
-    if 'herramientas.py' in info.get('files', {}) and os.path.exists(tools_path):
-        if _sha256_file(tools_path) != str(info['files']['herramientas.py']['sha256']).lower():
-            tools = _update_file(info, 'herramientas.py')
-    os.makedirs(UPDATE_BACKUPS, exist_ok=True)
-    bk = _update_bkname('widget_arena')
-    shutil.copyfile(APP_FILE, bk)
-
-    bk_t = None
-    if tools is not None:
-        bk_t = _update_bkname('herramientas')
-        shutil.copyfile(tools_path, bk_t)
-    _update_put(APP_FILE, data)
-    if tools is not None:
-        try:
-            _update_put(tools_path, tools)
-        except OSError as e:
-            log_warn("Actualizar", "No se pudo actualizar herramientas.py: %s" % e)
-            bk_t = None
-    try:
-        with open(os.path.join(APP_DIR, 'VERSION'), 'w', encoding='utf-8') as f:
-            f.write(str(info.get('version') or '') + "\n")
-    except OSError:
-        pass
-    st = update_state()
-    st.update({'last_backup': bk, 'last_backup_tools': bk_t, 'from_pack': APP_PACK, 'to_pack': int(info['pack']), 'applied': time.time()})
-
-    update_state_save()
-    try:                                              # se conservan las 5 ultimas copias de cada archivo
-        for pre in ('widget_arena.pack', 'herramientas.pack'):
-            olds = sorted((os.path.join(UPDATE_BACKUPS, f) for f in os.listdir(UPDATE_BACKUPS) if f.startswith(pre)), key=lambda q: (os.path.getmtime(q), q in (bk, bk_t)))
-            for f in olds[:-5]:
-                os.remove(f)
-    except OSError:
-        pass
-    return {'backup': bk, 'tools': tools is not None}
+    """Descarga y comprueba la version publicada (todos sus archivos), guarda una copia de lo que cambia y lo
+    sustituye. Devuelve {backup, files, tools}."""
+    r = _upd().apply(info)
+    r['tools'] = 'herramientas.py' in r.get('files', [])
+    return r
 
 
 def update_backup_available():
-    bk = update_state().get('last_backup')
-    return bool(bk) and os.path.exists(bk) and os.path.abspath(os.path.dirname(bk)) == os.path.abspath(UPDATE_BACKUPS)
+    try:
+        return _upd().backup_available()
+    except Exception:
+        return False
 
 
 def update_rollback():
     """Vuelve a la copia guardada en la ultima actualizacion (y deja la actual como copia, por si quieres volver a ella)."""
-    if getattr(sys, 'frozen', False):
-        raise ValueError("Esta instalaci\u00f3n es un ejecutable: no se puede cambiar la versi\u00f3n desde aqu\u00ed.")
-    if not update_backup_available():
-        raise ValueError("No hay una copia anterior a la que volver.")
-    st = update_state()
-    bk = st['last_backup']
-    with open(bk, 'rb') as f:
-        data = f.read()
-    compile(data, 'widget_arena.py', 'exec')
-    cur = _update_bkname('widget_arena')
-    shutil.copyfile(APP_FILE, cur)
-    _update_put(APP_FILE, data)
-    bkt = st.get('last_backup_tools')
-    cur_t = None
-    if bkt and os.path.exists(bkt) and os.path.exists(os.path.join(APP_DIR, 'herramientas.py')):
-        cur_t = _update_bkname('herramientas')
-
-        shutil.copyfile(os.path.join(APP_DIR, "herramientas.py"), cur_t)
-        with open(bkt, 'rb') as f:
-            _update_put(os.path.join(APP_DIR, 'herramientas.py'), f.read())
-    st.update({'last_backup': cur, 'last_backup_tools': cur_t, 'applied': time.time()})
-    update_state_save()
-    return {'backup': cur, 'tools': bool(cur_t)}
+    r = _upd().rollback()
+    r['tools'] = 'herramientas.py' in r.get('files', [])
+    return r
 
 
 def update_spawn_restart(delay=3):

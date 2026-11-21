@@ -1,3 +1,9 @@
+## Pack 214 · 2026-11-21
+- **Actualizaciones con el sistema común de py-installer.** El motor que busca, instala y deshace actualizaciones es ahora el mismo para todos los programas del autor ([py-installer](https://github.com/enderHugin/py-installer)): un arreglo en uno llega a todos. Para ti no cambia nada: la misma ventana de *Actualizaciones*, las mismas opciones (avisar al abrir, actualizar sin preguntar, vigilar sola) y las mismas comprobaciones (huella sha256, solo desde la web del programa, copia antes de tocar nada).
+  - Trae un archivo nuevo junto al programa, `pyi_update.py` (el actualizador común). Se baja solo la primera vez, comprobado con su huella, y desde ahí se actualiza con lo demás.
+  - «Volver a la anterior» sigue funcionando también con las copias que ya tenías.
+  - El instalador sigue siendo el de siempre; pasará a py-installer más adelante, sin mover tus notas.
+
 ## Pack 213 · 2026-11-15
 - **Monitores con distinta escala: ahora un widget mide lo mismo en todos.** Hasta ahora cada monitor usaba su propia escala de Windows. Un widget conservaba su tamaño «lógico», así que en el monitor al 125 % o al 150 % se dibujaba 1,25 o 1,5 veces más grande. Al cruzar de un monitor a otro saltaba de tamaño, según en qué monitor estuviera la mayor parte (en tu vídeo, de unos 555 a unos 695 píxeles de ancho).
   - El Pack 212 no tocaba el tamaño de las ventanas: lo he comprobado línea a línea.
