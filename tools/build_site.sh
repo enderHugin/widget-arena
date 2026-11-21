@@ -17,7 +17,7 @@ sub site/index.html > "$OUT/index.html"
 cp site/favicon.png "$OUT/favicon.png"
 cp -r site/img "$OUT/img"
 touch "$OUT/.nojekyll"
-cp widget_arena.py herramientas.py VERSION "$OUT/dl/"
+cp widget_arena.py herramientas.py pyi_update.py VERSION "$OUT/dl/"     # pyi_update.py: actualizador comun de py-installer
 # update.json: lo que lee el boton "Buscar actualizaciones" (numero de pack, huellas sha256 y novedades)
 python3 - "$OUT" "$VER" <<'PYEOF'
 import hashlib, json, os, re, sys
@@ -27,7 +27,7 @@ m = re.search(r'^APP_PACK\s*=\s*(\d+)', open('widget_arena.py', encoding='utf-8'
 if not m:
     sys.exit('widget_arena.py no define APP_PACK')
 notes = open('NOVEDADES.md', encoding='utf-8').read()[:4000] if os.path.exists('NOVEDADES.md') else ''
-files = {n: {'sha256': sha(n), 'size': os.path.getsize(n)} for n in ('widget_arena.py', 'herramientas.py')}
+files = {n: {'sha256': sha(n), 'size': os.path.getsize(n)} for n in ('widget_arena.py', 'herramientas.py', 'pyi_update.py')}
 with open(os.path.join(out, 'dl', 'update.json'), 'w', encoding='utf-8') as f:
     json.dump({'pack': int(m.group(1)), 'version': ver, 'notes': notes, 'files': files}, f, ensure_ascii=False, indent=2)
 PYEOF

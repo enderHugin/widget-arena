@@ -92,7 +92,7 @@ fi
 
 # --- 3) el programa ------------------------------------------------------------------------------------------------
 step 3 "Descargando Widget Arena"
-for f in widget_arena.py herramientas.py VERSION icon.png; do fetch "$BASE/dl/$f" "$STAGE/$f"; done
+for f in widget_arena.py herramientas.py pyi_update.py VERSION icon.png; do fetch "$BASE/dl/$f" "$STAGE/$f"; done
 [ "$KIND" = mac ] && fetch "$BASE/dl/icon.icns" "$STAGE/icon.icns"
 # notas de bienvenida (opcional: si no se pueden bajar, el programa arranca igual, solo que vacio)
 if curl -fsSL --retry 2 -o "$STAGE/defaults.zip" "$BASE/dl/defaults.zip" 2>/dev/null || wget -q -O "$STAGE/defaults.zip" "$BASE/dl/defaults.zip" 2>/dev/null; then
@@ -115,6 +115,7 @@ EXTRA=""; [ -n "${WA_NO_DEPS:-}" ] && EXTRA="--no-deps"
 # --- 5) icono, acceso y desinstalador ------------------------------------------------------------------------------
 step 5 "Terminando: icono y desinstalador"
 cp "$STAGE/icon.png" "$PROG/widget_arena.png"
+cp "$STAGE/pyi_update.py" "$PROG/pyi_update.py"      # actualizador comun (py-installer)
 VPY="$PROG/.venv/bin/python"
 
 if [ "$KIND" = linux ]; then

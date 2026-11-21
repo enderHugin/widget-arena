@@ -3,7 +3,7 @@ name: Publicar página e instaladores
 on:
   push:
     branches: [main]
-    paths: ['site/**', 'installers/**', 'assets/**', 'tools/**', 'defaults/**', 'docs/**', 'widget_arena.py', 'herramientas.py', 'VERSION', 'NOVEDADES.md', '.github/workflows/pages.yml']
+    paths: ['site/**', 'installers/**', 'assets/**', 'tools/**', 'defaults/**', 'docs/**', 'widget_arena.py', 'herramientas.py', 'pyi_update.py', 'VERSION', 'NOVEDADES.md', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Comprobar que el programa compila y que los instaladores no tienen errores de sintaxis
         run: |
-          python3 -m py_compile widget_arena.py herramientas.py
+          python3 -m py_compile widget_arena.py herramientas.py pyi_update.py
           bash -n installers/install-unix.sh
       - name: Montar el sitio (la URL base se calcula sola)
         run: |
