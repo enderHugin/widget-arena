@@ -1,3 +1,18 @@
+## Pack 215 · 2026-11-22
+- **Controles dentro del texto de una nota.** En el menú del clic derecho al editar el texto, «Insertar/Editar enlace» pasa a ser el submenú **Insertar / editar control**, con:
+  - **Enlace** y **Botón enlace**: los de siempre, cada uno con su entrada. Ahora también se pueden insertar sin seleccionar texto antes: el texto se escribe en el diálogo.
+  - **Casilla de verificación** ☐ / ☑: en la nota, un clic la marca o la desmarca. En su diálogo se elige el aspecto (☐/☑, ☐/☒, ○/●, o `[ ]`/`[x]` como en Markdown) y si se tacha el resto de la línea al marcarla.
+    - Al escribir, «`[ ] `» o «`[x] `» al principio de una línea se convierte en una casilla.
+    - Intro al final de una línea con casilla empieza otra con casilla; Intro en una casilla vacía termina la lista.
+  - **Campo de texto**: un valor con un fondo suave. En la nota, un clic abre un campo para escribirlo (Intro lo guarda). Vacío, muestra su texto de ayuda más tenue.
+  - **Contador**: − 2 +. Los botones restan y suman el paso, sin salirse del mínimo y el máximo si se ponen, y un clic en el número deja escribirlo.
+  - **Selector de opciones**: «Pendiente ▾». En la nota, un clic despliega las opciones (una por línea en su diálogo).
+  - **Botón copiar**: un botón como los botones enlace que, al pulsarlo, copia al portapapeles el texto que se le haya puesto.
+- **Clic derecho sobre un control, editando el texto:** en lugar del submenú aparecen «Editar <tipo>…» y «Quitar <tipo>». Quitar deja su texto: el de un enlace, el valor de un campo, la opción elegida… En la nota sin editar, el menú dice «Editar esta casilla…», «Editar este contador…», etc.
+- **Ctrl+K** (o el atajo que tenga «Insertar / editar enlace») edita el control donde esté el cursor; si no hay ninguno, inserta un enlace aunque no haya texto seleccionado.
+- **Lo que se cambia con un clic en la nota se guarda y se deshace con Ctrl+Z** como cualquier otro cambio. Con la nota en edición, Ctrl+clic usa el control sin salir de la edición.
+- Los controles toman el color y la letra del texto donde están, sin el subrayado de los enlaces. Si se copia y pega uno, el pegado recibe su propio identificador, así que cada uno cambia por su cuenta.
+
 ## Pack 214 · 2026-11-21
 - **Actualizaciones con el sistema común de py-installer.** El motor que busca, instala y deshace actualizaciones es ahora el mismo para todos los programas del autor ([py-installer](https://github.com/enderHugin/py-installer)): un arreglo en uno llega a todos. Para ti no cambia nada: la misma ventana de *Actualizaciones*, las mismas opciones (avisar al abrir, actualizar sin preguntar, vigilar sola) y las mismas comprobaciones (huella sha256, solo desde la web del programa, copia antes de tocar nada).
   - Trae un archivo nuevo junto al programa, `pyi_update.py` (el actualizador común). Se baja solo la primera vez, comprobado con su huella, y desde ahí se actualiza con lo demás.

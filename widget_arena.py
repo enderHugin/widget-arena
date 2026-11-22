@@ -441,7 +441,7 @@ from PySide6.QtGui import (
     QPixmap, QColor, QFont, QIcon, QAction, QActionGroup,
     QKeyEvent, QPainter, QBitmap, QWheelEvent, QTransform,
     QImage, QCursor, QPen, QPainterPath, QBrush, QLinearGradient,
-    QTextDocument, QTextCursor, QTextCharFormat, QTextOption, QPainterPathStroker, QRegion
+    QTextDocument, QTextCursor, QTextCharFormat, QTextOption, QPainterPathStroker, QRegion, QTextFormat
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineScript, QWebEnginePage # <--- PARCHE WEB PERSISTENCIA: Importar QWebEngineProfile
@@ -2204,6 +2204,347 @@ def replace_span_with_html(cursor, html):
     cursor.endEditBlock()
 
 
+# ---- [PACK215] Controles dentro del texto de una nota
+# Cada control es un enlace del documento (asi se detecta, se resalta y se hace clic como los enlaces de siempre) con un href propio:
+#   wactl:<tipo>#id=<id>&<parametro>=<valor>...      (los valores van codificados como en una URL)
+# Los enlaces y botones enlace de siempre siguen siendo 'url#mode=..&btn=1&...'. Todo el estado del control va en su href: lo que se ve
+# se reconstruye a partir de el.
+CTL_SCHEME = 'wactl:'
+CTL_KINDS = ('link', 'button', 'check', 'text', 'count', 'sel', 'copy')
+CTL_NAMES = {'link': 'enlace', 'button': 'bot\u00f3n enlace', 'check': 'casilla', 'text': 'campo de texto', 'count': 'contador',
+             'sel': 'selector', 'copy': 'bot\u00f3n copiar'}
+CTL_THIS = {'link': 'este enlace', 'button': 'este bot\u00f3n enlace', 'check': 'esta casilla', 'text': 'este campo de texto',
+            'count': 'este contador', 'sel': 'este selector', 'copy': 'este bot\u00f3n copiar'}
+CTL_CHECK_STYLES = (('box', '\u2610', '\u2611', 'Casilla con marca  \u2610 / \u2611'),
+                    ('cross', '\u2610', '\u2612', 'Casilla con aspa  \u2610 / \u2612'),
+                    ('circle', '\u25cb', '\u25cf', 'C\u00edrculo  \u25cb / \u25cf'),
+                    ('md', '[ ]', '[x]', 'Como en Markdown  [ ] / [x]'))
+
+
+def ctl_parse(href):
+    """(tipo, parametros) de un enlace o control."""
+    href = href or ''
+    frag = href.split('#', 1)[1] if '#' in href else ''
+    p = {}
+    for part in frag.split('&'):
+        if '=' in part:
+            k, v = part.split('=', 1)
+            p[k] = urllib.parse.unquote(v)
+        elif part:
+            p[part] = ''
+    if href.startswith(CTL_SCHEME):
+        kind = href[len(CTL_SCHEME):].split('#', 1)[0]
+        return (kind if kind in CTL_KINDS else 'link'), p
+    return ('button' if p.get('btn') == '1' else 'link'), p
+
+
+def ctl_href(kind, params):
+    order = ['id', 'op', 'btn', 'v', 'st', 'tx', 'ph', 's', 'mn', 'mx', 'o', 'i', 'label', 'ff', 'fs', 'tc', 't']
+    keys = [k for k in order if k in params] + sorted(k for k in params if k not in order)
+    return CTL_SCHEME + kind + '#' + '&'.join('%s=%s' % (k, urllib.parse.quote(str(params[k]), safe='')) for k in keys)
+
+
+def ctl_new_id():
+    import uuid
+    return uuid.uuid4().hex[:8]
+
+
+def _ctl_int(v, default=0):
+    try:
+        return int(str(v).strip())
+    except Exception:
+        return default
+
+
+def ctl_check_glyph(params):
+    st = params.get('st', 'box')
+    for k, off, on, _t in CTL_CHECK_STYLES:
+        if k == st:
+            return on if params.get('v') == '1' else off
+    return CTL_CHECK_STYLES[0][2] if params.get('v') == '1' else CTL_CHECK_STYLES[0][1]
+
+
+def ctl_sel_options(params):
+    return [o for o in (params.get('o') or '').split('\n') if o.strip()]
+
+
+def ctl_display(kind, params):
+    """Lo que se ve de un control (en su sitio del texto)."""
+    if kind == 'check':
+        return ctl_check_glyph(params)
+    if kind == 'text':
+        v = params.get('v', '')
+        return v if v else (params.get('ph') or '\u2026')
+    if kind == 'sel':
+        opts = ctl_sel_options(params)
+        i = _ctl_int(params.get('i'), 0)
+        return (opts[i] if 0 <= i < len(opts) else (opts[0] if opts else '\u2026')) + ' \u25be'
+    if kind == 'count':
+        op = params.get('op', '0')
+        return {'-1': ' \u2212 ', '1': ' + '}.get(op, ' %d ' % _ctl_int(params.get('v'), 0))
+    return params.get('label', '')
+
+
+def ctl_char_format(base, kind, params, fg):
+    """El formato de un control: el del texto donde esta (fuente, tamano...), sin subrayado, con su color y, en los que se rellenan
+    o se pulsan, un fondo suave del mismo color para que se vean como un campo o una tecla."""
+    f = QTextCharFormat(base)
+    f.setAnchor(True)
+    f.setAnchorHref(ctl_href(kind, params))
+    f.setFontUnderline(False)
+    f.setFontStrikeOut(False)
+    fc = QColor(fg)
+    if kind == 'text' and not params.get('v', ''):
+        fc.setAlpha(150)                    # vacio: el texto de ayuda, mas tenue
+    f.setForeground(fc)
+    if kind in ('text', 'sel') or (kind == 'count' and params.get('op') in ('-1', '1')):
+        c = QColor(fg)
+        c.setAlpha(46)
+        f.setBackground(c)
+    else:
+        f.clearBackground()
+    return f
+
+
+def ctl_fragments(doc):
+    """Los trozos del documento que son controles: [(inicio, fin, href, numero de parrafo)], en orden."""
+    out = []
+    b = doc.begin()
+    while b.isValid():
+        it = b.begin()
+        while not it.atEnd():
+            fr = it.fragment()
+            if fr.isValid():
+                h = fr.charFormat().anchorHref() if fr.charFormat().isAnchor() else ''
+                if h:
+                    if out and out[-1][2] == h and out[-1][1] == fr.position() and out[-1][3] == b.blockNumber():
+                        out[-1] = (out[-1][0], fr.position() + fr.length(), h, b.blockNumber())
+                    else:
+                        out.append((fr.position(), fr.position() + fr.length(), h, b.blockNumber()))
+            it += 1
+        b = b.next()
+    return out
+
+
+def ctl_find(doc, href, pos=None):
+    """El trozo de un control (inicio, fin): el que contiene 'pos' si se da; si no, el primero con su id (o su href)."""
+    kind, p = ctl_parse(href)
+    cid = p.get('id')
+    best = None
+    for s, e, h, _bn in ctl_fragments(doc):
+        if h != href:
+            if not cid or not h.startswith(CTL_SCHEME):
+                continue
+            k2, p2 = ctl_parse(h)
+            if k2 != kind or p2.get('id') != cid or p2.get('op', '0') != p.get('op', '0'):
+                continue
+        if pos is not None and s <= pos <= e:
+            return s, e
+        if best is None:
+            best = (s, e)
+    return best
+
+
+def ctl_count_value(doc, cid):
+    """El trozo y los parametros del numero de un contador."""
+    for s, e, h, _bn in ctl_fragments(doc):
+        if h.startswith(CTL_SCHEME + 'count'):
+            k, p = ctl_parse(h)
+            if p.get('id') == cid and p.get('op', '0') == '0':
+                return s, e, p
+    return None
+
+
+def ctl_write(doc, s, e, kind, params, fg, base=None):
+    """Sustituye el trozo [s, e) por el control (con el formato del texto que habia)."""
+    c = QTextCursor(doc)
+    c.setPosition(s)
+    c.setPosition(min(e, s + 1) if e > s else s, QTextCursor.KeepAnchor)
+    bf = QTextCharFormat(base) if base is not None else QTextCharFormat(c.charFormat())
+    c.setPosition(s)
+    c.setPosition(e, QTextCursor.KeepAnchor)
+    c.insertText(ctl_display(kind, params), ctl_char_format(bf, kind, params, fg))
+    return c
+
+
+def ctl_plain_format(fmt):
+    """El formato del texto normal a partir del de un control (sin enlace ni fondo)."""
+    f = QTextCharFormat(fmt)
+    f.setAnchor(False)
+    f.setAnchorHref('')
+    f.clearBackground()
+    return f
+
+
+def ctl_fg(fmt, default):
+    try:
+        if fmt.hasProperty(QTextFormat.ForegroundBrush) and fmt.foreground().style() != Qt.NoBrush:
+            return fmt.foreground().color().name()
+    except Exception:
+        pass
+    return QColor(default).name() if QColor(default).isValid() else '#ffffff'
+
+
+def ctl_dedupe_ids(doc):
+    """Dos controles con el mismo id (al copiar y pegar uno): el segundo recibe uno nuevo (las partes de un contador, juntas, comparten
+    el suyo). True si ha cambiado algo."""
+    seen, changed = set(), False
+    last = None              # (parrafo, id, tipo, fin) del ultimo trozo de control
+    group_map = None
+    for s, e, h, bn in ctl_fragments(doc):
+        if not h.startswith(CTL_SCHEME):
+            last = None
+            continue
+        kind, p = ctl_parse(h)
+        cid = p.get('id')
+        if not cid:
+            last = None
+            continue
+        if last is not None and last[0] == bn and last[1] == cid and last[2] == kind and last[3] == s:
+            new_id = group_map
+        else:
+            new_id = ctl_new_id() if cid in seen else None
+            seen.add(cid)
+        group_map = new_id
+        last = (bn, cid, kind, e)
+        if new_id:
+            p['id'] = new_id
+            c = QTextCursor(doc)
+            c.setPosition(s)
+            c.setPosition(e, QTextCursor.KeepAnchor)
+            f = QTextCharFormat()
+            f.setAnchor(True)
+            f.setAnchorHref(ctl_href(kind, p))
+            c.mergeCharFormat(f)
+            changed = True
+    return changed
+
+
+def ctl_set_strike(doc, end_pos, on):
+    """Casilla con 'tachar al marcar': tacha (o no) el resto de su parrafo."""
+    c = QTextCursor(doc)
+    c.setPosition(end_pos)
+    blk = doc.findBlock(end_pos)
+    c.setPosition(blk.position() + blk.length() - 1, QTextCursor.KeepAnchor)
+    if c.hasSelection():
+        f = QTextCharFormat()
+        f.setFontStrikeOut(bool(on))
+        c.mergeCharFormat(f)
+
+
+class _CtlPopup(QDialog):
+    """Un campo pequeno junto al raton para escribir el valor de un control (Intro acepta; Esc o un clic fuera, cancela)."""
+    def __init__(self, parent, value, number=False, title=''):
+        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+        self.edit = QLineEdit(value)
+        if number:
+            from PySide6.QtGui import QIntValidator
+            self.edit.setValidator(QIntValidator(-999999999, 999999999, self.edit))
+        self.edit.setMinimumWidth(180)
+        if title:
+            self.edit.setPlaceholderText(title)
+        lay.addWidget(self.edit)
+        self.edit.returnPressed.connect(self.accept)
+        self.edit.selectAll()
+
+    @staticmethod
+    def ask(parent, value, number=False, title=''):
+        d = _CtlPopup(parent, value, number, title)
+        d.adjustSize()
+        pos = QCursor.pos()
+        scr = QApplication.screenAt(pos) or QApplication.primaryScreen()
+        g = scr.availableGeometry()
+        x = max(g.left(), min(pos.x() - 10, g.right() - d.width()))
+        y = max(g.top(), min(pos.y() + 12, g.bottom() - d.height()))
+        d.move(x, y)
+        d.edit.setFocus()
+        ok = d.exec() == QDialog.Accepted
+        return d.edit.text(), ok
+
+
+def ctl_activate(doc, href, parent, default_fg, pos=None):
+    """Un clic sobre un control: hace lo suyo sobre el documento (marcar, escribir, elegir, sumar...). True si el documento ha cambiado."""
+    kind, p = ctl_parse(href)
+    if kind == 'copy':
+        QApplication.clipboard().setText(p.get('t', ''))
+        try:
+            from PySide6.QtWidgets import QToolTip
+            QToolTip.showText(QCursor.pos(), "Copiado")
+        except Exception:
+            pass
+        return False
+    if kind == 'count' and p.get('op') in ('-1', '1'):
+        found = ctl_count_value(doc, p.get('id'))
+        if found is None:
+            return False
+        s, e, vp = found
+        v = _ctl_int(vp.get('v'), 0) + (1 if p.get('op') == '1' else -1) * max(1, _ctl_int(vp.get('s'), 1))
+        if vp.get('mn', '') != '':
+            v = max(v, _ctl_int(vp.get('mn')))
+        if vp.get('mx', '') != '':
+            v = min(v, _ctl_int(vp.get('mx')))
+        if str(v) == vp.get('v', '0'):
+            return False
+        vp['v'] = str(v)
+        c0 = QTextCursor(doc)
+        c0.setPosition(s + 1 if e > s else s)
+        ctl_write(doc, s, e, 'count', vp, ctl_fg(c0.charFormat(), default_fg))
+        return True
+    found = ctl_find(doc, href, pos)
+    if found is None:
+        return False
+    s, e = found
+    c0 = QTextCursor(doc)
+    c0.setPosition(s + 1 if e > s else s)
+    fg = ctl_fg(c0.charFormat(), default_fg)
+    if kind == 'check':
+        p['v'] = '0' if p.get('v') == '1' else '1'
+        c = ctl_write(doc, s, e, 'check', p, fg)
+        if p.get('tx') == '1':
+            ctl_set_strike(doc, c.position(), p['v'] == '1')
+        return True
+    if kind == 'text':
+        val, ok = _CtlPopup.ask(parent, p.get('v', ''), title=p.get('ph', ''))
+        if not ok or val == p.get('v', ''):
+            return False
+        p['v'] = val
+        ctl_write(doc, s, e, 'text', p, fg)
+        return True
+    if kind == 'count':
+        val, ok = _CtlPopup.ask(parent, p.get('v', '0'), number=True)
+        if not ok or not val.strip() or val.strip() == p.get('v', '0'):
+            return False
+        v = _ctl_int(val, _ctl_int(p.get('v'), 0))
+        if p.get('mn', '') != '':
+            v = max(v, _ctl_int(p.get('mn')))
+        if p.get('mx', '') != '':
+            v = min(v, _ctl_int(p.get('mx')))
+        p['v'] = str(v)
+        ctl_write(doc, s, e, 'count', p, fg)
+        return True
+    if kind == 'sel':
+        opts = ctl_sel_options(p)
+        if not opts:
+            return False
+        m = QMenu(parent)
+        cur = _ctl_int(p.get('i'), 0)
+        acts = []
+        for i, o in enumerate(opts):
+            a = m.addAction(o)
+            a.setCheckable(True)
+            a.setChecked(i == cur)
+            acts.append(a)
+        ch = m.exec(QCursor.pos())
+        if ch is None or ch not in acts or acts.index(ch) == cur:
+            return False
+        p['i'] = str(acts.index(ch))
+        ctl_write(doc, s, e, 'sel', p, fg)
+        return True
+    return False
+
+
 def _btn_frag_tc(frag):
     """[PACK150] Color del texto de un boton guardado en el enlace ('tc=rrggbb'); '' = automatico."""
     for part in (frag or '').split('&'):
@@ -2303,6 +2644,8 @@ def _html_keep_left(html):
             return html
         head, sep, body = html.partition('<body')
         body = re.sub(r'<(p|li|h[1-6]) (?![^>]*\balign=)', r'<\1 align="left" ', body)
+        if 'wactl:' in body:            # [PACK215] los controles, sin el subrayado de los enlaces (toHtml no lo escribe y al leerlo se subrayan)
+            body = re.sub(r'<a href="(wactl:[^"]*)"(?![^>]*\bstyle=)', r'<a href="\1" style="text-decoration: none;"', body)
         return head + sep + body
     except Exception:
         return html
@@ -5019,6 +5362,7 @@ class StickerWindow(QMainWindow):
                     doc_cache[layer_num] = (doc_key, (doc, _lk, _loy))
                 link = doc.documentLayout().anchorAt(QPointF(orig_x / _lk, orig_y / _lk - _loy))
                 if link:
+                    self._last_link_layer = layer_num                # [PACK215] en que capa esta (para los controles)
                     return link
         except Exception as e:
             log_error(self.widget_id, f"Error detectando enlace: {e}")
@@ -5739,7 +6083,7 @@ class StickerWindow(QMainWindow):
 
         link_url = self._get_link_at(event.pos())
         if link_url:
-            edit_link_action = QAction("Editar este bot\u00f3n/enlace...", self)
+            edit_link_action = QAction("Editar %s..." % CTL_THIS.get(ctl_parse(link_url)[0], 'este control'), self)          # [PACK215]
             edit_link_action.triggered.connect(lambda: self._edit_link_from_view_mode(link_url))
             actions = menu.actions()
             if actions:
@@ -5761,7 +6105,10 @@ class StickerWindow(QMainWindow):
             cursor = self.layer1_editor.select_anchor_by_href(link_url)
             if cursor is not None:
                 self.layer1_editor.setTextCursor(cursor)
-            self.layer1_editor._insert_link()
+            if link_url.startswith(CTL_SCHEME):                          # [PACK215]
+                self.layer1_editor._ctl_edit(link_url, cursor.selectionStart() if cursor is not None else None)
+            else:
+                self.layer1_editor._insert_link()
 
         QTimer.singleShot(60, _select_and_open)
 
@@ -7364,7 +7711,36 @@ class StickerWindow(QMainWindow):
         self._cached_btn_color = base_color.name()
         return self._cached_btn_color
 
+    def _ctl_view_activate(self, href):
+        """[PACK215] Clic en un control de la nota (sin estar editando): se aplica a su texto guardado y se redibuja (Ctrl+Z lo deshace)."""
+        layer_num = getattr(self, '_last_link_layer', 1) or 1
+        l_data = self.current_template_data.get('layer%d' % layer_num, {})
+        content = l_data.get('content', '') or ''
+        if href.startswith(CTL_SCHEME + 'copy'):
+            ctl_activate(QTextDocument(), href, self, '#ffffff')
+            return
+        if not content.strip().startswith('<'):
+            return
+        doc = QTextDocument()
+        doc.setDefaultFont(QFont(l_data.get('font_family', 'Inter'), l_data.get('font_size', 16 if layer_num == 1 else 12)))
+        doc.setHtml(content)
+        try:
+            changed = ctl_activate(doc, href, self, l_data.get('color', 'white' if layer_num == 1 else 'black'))
+        except Exception as e:
+            log_error(self.widget_id, "Control: %s" % e)
+            return
+        if not changed:
+            return
+        l_data['content'] = _html_keep_left(doc.toHtml())
+        self._active_hover_link = None
+        self.load_template_data(self.current_template_data)
+        self._save_changes_to_manager()
+        self.manager.flush_pending_save()
+
     def _execute_link(self, link_url):
+        if link_url.startswith(CTL_SCHEME):                            # [PACK215] un control, no una web
+            self._ctl_view_activate(link_url)
+            return
         clean_url = link_url.split('#')[0]
         is_async = "mode=async" in link_url
         
@@ -7464,8 +7840,9 @@ class StickerWindow(QMainWindow):
             content = f'<p style="color:{color};" align="center">{text_html}</p>'
             l1_data['content'] = content
         
+        self.layer1_editor._layer_color = color                         # [PACK215]
         self.layer1_editor.setHtml(content)
-        
+
         self.layer1_editor.moveCursor(QTextCursor.End)
         
         if hasattr(self, 'layer1_base_pixmap') and not self.layer1_base_pixmap.isNull():
@@ -7542,6 +7919,15 @@ class StickerWindow(QMainWindow):
             return
 
         log_debug(self.widget_id, "Edicion inline finalizada. Guardando HTML.")
+        if CTL_SCHEME in html_content:                                   # [PACK215] un control copiado y pegado: su propio id
+            try:
+                _d = QTextDocument()
+                _d.setDefaultFont(self.layer1_editor.font())
+                _d.setHtml(html_content)
+                if ctl_dedupe_ids(_d):
+                    html_content = _html_keep_left(_d.toHtml())
+            except Exception as _e:
+                log_warn(self.widget_id, "Controles: %s" % _e)
         l1_data = self.current_template_data.setdefault('layer1', {})
         l1_data['content'] = html_content
         
@@ -7715,6 +8101,138 @@ class LinkEditDialog(QDialog):
         ff = self.font_combo.currentFont().family()
         fs = self.size_spin.value()
         return url, mode, is_button, label, ff, fs
+
+
+class ControlEditDialog(QDialog):
+    """[PACK215] Insertar o editar un control dentro del texto: casilla, campo de texto, contador, selector de opciones o boton copiar."""
+    def __init__(self, kind, params, parent=None, editing=False):
+        super().__init__(parent)
+        self.kind = kind
+        self.params = dict(params)
+        name = CTL_NAMES.get(kind, kind)
+        self.setWindowTitle(("Editar " if editing else "Insertar ") + name)
+        self.setMinimumWidth(360)
+        lay = QFormLayout(self)
+        p = self.params
+        if kind == 'check':
+            self.on = QCheckBox("Marcada")
+            self.on.setChecked(p.get('v') == '1')
+            lay.addRow("", self.on)
+            self.style = QComboBox()
+            for k, _off, _on, t in CTL_CHECK_STYLES:
+                self.style.addItem(t, k)
+            i = self.style.findData(p.get('st', 'box'))
+            self.style.setCurrentIndex(max(0, i))
+            lay.addRow("Aspecto:", self.style)
+            self.tx = QCheckBox("Tachar el resto de la l\u00ednea al marcarla")
+            self.tx.setChecked(p.get('tx') == '1')
+            lay.addRow("", self.tx)
+            hint = QLabel("En la nota, un clic la marca o la desmarca.\nAl escribir, \u00ab[ ] \u00bb o \u00ab[x] \u00bb al principio de una l\u00ednea tambi\u00e9n crea una.")
+            hint.setWordWrap(True)
+            lay.addRow(hint)
+        elif kind == 'text':
+            self.val = QLineEdit(p.get('v', ''))
+            lay.addRow("Valor:", self.val)
+            self.ph = QLineEdit(p.get('ph', ''))
+            self.ph.setPlaceholderText("lo que se ve mientras est\u00e1 vac\u00edo (\u2026 si se deja en blanco)")
+            lay.addRow("Texto de ayuda:", self.ph)
+            hint = QLabel("En la nota, un clic abre un campo para escribir el valor (Intro lo guarda).")
+            hint.setWordWrap(True)
+            lay.addRow(hint)
+        elif kind == 'count':
+            self.val = QSpinBox()
+            self.val.setRange(-999999999, 999999999)
+            self.val.setValue(_ctl_int(p.get('v'), 0))
+            lay.addRow("Valor:", self.val)
+            self.step = QSpinBox()
+            self.step.setRange(1, 1000000)
+            self.step.setValue(max(1, _ctl_int(p.get('s'), 1)))
+            lay.addRow("Paso:", self.step)
+            self.mn = QSpinBox()
+            self.mn.setRange(-1000000000, 999999999)
+            self.mn.setSpecialValueText("sin m\u00ednimo")
+            self.mn.setValue(_ctl_int(p.get('mn')) if p.get('mn', '') != '' else -1000000000)
+            lay.addRow("M\u00ednimo:", self.mn)
+            self.mx = QSpinBox()
+            self.mx.setRange(-1000000000, 999999999)
+            self.mx.setSpecialValueText("sin m\u00e1ximo")
+            self.mx.setValue(_ctl_int(p.get('mx')) if p.get('mx', '') != '' else -1000000000)
+            lay.addRow("M\u00e1ximo:", self.mx)
+            hint = QLabel("En la nota: \u2212 y + restan y suman el paso; un clic en el n\u00famero deja escribirlo.")
+            hint.setWordWrap(True)
+            lay.addRow(hint)
+        elif kind == 'sel':
+            from PySide6.QtWidgets import QPlainTextEdit
+            self.opts = QPlainTextEdit('\n'.join(ctl_sel_options(p)))
+            self.opts.setPlaceholderText("Pendiente\nEn curso\nHecho")
+            self.opts.setMinimumHeight(110)
+            lay.addRow("Opciones (una por l\u00ednea):", self.opts)
+            self.cur = QComboBox()
+            lay.addRow("Elegida:", self.cur)
+            self.opts.textChanged.connect(self._sel_refresh)
+            self._sel_refresh(_ctl_int(p.get('i'), 0))
+            hint = QLabel("En la nota, un clic despliega las opciones.")
+            hint.setWordWrap(True)
+            lay.addRow(hint)
+        elif kind == 'copy':
+            from PySide6.QtWidgets import QPlainTextEdit
+            self.label = QLineEdit(p.get('label', '') or "Copiar")
+            lay.addRow("Texto del bot\u00f3n:", self.label)
+            self.txt = QPlainTextEdit(p.get('t', ''))
+            self.txt.setMinimumHeight(90)
+            lay.addRow("Lo que copia:", self.txt)
+            hint = QLabel("En la nota, un clic copia ese texto al portapapeles.")
+            hint.setWordWrap(True)
+            lay.addRow(hint)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addRow(buttons)
+
+    def _sel_refresh(self, keep=None):
+        opts = [o for o in self.opts.toPlainText().split('\n') if o.strip()]
+        i = self.cur.currentIndex() if keep is None or isinstance(keep, str) else keep
+        self.cur.blockSignals(True)
+        self.cur.clear()
+        self.cur.addItems(opts)
+        self.cur.setCurrentIndex(min(max(0, i), len(opts) - 1) if opts else -1)
+        self.cur.blockSignals(False)
+
+    def result_params(self):
+        p = dict(self.params)
+        k = self.kind
+        if k == 'check':
+            p['v'] = '1' if self.on.isChecked() else '0'
+            p['st'] = self.style.currentData() or 'box'
+            if self.tx.isChecked():
+                p['tx'] = '1'
+            else:
+                p.pop('tx', None)
+        elif k == 'text':
+            p['v'] = self.val.text()
+            p['ph'] = self.ph.text().strip()
+            if not p['ph']:
+                p.pop('ph')
+        elif k == 'count':
+            p['v'] = str(self.val.value())
+            p['s'] = str(self.step.value())
+            for key, sp in (('mn', self.mn), ('mx', self.mx)):
+                if sp.value() == sp.minimum():
+                    p.pop(key, None)
+                else:
+                    p[key] = str(sp.value())
+            if p.get('mn', '') != '' and _ctl_int(p['v']) < _ctl_int(p['mn']):
+                p['v'] = p['mn']
+            if p.get('mx', '') != '' and _ctl_int(p['v']) > _ctl_int(p['mx']):
+                p['v'] = p['mx']
+        elif k == 'sel':
+            opts = [o.strip() for o in self.opts.toPlainText().split('\n') if o.strip()]
+            p['o'] = '\n'.join(opts)
+            p['i'] = str(max(0, self.cur.currentIndex()))
+        elif k == 'copy':
+            p['label'] = self.label.text().strip() or "Copiar"
+            p['t'] = self.txt.toPlainText()
+        return p
 
 
 # --- [NUEVO] Dialogo de Máscara de Jerarquía ---
@@ -8593,17 +9111,30 @@ class InlineTextEditor(QTextEdit):
         menu.addSeparator()
         
         link_at_click = self.anchorAt(pos)
-        cursor_on_link = has_selection and bool(cursor.charFormat().anchorHref())
-        link_action = QAction(self._txt_lbl('link', "Insertar/Editar enlace..."), self)
-        link_action.setEnabled(has_selection or cursor_on_link or bool(link_at_click))
-
-        def _trigger_insert_link():
-            if not self.textCursor().hasSelection() and link_at_click:
-                self.setTextCursor(self.cursorForPosition(pos))
-            self._insert_link()
-
-        link_action.triggered.connect(_trigger_insert_link)
-        menu.addAction(link_action)
+        # [PACK215] sobre un control (o un enlace): "Editar <tipo>"; si no, el submenu para insertar uno
+        ctl_here = link_at_click or (cursor.charFormat().anchorHref() if has_selection else '')
+        if ctl_here:
+            _kind, _p = ctl_parse(ctl_here)
+            _name = CTL_NAMES.get(_kind, 'control')
+            _click_doc_pos = self.cursorForPosition(pos).position()
+            edit_ctl = QAction(self._txt_lbl('link', "Editar %s..." % _name), self)
+            edit_ctl.triggered.connect(lambda _c=False, h=ctl_here, dp=_click_doc_pos: self._ctl_edit(h, dp))
+            menu.addAction(edit_ctl)
+            del_ctl = QAction(("Quitar %s" if _kind == 'check' else "Quitar %s (deja su texto)") % _name, self)
+            del_ctl.triggered.connect(lambda _c=False, h=ctl_here, dp=_click_doc_pos: self._ctl_remove(h, dp))
+            menu.addAction(del_ctl)
+        else:
+            ctl_menu = QMenu("Insertar / editar control", menu)
+            for _k, _t in (('link', "Enlace..."), ('button', "Bot\u00f3n enlace..."), (None, None),
+                           ('check', "Casilla de verificaci\u00f3n"), ('text', "Campo de texto..."), ('count', "Contador..."),
+                           ('sel', "Selector de opciones..."), (None, None), ('copy', "Bot\u00f3n copiar...")):
+                if _k is None:
+                    ctl_menu.addSeparator()
+                    continue
+                _a = QAction(self._txt_lbl('link', _t) if _k == 'link' else _t, ctl_menu)
+                _a.triggered.connect(lambda _c=False, k=_k: self._ctl_insert(k))
+                ctl_menu.addAction(_a)
+            menu.addMenu(ctl_menu)
         
         menu.addSeparator()
         
@@ -8641,6 +9172,16 @@ class InlineTextEditor(QTextEdit):
             
         if event.button() == Qt.LeftButton and (event.modifiers() & Qt.ControlModifier):
             anchor = self.anchorAt(event.position().toPoint())
+            if anchor and anchor.startswith(CTL_SCHEME):            # [PACK215] un control: se usa aqui mismo
+                cur = QTextCursor(self.document())
+                cur.beginEditBlock()
+                try:
+                    ctl_activate(self.document(), anchor, self, self._ctl_default_fg(),
+                                 self.cursorForPosition(event.position().toPoint()).position())
+                finally:
+                    cur.endEditBlock()
+                event.accept()
+                return
             if anchor:
                 parent_win = self.window()
                 if hasattr(parent_win, '_execute_link'):
@@ -8735,7 +9276,10 @@ class InlineTextEditor(QTextEdit):
                                'align_right': Qt.AlignRight, 'align_justify': Qt.AlignJustify}[c])
         elif c == 'link':
             cur = self.textCursor()
-            if cur.hasSelection() or cur.charFormat().anchorHref():
+            h = cur.charFormat().anchorHref()
+            if h and ctl_parse(h)[0] not in ('link', 'button'):
+                self._ctl_edit(h, cur.position())                    # [PACK215] sobre un control: editarlo
+            else:
                 self._insert_link()
         elif c == 'font':
             self._change_selection_font()
@@ -8787,6 +9331,273 @@ class InlineTextEditor(QTextEdit):
     def _expand_selection_to_full_link(self, cursor):
         return expand_href_selection(self.document(), cursor)
 
+    # ---- [PACK215] controles
+    def _ctl_default_fg(self):
+        return getattr(self, '_layer_color', None) or self.palette().color(self.foregroundRole()).name()
+
+    def _ctl_base_format(self, cur):
+        f = QTextCharFormat(cur.charFormat())
+        if f.isAnchor():
+            f = ctl_plain_format(f)
+        f.setForeground(QColor(ctl_fg(f, self._ctl_default_fg())))
+        return f
+
+    def _ctl_insert(self, kind):
+        if kind in ('link', 'button'):
+            self._insert_link(as_button=(kind == 'button'))
+            return
+        cur = self.textCursor()
+        sel = cur.selectedText().replace('\u2029', ' ').replace('\u2028', ' ').replace('\ufffc', '').strip() if cur.hasSelection() else ''
+        p = {'id': ctl_new_id()}
+        if kind == 'check':
+            p.update(v='0', st='box')
+        elif kind == 'text':
+            p['v'] = sel
+        elif kind == 'count':
+            p.update(v=str(_ctl_int(sel, 0)), s='1')
+        elif kind == 'sel':
+            p.update(o=sel or "Pendiente\nEn curso\nHecho", i='0')
+        elif kind == 'copy':
+            p.update(label="Copiar", t=sel, btn='1')
+        if kind != 'check':
+            dlg = ControlEditDialog(kind, p, self)
+            if not dlg.exec():
+                return
+            p = dlg.result_params()
+        cur = self.textCursor()
+        base = self._ctl_base_format(cur)
+        cur.beginEditBlock()
+        try:
+            if kind == 'check':
+                if cur.hasSelection():
+                    cur.setPosition(cur.selectionStart())          # la casilla delante de lo seleccionado
+                cur.insertText(ctl_display('check', p), ctl_char_format(base, 'check', p, base.foreground().color().name()))
+                cur.insertText(' ', ctl_plain_format(base))
+            elif kind == 'count':
+                if cur.hasSelection():
+                    cur.removeSelectedText()
+                fg = base.foreground().color().name()
+                for op in ('-1', '0', '1'):
+                    pp = dict(p) if op == '0' else {'id': p['id']}
+                    pp['op'] = op
+                    cur.insertText(ctl_display('count', pp), ctl_char_format(base, 'count', pp, fg))
+                cur.setCharFormat(ctl_plain_format(base))
+            elif kind == 'copy':
+                if cur.hasSelection():
+                    cur.removeSelectedText()
+                self._ctl_insert_copy_button(cur, p)
+                cur.setCharFormat(ctl_plain_format(base))          # lo que se escriba despues ya no es parte del boton
+            else:
+                if cur.hasSelection():
+                    cur.removeSelectedText()
+                cur.insertText(ctl_display(kind, p), ctl_char_format(base, kind, p, base.foreground().color().name()))
+                cur.setCharFormat(ctl_plain_format(base))
+        finally:
+            cur.endEditBlock()
+        self.setTextCursor(cur)
+
+    def _ctl_insert_copy_button(self, cur, p):
+        bg_color = "#7c3aed"
+        parent_win = self.window()
+        if hasattr(parent_win, '_get_layer2_button_color'):
+            bg_color = parent_win._get_layer2_button_color()
+        _cf = cur.charFormat()
+        font = _cf.font()
+        if font.pointSize() <= 0 and font.pixelSize() <= 0:
+            font = self.font()
+        if not _cf.hasProperty(QTextFormat.FontPointSize) and self.font().pointSize() > 0:
+            font.setPointSize(self.font().pointSize())          # el tamano del texto de la nota
+        if not _cf.hasProperty(QTextFormat.FontFamilies) and not _cf.hasProperty(QTextFormat.FontFamily):
+            font.setFamily(self.font().family())
+        font.setBold(True)
+        if p.get('ff'):
+            font.setFamily(p['ff'])
+        if _ctl_int(p.get('fs'), 0):
+            font.setPointSize(_ctl_int(p.get('fs')))
+        p.setdefault('ff', font.family())
+        p.setdefault('fs', str(font.pointSize() if font.pointSize() > 0 else 16))
+        p['btn'] = '1'
+        label = p.get('label') or "Copiar"
+        src, w, h = generate_button_images(label, bg_color, font, IMAGES_DIR, None)
+        href = ctl_href('copy', p).replace('&', '&amp;').replace('"', '&quot;')
+        alt = label.replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;')
+        _st = cur.position()
+        _c0 = QTextCursor(cur.document())
+        _c0.setPosition(_st)
+        _bf = _c0.blockFormat()
+        _snap = _snap_blocks56(self.document())
+        cur.insertHtml(f'<a href="{href}" style="text-decoration: none;"><img src="{src}" width="{w}" height="{h}" alt="{alt}" border="0" style="vertical-align: middle;" /></a>')
+        _fx = QTextCursor(cur.document())
+        _fx.setPosition(_st)
+        _fx.setPosition(cur.position(), QTextCursor.KeepAnchor)
+        _fx.setBlockFormat(_bf)
+        _restore_blocks56(self.document(), _snap)
+
+    def _ctl_edit(self, href, doc_pos=None):
+        kind, p = ctl_parse(href)
+        doc = self.document()
+        if kind in ('link', 'button'):
+            c = QTextCursor(doc)
+            c.setPosition(doc_pos if doc_pos is not None else self.textCursor().position())
+            hit = ctl_find(doc, href, doc_pos)
+            if hit is not None:
+                c.setPosition(hit[0])
+                c.setPosition(hit[1], QTextCursor.KeepAnchor)
+            self.setTextCursor(c)
+            self._insert_link()
+            return
+        if kind == 'count' and p.get('op', '0') != '0':
+            found = ctl_count_value(doc, p.get('id'))
+            if found is None:
+                return
+            href = ctl_href('count', found[2])
+            p = found[2]
+            doc_pos = found[0]
+        hit = ctl_find(doc, href, doc_pos)
+        if hit is None:
+            return
+        dlg = ControlEditDialog(kind, p, self, editing=True)
+        if not dlg.exec():
+            return
+        np_ = dlg.result_params()
+        s, e = hit
+        c0 = QTextCursor(doc)
+        c0.setPosition(s + 1 if e > s else s)
+        fg = ctl_fg(c0.charFormat(), self._ctl_default_fg())
+        cur = QTextCursor(doc)
+        cur.beginEditBlock()
+        try:
+            if kind == 'copy':
+                cur.setPosition(s)
+                cur.setPosition(e, QTextCursor.KeepAnchor)
+                cur.removeSelectedText()
+                self._ctl_insert_copy_button(cur, np_)
+            else:
+                c = ctl_write(doc, s, e, kind, np_, fg)
+                if kind == 'check' and (np_.get('tx') == '1' or p.get('tx') == '1'):
+                    ctl_set_strike(doc, c.position(), np_.get('tx') == '1' and np_.get('v') == '1')
+        finally:
+            cur.endEditBlock()
+
+    def _ctl_remove(self, href, doc_pos=None):
+        """Quita el control y deja su texto (el de un enlace, el valor de un campo, la opcion elegida...)."""
+        kind, p = ctl_parse(href)
+        doc = self.document()
+        cur = QTextCursor(doc)
+        cur.beginEditBlock()
+        try:
+            if kind == 'count':
+                parts = [(s, e) for s, e, h, _b in ctl_fragments(doc)
+                         if h.startswith(CTL_SCHEME + 'count') and ctl_parse(h)[1].get('id') == p.get('id')]
+                val = ctl_count_value(doc, p.get('id'))
+                text = str(_ctl_int(val[2].get('v'), 0)) if val else ''
+                if not parts:
+                    return
+                s, e = parts[0][0], parts[-1][1]
+            else:
+                hit = ctl_find(doc, href, doc_pos)
+                if hit is None:
+                    return
+                s, e = hit
+                if kind == 'check':
+                    text = ''
+                elif kind == 'text':
+                    text = p.get('v', '')
+                elif kind == 'sel':
+                    text = ctl_display('sel', p)[:-2]
+                elif kind in ('button', 'copy'):
+                    text = p.get('label', '')
+                else:
+                    c = QTextCursor(doc)
+                    c.setPosition(s)
+                    c.setPosition(e, QTextCursor.KeepAnchor)
+                    text = c.selectedText().replace('\ufffc', '')
+            c = QTextCursor(doc)
+            c.setPosition(s + 1 if e > s else s)
+            base = ctl_plain_format(c.charFormat())
+            if kind in ('link', 'button', 'copy'):
+                base.setFontUnderline(False)
+            c.setPosition(s)
+            c.setPosition(e, QTextCursor.KeepAnchor)
+            c.insertText(text, base)
+            if kind == 'check':                     # y el espacio que va detras
+                c2 = QTextCursor(doc)
+                c2.setPosition(c.position())
+                c2.setPosition(c.position() + 1, QTextCursor.KeepAnchor)
+                if c2.selectedText() == ' ':
+                    c2.removeSelectedText()
+        finally:
+            cur.endEditBlock()
+
+    def _ctl_markdown_check(self):
+        """'[ ] ' o '[x] ' al principio de una linea: se convierte en una casilla (como en Markdown)."""
+        cur = self.textCursor()
+        if cur.hasSelection():
+            return False
+        blk = cur.block()
+        off = cur.position() - blk.position()
+        t = blk.text()[:off]
+        if off != 3 or t.lower() not in ('[ ]', '[x]'):
+            return False
+        c = QTextCursor(self.document())
+        c.setPosition(blk.position())
+        c.setPosition(blk.position() + 3, QTextCursor.KeepAnchor)
+        if c.charFormat().isAnchor():
+            return False
+        base = self._ctl_base_format(c)
+        p = {'id': ctl_new_id(), 'v': '1' if t.lower() == '[x]' else '0', 'st': 'box'}
+        c.beginEditBlock()
+        c.insertText(ctl_display('check', p), ctl_char_format(base, 'check', p, base.foreground().color().name()))
+        c.insertText(' ', ctl_plain_format(base))
+        c.endEditBlock()
+        self.setTextCursor(c)
+        return True
+
+    def _ctl_list_enter(self):
+        """Intro en una linea que empieza por una casilla: la siguiente tambien (y si la linea solo tenia la casilla, se quita)."""
+        cur = self.textCursor()
+        if cur.hasSelection():
+            return False
+        blk = cur.block()
+        it = blk.begin()
+        first = None
+        while not it.atEnd():
+            fr = it.fragment()
+            if fr.isValid():
+                first = fr
+                break
+            it += 1
+        if first is None or not first.charFormat().isAnchor():
+            return False
+        h = first.charFormat().anchorHref()
+        kind, p = ctl_parse(h)
+        if kind != 'check':
+            return False
+        rest = blk.text()[first.length():].strip()
+        base = ctl_plain_format(first.charFormat())
+        cur.beginEditBlock()
+        try:
+            if not rest and cur.position() == blk.position() + blk.length() - 1:
+                c = QTextCursor(self.document())
+                c.setPosition(blk.position())
+                c.setPosition(blk.position() + blk.length() - 1, QTextCursor.KeepAnchor)
+                c.insertText('', base)
+                self.setTextCursor(c)
+                return True
+            cur.insertText('\n', base)
+            np_ = {'id': ctl_new_id(), 'v': '0', 'st': p.get('st', 'box')}
+            if p.get('tx') == '1':
+                np_['tx'] = '1'
+            fg = ctl_fg(first.charFormat(), self._ctl_default_fg())
+            nb = ctl_plain_format(first.charFormat())
+            nb.setFontStrikeOut(False)
+            cur.insertText(ctl_display('check', np_), ctl_char_format(nb, 'check', np_, fg))
+            cur.insertText(' ', nb)
+        finally:
+            cur.endEditBlock()
+        self.setTextCursor(cur)
+        return True
+
     def select_anchor_by_href(self, href):
         doc = self.document()
         length = doc.characterCount()
@@ -8800,13 +9611,14 @@ class InlineTextEditor(QTextEdit):
                 return self._expand_selection_to_full_link(start_cursor)
         return None
 
-    def _insert_link(self):
+    def _insert_link(self, as_button=None):
         cursor = self.textCursor()
+        # [PACK215] sin seleccion tambien: se inserta en el cursor (el texto se escribe en el dialogo)
+        _h0 = cursor.charFormat().anchorHref()
+        if _h0 and _h0.startswith(CTL_SCHEME):
+            self._ctl_edit(_h0, cursor.position())
+            return
 
-        if not cursor.hasSelection():
-            if not cursor.charFormat().anchorHref():
-                return
-        
         if cursor.charFormat().anchorHref():
             cursor = self._expand_selection_to_full_link(cursor)
 
@@ -8837,7 +9649,10 @@ class InlineTextEditor(QTextEdit):
             if raw_selected:
                 current_label = raw_selected
         
+        if as_button is not None and not current_href:
+            current_is_button = bool(as_button)                     # [PACK215] lo elegido en el menu
         dialog = LinkEditDialog(current_url, current_mode, current_is_button, current_label, current_ff, current_fs, self, current_tc)
+        dialog.setWindowTitle(("Editar " if current_href else "Insertar ") + ("bot\u00f3n enlace" if current_is_button else "enlace"))
         if dialog.exec():
             url, mode, is_button, label_text, ff_val, fs_val = dialog.get_data()
             tc_val = dialog.get_text_color()          # [PACK150]
@@ -8956,9 +9771,7 @@ class InlineTextEditor(QTextEdit):
         
         if (modifiers & Qt.ControlModifier):
             if _legacy and event.key() == Qt.Key_K:
-                cur = self.textCursor()
-                if cur.hasSelection() or cur.charFormat().anchorHref():
-                    self._insert_link()
+                self.run_text_command('txt_link')                    # [PACK215]
                 event.accept()
                 return
             elif _legacy and event.key() == Qt.Key_B:
@@ -8996,17 +9809,24 @@ class InlineTextEditor(QTextEdit):
             return
 
         if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+            if self._ctl_list_enter():                               # [PACK215] lista de casillas
+                event.accept()
+                return
             self.textCursor().insertText('\n')
             event.accept()
             return
-            
+
+        if event.key() == Qt.Key_Space and not (modifiers & (Qt.ControlModifier | Qt.AltModifier)) and self._ctl_markdown_check():
+            event.accept()                                           # [PACK215] "[ ] " -> casilla
+            return
+
         super().keyPressEvent(event)
 
     def focusOutEvent(self, event):
         active_popup = QApplication.activePopupWidget()
         active_modal = QApplication.activeModalWidget()
         
-        if active_popup and isinstance(active_popup, QMenu):
+        if active_popup and isinstance(active_popup, (QMenu, _CtlPopup)):
             log_debug("Editor", "Focus out ignorado (menu activo).")
             super().focusOutEvent(event)
             return
@@ -9916,7 +10736,7 @@ HOTKEY_COMMANDS = [
     ("txt_underline", "Subrayado", "Ctrl+U", False, True), ("txt_strike", "Tachado", "Ctrl+Shift+X", False, True),
     ("txt_align_left", "Alinear a la izquierda", "Ctrl+L", False, True), ("txt_align_center", "Centrar", "Ctrl+E", False, True),
     ("txt_align_right", "Alinear a la derecha", "Ctrl+R", False, True), ("txt_align_justify", "Justificar", "Ctrl+J", False, True),
-    ("txt_link", "Insertar / editar enlace", "Ctrl+K", False, True),
+    ("txt_link", "Insertar / editar enlace (o el control donde est\u00e9 el cursor)", "Ctrl+K", False, True),
     ("txt_font", "Cambiar la fuente... (a la selecci\u00f3n, o a todo el texto si no hay)", "", False, True),
     ("txt_size", "Cambiar el tama\u00f1o... (a la selecci\u00f3n, o a todo el texto si no hay)", "", False, True),
     ("txt_color", "Cambiar el color... (a la selecci\u00f3n, o a todo el texto si no hay)", "", False, True),
@@ -14641,7 +15461,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 214                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 215                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
