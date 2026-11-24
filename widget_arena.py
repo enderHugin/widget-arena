@@ -15460,8 +15460,8 @@ def font_boot(m):
 
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
-APP_VERSION = "2026.10.31"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 215                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_VERSION = "2026.11.24"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
+APP_PACK = 216                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -17659,12 +17659,9 @@ class UpdateDialog(QDialog):
         root.addWidget(self.chk_inst)
         self.chk_watch = QCheckBox("Actualizar autom\u00e1ticamente en cuanto se detecte una versi\u00f3n nueva (vigila mientras el programa est\u00e9 abierto)")          # [PACK182]
         self.chk_watch.setChecked(self.m.update_watch_on())
-        self.chk_watch.setVisible(self.chk_watch.isChecked())          # oculta salvo que este activada; se muestra con Mayus+Ctrl+Win+Alt+F12
+        self.chk_watch.setVisible(self.chk_watch.isChecked())          # oculta salvo que este activada; se muestra con Ctrl+Mayus+Alt+F12 (con o sin Win), desde cualquier ventana
         self.chk_watch.toggled.connect(self._watch_toggled)
         root.addWidget(self.chk_watch)
-        from PySide6.QtGui import QShortcut
-        self._reveal_sc = QShortcut(QKeySequence("Ctrl+Shift+Alt+Meta+F12"), self)
-        self._reveal_sc.activated.connect(self._reveal_watch)
         row = QHBoxLayout()
         self.b_check = QPushButton("Buscar de nuevo")
         self.b_check.clicked.connect(self.start_check)
@@ -25436,6 +25433,14 @@ class WidgetManager(QObject):
         pack_load_fonts()                       # [PACK112] fuentes que traen los packs instalados
         font_boot(self)                         # [PACK113] fuentes libres, sustitutas y predeterminada
         update_boot(self)                       # [PACK114] aviso de version nueva al abrir
+        # [PACK216] atajo secreto de «vigilar sola» desde cualquier ventana, con o sin Win
+        from PySide6.QtGui import QShortcut
+        self._secret_sc = []
+        for seq in ("Ctrl+Shift+Alt+F12", "Ctrl+Shift+Alt+Meta+F12"):
+            sc = QShortcut(QKeySequence(seq), self.dialog_parent)
+            sc.setContext(Qt.ApplicationShortcut)
+            sc.activated.connect(lambda: self.show_updates(check=False)._reveal_watch())
+            self._secret_sc.append(sc)
         self.user32 = None
         if self.console_hwnd:
             try:

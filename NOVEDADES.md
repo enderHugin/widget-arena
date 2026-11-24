@@ -1,3 +1,6 @@
+## Pack 216 · 2026-11-24
+- El atajo secreto de *Actualizaciones* para «vigilar sola» ahora es **Ctrl+Mayús+Alt+F12**, con o sin la tecla Win, y funciona desde cualquier ventana de widget-arena: abre *Actualizaciones* con la casilla ya visible.
+
 ## Pack 215 · 2026-11-22
 - **Controles dentro del texto de una nota.** En el menú del clic derecho al editar el texto, «Insertar/Editar enlace» pasa a ser el submenú **Insertar / editar control**, con:
   - **Enlace** y **Botón enlace**: los de siempre, cada uno con su entrada. Ahora también se pueden insertar sin seleccionar texto antes: el texto se escribe en el diálogo.
