@@ -29,7 +29,9 @@ if not m:
 notes = open('NOVEDADES.md', encoding='utf-8').read()[:4000] if os.path.exists('NOVEDADES.md') else ''
 files = {n: {'sha256': sha(n), 'size': os.path.getsize(n)} for n in ('widget_arena.py', 'herramientas.py', 'pyi_update.py')}
 with open(os.path.join(out, 'dl', 'update.json'), 'w', encoding='utf-8') as f:
-    json.dump({'pack': int(m.group(1)), 'version': ver, 'notes': notes, 'files': files}, f, ensure_ascii=False, indent=2)
+    upd = re.search(r"^PYI_VERSION = '([^']+)'", open('pyi_update.py', encoding='utf-8').read(), re.M)   # version del actualizador comun
+    json.dump({'pack': int(m.group(1)), 'version': ver, 'notes': notes, 'updater': upd.group(1) if upd else None,
+               'files': files}, f, ensure_ascii=False, indent=2)
 PYEOF
 cp assets/icon.png assets/icon.ico assets/icon.icns "$OUT/dl/"
 # notas de bienvenida y perfil de ejemplo (se copian en el primer arranque): defaults.zip con carpeta "defaults/" en la raiz
