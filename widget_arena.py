@@ -15461,7 +15461,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.11.24"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 216                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 217                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -15479,7 +15479,12 @@ def update_state():
                 d = json.load(f)
         except Exception:
             d = {}
-        _UPDATE_ST = d if isinstance(d, dict) else {}
+        d = d if isinstance(d, dict) else {}
+        # [PACK217] nombres del actualizador comun: watch -> silent_watch, auto_install -> auto_apply
+        for old, new in (('watch', 'silent_watch'), ('auto_install', 'auto_apply')):
+            if old in d and new not in d:
+                d[new] = bool(d[old])
+        _UPDATE_ST = d
     return _UPDATE_ST
 
 
@@ -15665,34 +15670,10 @@ def autostart_set(on):
         return False
 
 
-class _UpdateWorker(QObject):
-    """Hace la comprobacion y la instalacion en segundo plano y avisa con una senal."""
-    checked = Signal(dict)
-    applied = Signal(dict)
-
-    def check(self):
-        import threading
-        threading.Thread(target=self._do_check, daemon=True).start()
-
-    def _do_check(self):
-        self.checked.emit(update_check())
-
-    def apply(self, info, rollback=False):
-        import threading
-        threading.Thread(target=self._do_apply, args=(info, rollback), daemon=True).start()
-
-    def _do_apply(self, info, rollback):
-        try:
-            r = update_rollback() if rollback else update_apply(info)
-            r['ok'] = True
-        except Exception as e:
-            log_warn("Actualizar", "%s" % e)
-            r = {'ok': False, 'error': str(e) or e.__class__.__name__}
-        self.applied.emit(r)
-
-
 def update_boot(m):
-    QTimer.singleShot(12000, m.update_auto_check)
+    """[PACK217] Las actualizaciones las lleva entero el actualizador comun de py-installer (pyi_update.qt_install):
+    la misma ventana, el mismo «al abrir», «vigilar sola» y el atajo secreto Ctrl+Mayus+Alt+F12 que en los demas programas."""
+    QTimer.singleShot(600, m._updates_ctl)
 
 
 # ---- imagenes: generadas (nota base) o propias ------------------------------------------------------------------------
@@ -17615,175 +17596,6 @@ class FontExportDialog(QDialog):
 
     def scope(self):
         return 'share' if self.rb_share.isChecked() else 'personal'
-
-
-class UpdateDialog(QDialog):
-    """[PACK114] Actualizaciones: version instalada y publicada, novedades, instalar, volver a la anterior y aviso al abrir el programa."""
-
-    def __init__(self, manager):
-        super().__init__(None)
-        from PySide6.QtWidgets import QTextBrowser
-        self.m = manager
-        self.res = None
-        self.busy = False
-        self.setWindowTitle("Actualizaciones")
-        self.setAttribute(Qt.WA_QuitOnClose, False)
-        self.resize(640, 520)
-        self.w = _UpdateWorker(self)
-        self.w.checked.connect(self._on_checked)
-        self.w.applied.connect(self._on_applied)
-        root = QVBoxLayout(self)
-        t1 = QLabel("Actualizaciones")
-        t1.setStyleSheet("font-size:18px;font-weight:bold;")
-        root.addWidget(t1)
-        self.lb_local = QLabel("")
-        self.lb_remote = QLabel("")
-
-        root.addWidget(self.lb_local)
-        root.addWidget(self.lb_remote)
-        self.status = QLabel("")
-        self.status.setWordWrap(True)
-        self.status.setStyleSheet("background:#2b2b2f;border-radius:6px;padding:8px;")
-        root.addWidget(self.status)
-        root.addWidget(QLabel("Novedades"))
-        self.notes = QTextBrowser()
-        self.notes.setOpenExternalLinks(True)
-        root.addWidget(self.notes, 1)
-        self.chk_auto = QCheckBox("Avisarme al abrir el programa si hay una versi\u00f3n nueva")
-        self.chk_auto.setChecked(update_state().get('auto', True) is not False)
-        self.chk_auto.toggled.connect(self._auto_toggled)
-        root.addWidget(self.chk_auto)
-        self.chk_inst = QCheckBox("Actualizar autom\u00e1ticamente al iniciar (sin preguntar; se guarda una copia por si quieres volver)")          # [PACK180]
-        self.chk_inst.setChecked(self.m.update_auto_install_on())
-        self.chk_inst.toggled.connect(self.m.set_update_auto_install)
-        root.addWidget(self.chk_inst)
-        self.chk_watch = QCheckBox("Actualizar autom\u00e1ticamente en cuanto se detecte una versi\u00f3n nueva (vigila mientras el programa est\u00e9 abierto)")          # [PACK182]
-        self.chk_watch.setChecked(self.m.update_watch_on())
-        self.chk_watch.setVisible(self.chk_watch.isChecked())          # oculta salvo que este activada; se muestra con Ctrl+Mayus+Alt+F12 (con o sin Win), desde cualquier ventana
-        self.chk_watch.toggled.connect(self._watch_toggled)
-        root.addWidget(self.chk_watch)
-        row = QHBoxLayout()
-        self.b_check = QPushButton("Buscar de nuevo")
-        self.b_check.clicked.connect(self.start_check)
-        self.b_back = QPushButton("Volver a la versi\u00f3n anterior")
-
-        self.b_back.clicked.connect(self._rollback)
-        self.b_go = QPushButton("Actualizar y reiniciar")
-        self.b_go.setStyleSheet("QPushButton{font-weight:bold;padding:8px 18px;}")
-        self.b_go.clicked.connect(self._apply)
-        close = QPushButton("Cerrar")
-        close.clicked.connect(self.close)
-        row.addWidget(self.b_check)
-        row.addWidget(self.b_back)
-        row.addStretch(1)
-        row.addWidget(close)
-        row.addWidget(self.b_go)
-        root.addLayout(row)
-        self._fill_local()
-        self._buttons()
-
-    def _fill_local(self):
-        loc = update_local_info()
-        self.lb_local.setText("Tu versi\u00f3n:  pack %d%s  \u00b7  huella %s" % (loc['pack'], ("  \u00b7  " + loc['label']) if loc['label'] else "", loc['sha256'][:8] or "?"))
-        self.lb_remote.setText("Publicada:  \u2014")
-
-    def _buttons(self):
-        r = self.res or {}
-        frozen = bool(getattr(sys, 'frozen', False))
-        can = bool(r.get('ok')) and r.get('state') in ('newer', 'diverged') and not frozen and not self.busy
-        self.b_go.setEnabled(can)
-        self.b_go.setText("Sustituir por la publicada" if r.get('state') == 'diverged' else "Actualizar y reiniciar")
-        self.b_back.setEnabled(update_backup_available() and not frozen and not self.busy)
-        self.b_check.setEnabled(not self.busy)
-
-    def start_check(self):
-        self.busy = True
-        self.status.setText("Buscando la versi\u00f3n publicada...")
-        self._buttons()
-        self.w.check()
-
-    def _reveal_watch(self):
-        self.chk_watch.setVisible(True)
-
-    def _watch_toggled(self, on):
-        self.m.set_update_watch(on)
-        if not on:
-            self.chk_watch.setVisible(False)          # desactivada: vuelve a ser invisible
-
-    def keyPressEvent(self, e):
-        mods = Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier
-        if e.key() == Qt.Key_F12 and (e.modifiers() & mods) == mods:
-            self._reveal_watch()
-            return
-        super().keyPressEvent(e)
-
-    def _auto_toggled(self, on):
-        update_state()['auto'] = bool(on)
-        update_state_save()
-
-    def _on_checked(self, r):
-        self.busy = False
-        self.res = r
-        self._fill_local()
-        if not r.get('ok'):
-            self.status.setText("No se pudo comprobar: %s\nRevisa tu conexi\u00f3n e int\u00e9ntalo de nuevo." % r.get('error', ''))
-            self._buttons()
-            return
-        info, st = r['info'], r['state']
-        self.lb_remote.setText("Publicada:  pack %s%s" % (info.get('pack'), ("  \u00b7  " + str(info.get('version'))) if info.get('version') else ""))
-        try:
-            self.notes.setMarkdown(str(info.get('notes') or "(sin novedades indicadas)"))
-        except Exception:
-            self.notes.setPlainText(str(info.get('notes') or ""))
-        if getattr(sys, 'frozen', False) and st in ('newer', 'diverged'):
-            self.status.setText("Hay una versi\u00f3n m\u00e1s nueva, pero esta instalaci\u00f3n es un ejecutable: descarga el instalador nuevo desde la p\u00e1gina del programa.")
-        else:
-            self.status.setText({
-                'newer': "Hay una versi\u00f3n nueva (pack %s). Se guardar\u00e1 una copia de la actual y el programa se reiniciar\u00e1; tus notas y ajustes no se tocan." % info.get('pack'),
-                'same': "Ya tienes la \u00faltima versi\u00f3n.",
-                'older': "Tu copia (pack %d) es m\u00e1s nueva que la publicada (pack %s): no hay nada que actualizar." % (r['local']['pack'], info.get('pack')),
-                'diverged': "Tienes el mismo pack que la web, pero tu archivo es distinto (cambios tuyos sin publicar). Puedes sustituirlo por el publicado: se guarda una copia.",
-            }[st])
-
-        self._buttons()
-
-    def apply_result(self, r):
-        """Desde el aviso del arranque: ya se sabe que hay una version nueva y el usuario dijo que si."""
-        self._on_checked(r)
-        self._apply(confirm=False)
-
-    def _apply(self, confirm=True):
-        r = self.res or {}
-        if not r.get('ok') or r.get('state') not in ('newer', 'diverged'):
-            return
-        if confirm:
-            warn = "\n\nTu archivo tiene cambios que no est\u00e1n publicados; se guardar\u00e1 una copia por si quieres volver." if r['state'] == 'diverged' else ""
-            if QMessageBox.question(self, "Actualizar", "Se descargar\u00e1 la versi\u00f3n publicada (pack %s), se guardar\u00e1 una copia de la actual y el programa se reiniciar\u00e1.%s\n\n\u00bfContinuar?" % (r['info'].get('pack'), warn)) != QMessageBox.Yes:
-                return
-        self.busy = True
-        self.status.setText("Descargando e instalando...")
-        self._buttons()
-        self.w.apply(r['info'])
-
-    def _rollback(self):
-        if QMessageBox.question(self, "Volver a la versi\u00f3n anterior", "Se restaurar\u00e1 la copia guardada en la \u00faltima actualizaci\u00f3n y el programa se reiniciar\u00e1. La versi\u00f3n actual queda guardada.\n\n\u00bfContinuar?") != QMessageBox.Yes:
-            return
-        self.busy = True
-        self.status.setText("Restaurando...")
-        self._buttons()
-        self.w.apply(None, True)
-
-    def _on_applied(self, r):
-        self.busy = False
-        if not r.get('ok'):
-            self.status.setText("No se pudo completar: %s\nNo se ha cambiado nada." % r.get('error', ''))
-            self._buttons()
-            QMessageBox.warning(self, "Actualizar", "No se pudo completar:\n%s\n\nNo se ha cambiado nada." % r.get('error', ''))
-            return
-        self.status.setText("Listo. El programa se reinicia en unos segundos...")
-        self._buttons()
-        self.b_go.setEnabled(False)
-        QTimer.singleShot(900, self.m.update_restart_app)
 
 
 class PackExportDialog(QDialog):
@@ -25433,14 +25245,6 @@ class WidgetManager(QObject):
         pack_load_fonts()                       # [PACK112] fuentes que traen los packs instalados
         font_boot(self)                         # [PACK113] fuentes libres, sustitutas y predeterminada
         update_boot(self)                       # [PACK114] aviso de version nueva al abrir
-        # [PACK216] atajo secreto de «vigilar sola» desde cualquier ventana, con o sin Win
-        from PySide6.QtGui import QShortcut
-        self._secret_sc = []
-        for seq in ("Ctrl+Shift+Alt+F12", "Ctrl+Shift+Alt+Meta+F12"):
-            sc = QShortcut(QKeySequence(seq), self.dialog_parent)
-            sc.setContext(Qt.ApplicationShortcut)
-            sc.activated.connect(lambda: self.show_updates(check=False)._reveal_watch())
-            self._secret_sc.append(sc)
         self.user32 = None
         if self.console_hwnd:
             try:
@@ -32950,28 +32754,23 @@ class WidgetManager(QObject):
             self._osd(msg, 2500)
         return path, len(notes), media_count(imgs), skipped
 
-    # ---- [PACK114] actualizaciones
-    def show_updates(self, check=True):
-        d = getattr(self, 'update_dialog', None)
-        if d is None or not d.isVisible():
-            d = self.update_dialog = UpdateDialog(self)
-            if check:
-                d.start_check()
-        d.show()
-        d.raise_()
-        d.activateWindow()
-        return d
+    # ---- [PACK114] [PACK217] actualizaciones: actualizador comun (pyi_update.qt_install)
+    def _updates_ctl(self):
+        ctl = getattr(self, '_upd_ctl', None)
+        if ctl is None:
+            off = bool(os.environ.get('WA_OFFLINE') or getattr(sys, 'frozen', False))
+            ctl = self._upd_ctl = _pyi_update_module().qt_install(
+                "Widget Arena", _upd(), on_close=self.safe_quit, parent=self.dialog_parent,
+                notify=lambda t: self._osd(t, 3500), startup_delay_ms=10 ** 9 if off else 12000,
+                watch_every_ms=UPDATE_WATCH_MS)
+        return ctl
 
-    def set_screen_scale(self, mode):
-        """[PACK213] Cambia el modo de escala de los monitores: se aplica al reiniciar."""
-        if mode == screen_scale_mode():
-            return
-        if not set_screen_scale_mode(mode):
-            QMessageBox.warning(None, "Monitores con distinta escala", "No se pudo guardar el cambio.")
-            return
-        if QMessageBox.question(None, "Monitores con distinta escala",
-                                "El cambio se aplica al reiniciar el programa.\n\n\u00bfReiniciar ahora?") == QMessageBox.Yes:
-            self.update_restart_app()
+    def show_updates(self, check=True):
+        try:
+            return self._updates_ctl().show(check=check)
+        except Exception as e:
+            log_error("Actualizar", "No se pudo abrir el actualizador: %s" % e)
+            QMessageBox.warning(None, "Actualizaciones", "No se pudo abrir el actualizador:\n\n%s" % e)
 
     def update_restart_app(self):
         """Arranca otra vez el programa (pasados unos segundos) y cierra este con el guardado de siempre."""
@@ -32983,22 +32782,17 @@ class WidgetManager(QObject):
             return
         self.safe_quit()
 
-    def update_auto_check(self):
-        """Al abrir el programa: si hay una version nueva, pregunta (salvo que se haya pedido no avisar)."""
-        st = update_state()
-        if st.get('auto_notice') and st.pop('auto_notice') == APP_PACK:          # [PACK180] aviso tras una actualizacion automatica
-            update_state_save()
-            self._osd("Actualizado autom\u00e1ticamente al pack %d" % APP_PACK, 3500)
-        self._update_watch_sync()          # [PACK182]
-        watch = self.update_watch_on()
-        if (st.get('auto', True) is False and not st.get('auto_install') and not watch) or os.environ.get('WA_OFFLINE') or getattr(sys, 'frozen', False):
-            return
-        if not watch and time.time() - float(st.get('last_check', 0) or 0) < 3600:
-            return
-        self._update_probe_start()
-
     def update_auto_install_on(self):
-        return bool(update_state().get('auto_install'))
+        return bool(update_state().get('auto_apply'))
+
+    def set_update_auto_install(self, on):
+        """[PACK180] Actualizar solo, al abrir el programa, cuando hay una version nueva publicada (menu de la bandeja)."""
+        st = update_state()
+        st['auto_apply'] = bool(on)
+        if on and st.get('auto', True) is False:
+            st['auto'] = True
+        update_state_save()
+        self.build_tray_menu()
 
     # ---- [PACK184] fuentes favoritas (lista personal, en el orden elegido)
     def favorite_fonts(self):
@@ -33012,102 +32806,6 @@ class WidgetManager(QObject):
     def set_favorite_fonts(self, lst):
         self.global_state['favorite_fonts'] = json.dumps([str(f) for f in lst])
         self.save_global_state(record_history=False)
-
-    # ---- [PACK182] vigilante: mientras el programa esta abierto mira cada 10 minutos y, si hay version nueva, la instala sin preguntar
-    def update_watch_on(self):
-        return bool(update_state().get('watch'))
-
-    def set_update_watch(self, on):
-        st = update_state()
-        st['watch'] = bool(on)
-        st.pop('auto_try_pack', None)
-        update_state_save()
-        self._update_watch_sync(now=bool(on))
-
-    def _update_watch_sync(self, now=False):
-        on = self.update_watch_on() and not os.environ.get('WA_OFFLINE') and not getattr(sys, 'frozen', False)
-        t = getattr(self, '_upd_watch_timer', None)
-        if on and t is None:
-            t = self._upd_watch_timer = QTimer(self)
-            t.setInterval(UPDATE_WATCH_MS)
-            t.timeout.connect(self._update_probe_start)
-        if t is not None:
-            if on and not t.isActive():
-                t.start()
-            elif not on and t.isActive():
-                t.stop()
-        if on and now:
-            QTimer.singleShot(1500, self._update_probe_start)
-
-    def _update_probe_start(self):
-        if getattr(self, '_upd_probing', False):
-            return
-        self._upd_probing = True
-        self._upd_probe = w = _UpdateWorker(self)
-        w.checked.connect(self._update_probe_done)
-        w.check()
-
-    def _update_restart_when_idle(self, tries=0):
-        """No reinicia en mitad de un arrastre ni con un cuadro de dialogo o un menu abierto: espera (hasta 2 minutos) y reintenta."""
-        busy = (QApplication.mouseButtons() != Qt.NoButton or QApplication.activeModalWidget() is not None
-                or QApplication.activePopupWidget() is not None)
-        if busy and tries < 24:
-            QTimer.singleShot(5000, lambda: self._update_restart_when_idle(tries + 1))
-            return
-        self.update_restart_app()
-
-    def set_update_auto_install(self, on):
-        """[PACK180] Actualizar solo, al abrir el programa, cuando hay una version nueva publicada."""
-        update_state()['auto_install'] = bool(on)
-        update_state().pop('auto_try_pack', None)
-        update_state_save()
-        self.build_tray_menu()
-
-    def _update_auto_install(self, info):
-        """Instala la version nueva sin preguntar. Una vez por version publicada: si falla o sigue pareciendo nueva, no se repite (evita bucles)."""
-        st = update_state()
-        pack = int(info['pack'])
-        if st.get('auto_try_pack') == pack:
-            return
-        st['auto_try_pack'] = pack
-        update_state_save()
-        self._osd("Instalando la versi\u00f3n nueva (pack %d)..." % pack, 2500)
-        self._upd_auto = w = _UpdateWorker(self)
-        w.applied.connect(lambda r, p=pack: self._update_auto_applied(r, p))
-        w.apply(info)
-
-    def _update_auto_applied(self, r, pack):
-        if not r.get('ok'):
-            log_warn("Actualizar", "Actualizaci\u00f3n autom\u00e1tica fallida: %s" % r.get('error', ''))
-            self._osd("No se pudo actualizar sola: %s" % r.get('error', ''), 4000)
-            return
-        update_state()['auto_notice'] = pack
-        update_state_save()
-        QTimer.singleShot(1500, self._update_restart_when_idle)
-
-    def _update_probe_done(self, r):
-        self._upd_probing = False
-        if not r.get('ok') or r.get('state') != 'newer':
-            return
-        info = r['info']
-        if self.update_auto_install_on() or self.update_watch_on():                    # [PACK180] [PACK182] sin preguntar
-            self._update_auto_install(info)
-            return
-        box = QMessageBox(QMessageBox.Question, "Widget Arena",
-                          "Se ha encontrado una nueva versi\u00f3n de Widget Arena (pack %s).\n\n\u00bfDescargarla e instalarla ahora? Se guarda una copia de la versi\u00f3n "
-                          "actual y el programa se reinicia; tus notas y ajustes no se tocan." % info.get('pack'))
-        box.setAttribute(Qt.WA_QuitOnClose, False)
-        chk = QCheckBox("No mostrar m\u00e1s este mensaje, prefiero actualizar manualmente")
-        box.setCheckBox(chk)
-        ok = box.addButton("Aceptar", QMessageBox.AcceptRole)
-        box.addButton("Cancelar", QMessageBox.RejectRole)
-        box.setDefaultButton(ok)
-        box.exec()
-        if chk.isChecked():
-            update_state()['auto'] = False
-            update_state_save()
-        if box.clickedButton() is ok:
-            self.show_updates(check=False).apply_result(r)
 
     # ---- [PACK113] fuentes
     # ---------------------------------------------------------------- [PACK135] estudio de rendimiento

@@ -1,3 +1,7 @@
+## Pack 217 · 2026-11-24
+- **Actualizaciones con el actualizador común** (py-installer 1.3.0), el mismo que cam-ui y md-reader: la misma ventana, el mismo «avisar al abrir», «actualizar sin preguntar» y «vigilar sola», y el mismo atajo secreto **Ctrl+Mayús+Alt+F12** (con o sin Win) desde cualquier ventana. Abajo en la ventana se ve la versión del actualizador.
+- Se conservan tus preferencias de antes (incluida «Actualizar automáticamente al iniciar» del menú de la bandeja), y sigue sin reiniciarse en mitad de un arrastre o con un menú o diálogo abierto.
+
 ## Pack 216 · 2026-11-24
 - El atajo secreto de *Actualizaciones* para «vigilar sola» ahora es **Ctrl+Mayús+Alt+F12**, con o sin la tecla Win, y funciona desde cualquier ventana de widget-arena: abre *Actualizaciones* con la casilla ya visible.
 
