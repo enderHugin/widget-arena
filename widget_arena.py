@@ -5579,10 +5579,9 @@ class StickerWindow(QMainWindow):
                 Qt.Key_6: 5, Qt.Key_7: 6, Qt.Key_8: 7, Qt.Key_9: 8, Qt.Key_0: 9,
             }
             if event.key() in key_map:
-                profiles = self.manager._list_profiles()
-                idx = key_map[event.key()]
-                if idx < len(profiles):
-                    name = os.path.splitext(os.path.basename(profiles[idx]))[0]
+                _n = key_map[event.key()] + 1                     # [PACK218] el set con esa tecla en las listas (no el n-esimo a secas)
+                name = next((s for s, k in self.manager._set_key_map().items() if k == _n), None)
+                if name:
                     self.manager._load_profile_dialog(name)
                     event.accept()
                     return
@@ -10716,16 +10715,16 @@ HOTKEY_COMMANDS = [
     ("set_save_9", "Guardar el set activo en la ranura 9", "Ctrl+Alt+9", True, False),
     ("set_load_10", "Cargar el set de la ranura 10", "Alt+0", True, False),
     ("set_save_10", "Guardar el set activo en la ranura 10", "Ctrl+Alt+0", True, False),
-    ("set_loadc_1", "Cargar el set de la ranura 1 (o el set n.1 de la lista) - Ctrl+cifra", "Ctrl+1", True, False),
-    ("set_loadc_2", "Cargar el set de la ranura 2 (o el set n.2 de la lista) - Ctrl+cifra", "Ctrl+2", True, False),
-    ("set_loadc_3", "Cargar el set de la ranura 3 (o el set n.3 de la lista) - Ctrl+cifra", "Ctrl+3", True, False),
-    ("set_loadc_4", "Cargar el set de la ranura 4 (o el set n.4 de la lista) - Ctrl+cifra", "Ctrl+4", True, False),
-    ("set_loadc_5", "Cargar el set de la ranura 5 (o el set n.5 de la lista) - Ctrl+cifra", "Ctrl+5", True, False),
-    ("set_loadc_6", "Cargar el set de la ranura 6 (o el set n.6 de la lista) - Ctrl+cifra", "Ctrl+6", True, False),
-    ("set_loadc_7", "Cargar el set de la ranura 7 (o el set n.7 de la lista) - Ctrl+cifra", "Ctrl+7", True, False),
-    ("set_loadc_8", "Cargar el set de la ranura 8 (o el set n.8 de la lista) - Ctrl+cifra", "Ctrl+8", True, False),
-    ("set_loadc_9", "Cargar el set de la ranura 9 (o el set n.9 de la lista) - Ctrl+cifra", "Ctrl+9", True, False),
-    ("set_loadc_10", "Cargar el set de la ranura 10 (o el set n.10 de la lista) - Ctrl+cifra", "Ctrl+0", True, False),
+    ("set_loadc_1", "Cargar el set de la ranura 1 (o el set n.1 de la lista; si no hay ninguno, crea uno vac\u00edo) - Ctrl+cifra", "Ctrl+1", True, False),
+    ("set_loadc_2", "Cargar el set de la ranura 2 (o el set n.2 de la lista; si no hay ninguno, crea uno vac\u00edo) - Ctrl+cifra", "Ctrl+2", True, False),
+    ("set_loadc_3", "Cargar el set de la ranura 3 (o el set n.3 de la lista; si no hay ninguno, crea uno vac\u00edo) - Ctrl+cifra", "Ctrl+3", True, False),
+    ("set_loadc_4", "Cargar el set de la ranura 4 (o el set n.4 de la lista; si no hay ninguno, crea uno vac\u00edo) - Ctrl+cifra", "Ctrl+4", True, False),
+    ("set_loadc_5", "Cargar el set de la ranura 5 (o el set n.5 de la lista; si no hay ninguno, crea uno vac\u00edo) - Ctrl+cifra", "Ctrl+5", True, False),
+    ("set_loadc_6", "Cargar el set de la ranura 6 (o el set n.6 de la lista; si no hay ninguno, crea uno vac\u00edo) - Ctrl+cifra", "Ctrl+6", True, False),
+    ("set_loadc_7", "Cargar el set de la ranura 7 (o el set n.7 de la lista; si no hay ninguno, crea uno vac\u00edo) - Ctrl+cifra", "Ctrl+7", True, False),
+    ("set_loadc_8", "Cargar el set de la ranura 8 (o el set n.8 de la lista; si no hay ninguno, crea uno vac\u00edo) - Ctrl+cifra", "Ctrl+8", True, False),
+    ("set_loadc_9", "Cargar el set de la ranura 9 (o el set n.9 de la lista; si no hay ninguno, crea uno vac\u00edo) - Ctrl+cifra", "Ctrl+9", True, False),
+    ("set_loadc_10", "Cargar el set de la ranura 10 (o el set n.10 de la lista; si no hay ninguno, crea uno vac\u00edo) - Ctrl+cifra", "Ctrl+0", True, False),
     ("open_gestures", "Abrir la guia de gestos y atajos", "F1", False, False),
     ("profile_next", "Set siguiente de la rotaci\u00f3n", "Ctrl+Shift+Down", False, False),
     ("profile_prev", "Set anterior de la rotaci\u00f3n", "Ctrl+Shift+Up", False, False),
@@ -12543,7 +12542,7 @@ class MoveTreeDialog(QDialog):
         self.lst.setUniformRowHeights(True)
         self.lst.setAlternatingRowColors(True)
         self.lst.setMinimumHeight(210)
-        tips = ("Tecla Ctrl + N que carga este set (su ranura o, si no tiene, su puesto en la lista alfab\u00e9tica)",
+        tips = ("Tecla Ctrl + N que carga este set (su ranura o, si no tiene, su puesto en la lista alfab\u00e9tica). Ctrl + una cifra que no tenga ning\u00fan set crea uno vac\u00edo",
                 "Tecla Alt + N que carga este set: solo si tiene una ranura asignada",
                 "Nombre del set",
                 "\u25cf = el set ya est\u00e1 en memoria (cambio instant\u00e1neo)",
@@ -15461,7 +15460,7 @@ def font_boot(m):
 
 # ---- [PACK114] actualizaciones: busca la version publicada, la instala (guardando una copia para volver atras) y reinicia ------
 APP_VERSION = "2026.11.24"             # [PACK122] fecha de la version (el mismo valor que el archivo VERSION); sale al pasar el raton por el icono
-APP_PACK = 217                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
+APP_PACK = 218                      # numero del ultimo pack aplicado: la web publica el suyo y asi se sabe si hay algo mas nuevo
 UPDATE_BASE = "https://enderhugin.github.io/widget-arena/dl/"
 UPDATE_STATE = os.path.join(DATA_DIR, "actualizacion.json")
 UPDATE_BACKUPS = os.path.join(ROOT_DATA_DIR, "backups_programa")
@@ -21505,7 +21504,7 @@ def _gesture_guide_html(manager):
         if key:
             h.append("<tr><td><b>%s</b>&nbsp;&nbsp;</td><td>%s</td><td>&nbsp;%s</td></tr>" % (
                 key, label, "(global)" if glob else ("(al editar texto)" if cid.startswith("txt_") else "(con un widget enfocado)")))
-    names = {"set_load": "Cargar el set de la ranura N (cifra 1\u20260)", "set_loadc": "Cargar el set N (o el set n.\u00ba N de la lista)",
+    names = {"set_load": "Cargar el set de la ranura N (cifra 1\u20260)", "set_loadc": "Cargar el set N (o el set n.\u00ba N de la lista; si no hay ninguno, crea uno vac\u00edo)",
              "set_save": "Guardar el set activo en la ranura N"}
     for kind, (key, glob) in seen_sets.items():
         h.append("<tr><td><b>%s</b>&nbsp;&nbsp;</td><td>%s</td><td>&nbsp;%s</td></tr>" % (
@@ -32772,6 +32771,17 @@ class WidgetManager(QObject):
             log_error("Actualizar", "No se pudo abrir el actualizador: %s" % e)
             QMessageBox.warning(None, "Actualizaciones", "No se pudo abrir el actualizador:\n\n%s" % e)
 
+    def set_screen_scale(self, mode):
+        """[PACK213] Cambia el modo de escala de los monitores: se aplica al reiniciar. [PACK218] repuesto (se perdio en el 217)."""
+        if mode == screen_scale_mode():
+            return
+        if not set_screen_scale_mode(mode):
+            QMessageBox.warning(None, "Monitores con distinta escala", "No se pudo guardar el cambio.")
+            return
+        if QMessageBox.question(None, "Monitores con distinta escala",
+                                "El cambio se aplica al reiniciar el programa.\n\n\u00bfReiniciar ahora?") == QMessageBox.Yes:
+            self.update_restart_app()
+
     def update_restart_app(self):
         """Arranca otra vez el programa (pasados unos segundos) y cierra este con el guardado de siempre."""
         try:
@@ -34959,20 +34969,64 @@ class WidgetManager(QObject):
         self.global_state['profile_slots'] = json.dumps(d, ensure_ascii=False)
         self._pending_disk_write = True
 
-    def hotkey_load_slot(self, n, alpha=False):
-        if alpha and not self._slots().get(str(n)):      # Ctrl+cifra sin ranura asignada: el perfil n.N de la lista (como antes)
-            names = [os.path.splitext(os.path.basename(p))[0] for p in self._list_profiles()]
-            if n - 1 < len(names):
-                self._load_profile(names[n - 1])
-                return
-        """Alt+N: activa el set de la ranura N."""
+    def hotkey_load_slot(self, n, alpha=False, create=True):
+        """Alt+N (alpha=False): activa el set de la ranura N.
+        [PACK218] Ctrl+N (alpha=True): el set que tiene esa tecla en las listas (su ranura o, si no tiene, su puesto en la lista alfabetica
+        cuando esa ranura esta libre: _set_key_map). Si ninguno la tiene, crea un set nuevo vacio en la ranura N y cambia a el (create=False:
+        no hace nada). Devuelve True si se ha hecho algo."""
+        if alpha:
+            name = next((s for s, k in self._set_key_map().items() if k == n), None)
+            if name:
+                if name == self.current_profile_name:
+                    self._osd(f"Ctrl+{n % 10}: \u00ab{name}\u00bb (ya activo)")
+                else:
+                    self._load_profile(name)
+                return True
+            return self._new_empty_set_for_key(n) if create else False
         name = self._slots().get(str(n))
         if not name:
-            self._osd(f"Ranura {n}: vac\u00eda  (Ctrl+Alt+{n % 10} guarda aqu\u00ed el set activo)", 1800)
+            self._osd(f"Ranura {n}: vac\u00eda  (Ctrl+Alt+{n % 10} guarda aqu\u00ed el set activo \u00b7 Ctrl+{n % 10} crea un set vac\u00edo)", 2200)
         elif name == self.current_profile_name:
             self._osd(f"Ranura {n}: \u00ab{name}\u00bb (ya activo)")
         else:
             self._load_profile(name)
+        return True
+
+    def _new_empty_set_for_key(self, n):
+        """[PACK218] Ctrl+N sin ningun set con esa tecla: crea un set nuevo VACIO (sin widgets, con los ajustes del actual), lo pone en la
+        ranura N y cambia a el. El set del que se sale queda apartado como al cambiar de set con cualquier otra tecla. Los demas sets
+        conservan la tecla que tenian: si el nombre nuevo los corriera de puesto en la lista alfabetica, se les fija esa tecla como ranura."""
+        before = self._set_key_map()
+        name = self._unique_profile_name(f"Set {n}")
+        try:
+            raw = {k: copy.deepcopy(v) for k, v in self.global_state.items()
+                   if not (isinstance(v, dict) and isinstance(v.get('template_data'), dict))}
+            os.makedirs(PROFILES_DIR, exist_ok=True)
+            path = self._profile_path(name)
+            with open(path + '.tmp', 'w', encoding='utf-8') as f:
+                json.dump(raw, f, indent=4)
+            os.replace(path + '.tmp', path)
+        except Exception as e:
+            log_error("Manager", f"No se pudo crear el set vacio '{name}': {e}")
+            self._osd(f"No se pudo crear el set vac\u00edo: {e}", 3000)
+            return False
+        d = self._slots()
+        d[str(n)] = name
+        self._store_slots(d)
+        fixed = []
+        after = self._set_key_map()
+        for s, k in before.items():
+            if after.get(s) != k and not d.get(str(k)):
+                d[str(k)] = s
+                fixed.append(f"{s}={k % 10}")
+        if fixed:
+            self._store_slots(d)
+            log_info("Manager", "Teclas fijadas como ranura para que no cambien: " + ", ".join(fixed))
+        log_info("Manager", f"Set nuevo vacio con Ctrl+{n % 10}: {name}")
+        self.build_tray_menu()
+        self._load_profile(name)
+        self._osd(f"Set nuevo vac\u00edo \u00ab{name}\u00bb  \u00b7  Ctrl+{n % 10} / Alt+{n % 10}", 2400)
+        return True
 
     def hotkey_save_slot(self, n):
         """Ctrl+Alt+N: guarda el set actual en la ranura N."""

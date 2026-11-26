@@ -1,3 +1,10 @@
+## Pack 218 · 2026-11-26
+- **Ctrl + cifra crea un set nuevo vacío** cuando ningún set tiene esa tecla: se guarda en esa ranura (después lo abren Ctrl o Alt + la misma cifra) y se cambia a él. El set del que sales queda guardado como siempre.
+- Arreglado: Ctrl + cifra sin ranura asignada iba al set que ocupaba ese puesto en la lista **aunque ese set ya tuviera otra tecla** (por eso Ctrl+4 podía llevarte al de la ranura 1). Ahora va siempre al set que muestra esa tecla en las listas de sets.
+- Si el nombre del set nuevo cambiara el puesto en la lista de otros sets que van por su puesto, a esos se les fija su tecla como ranura, para que no cambie.
+- Alt + cifra en una ranura vacía sigue solo avisando (y recuerda que Ctrl + esa cifra crea un set vacío).
+- Arreglado: *Ajustes › Apariencia › Monitores con distinta escala* daba error al elegir la otra opción (se había perdido en el pack 217).
+
 ## Pack 217 · 2026-11-24
 - **Actualizaciones con el actualizador común** (py-installer 1.3.0), el mismo que cam-ui y md-reader: la misma ventana, el mismo «avisar al abrir», «actualizar sin preguntar» y «vigilar sola», y el mismo atajo secreto **Ctrl+Mayús+Alt+F12** (con o sin Win) desde cualquier ventana. Abajo en la ventana se ve la versión del actualizador.
 - Se conservan tus preferencias de antes (incluida «Actualizar automáticamente al iniciar» del menú de la bandeja), y sigue sin reiniciarse en mitad de un arrastre o con un menú o diálogo abierto.
