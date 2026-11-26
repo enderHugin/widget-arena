@@ -17,6 +17,9 @@ sub site/index.html > "$OUT/index.html"
 cp site/favicon.png "$OUT/favicon.png"
 cp -r site/img "$OUT/img"
 touch "$OUT/.nojekyll"
+cp site/google*.html "$OUT/" 2>/dev/null || true      # archivo de verificacion de Google Search Console (no borrar: sin el se pierde la verificacion)
+# sitemap.xml para Search Console (se envia a mano una vez: $BASE/sitemap.xml)
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>%s/</loc><lastmod>%s</lastmod></url>\n</urlset>\n' "$BASE" "$(date -u +%Y-%m-%d)" > "$OUT/sitemap.xml"
 cp widget_arena.py herramientas.py pyi_update.py VERSION "$OUT/dl/"     # pyi_update.py: actualizador comun de py-installer
 # update.json: lo que lee el boton "Buscar actualizaciones" (numero de pack, huellas sha256 y novedades)
 python3 - "$OUT" "$VER" <<'PYEOF'
